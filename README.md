@@ -20,6 +20,27 @@
 
 [OpenEMR](https://open-emr.org) is a Free and Open Source electronic health records and medical practice management application. It features fully integrated electronic health records, practice management, scheduling, electronic billing, internationalization, free support, a vibrant community, and a whole lot more. It runs on Windows, Linux, Mac OS X, and many other platforms.
 
+### Setup (this fork)
+
+**Live deployment:** https://openemr-production-cc95.up.railway.app
+
+This fork is deployed publicly on Railway and runs locally with Docker Compose plus
+~25 Synthea-generated sample patients. Full reproducible instructions — local setup,
+Railway deployment architecture, environment variables, sample-data loading,
+security baseline, and rollback — are in **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+
+Quick local start (Docker Desktop required):
+
+```bash
+cd docker/development-easy
+HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up -d --wait
+# app: http://localhost:8300  (login admin/pass)
+# sample patients: openemr-cmd import-random-patients 25
+```
+
+Environment variable names used by the deployment are catalogued in
+[.env.example](.env.example) (never commit real values).
+
 ### Contributing
 
 OpenEMR is a leader in healthcare open source software and comprises a large and diverse community of software developers, medical providers and educators with a very healthy mix of both volunteers and professionals. [Join us and learn how to start contributing today!](https://open-emr.org/wiki/index.php/FAQ#How_do_I_begin_to_volunteer_for_the_OpenEMR_project.3F)

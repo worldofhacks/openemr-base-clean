@@ -12,7 +12,7 @@
 │  │  PHP/Laminas + Railway MySQL          │ SMART  │  FastAPI (Python, Pydantic)    │ │
 │  │  • Patient charts (UI)                │ launch │  • /chat (SSE streaming)       │ │
 │  │  • OAuth2/OIDC server                 │◄──────►│  • Orchestrator (tool loop)    │ │
-│  │  • FHIR R4 API  ◄── ACL enforcement   │ FHIR   │  • Verification gate           │ │
+│  │  • FHIR R4 API ◄ scope+compartment    │ FHIR   │  • Verification gate           │ │
 │  │  • volume: sites/ state               │ + token│  • Session store (Postgres)    │ │
 │  └───────────────────────────────────────┘        │  • /health /ready              │ │
 │                                                   └───────┬──────────────┬─────────┘ │

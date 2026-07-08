@@ -12,6 +12,8 @@ from fastapi import FastAPI
 
 from app.config import Settings, get_settings
 from app.health import Probe, default_readiness_checks
+from app.logging import configure_logging
+from app.middleware.correlation import CorrelationIdMiddleware
 from app.routes.health import router as health_router
 
 
@@ -34,6 +36,9 @@ def create_app(
     app.state.readiness_checks = (
         readiness_checks if readiness_checks is not None else default_readiness_checks()
     )
+
+    # Observability first (§7): correlation id on every request, from boot.
+    app.add_middleware(CorrelationIdMiddleware)
 
     app.include_router(health_router)
 

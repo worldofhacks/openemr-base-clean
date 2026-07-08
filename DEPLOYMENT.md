@@ -307,6 +307,33 @@ accepted, `admin`/`pass` still rejected.
 Result on the deployed instance (verified): 25 patients, 1,042 encounters,
 152 medications, 41 allergies, 4,101 lab results — identical to local.
 
+> **⚠️ CRITICAL SIDE EFFECT of this cross-instance import — it breaks the OAuth2/FHIR API.**
+> OpenEMR's `keys` table holds the master crypto keys (`sevena`/`sevenb`), and the
+> drive-key *files* on the volume (`sites/default/documents/logs_and_misc/methods/`)
+> are encrypted **with those DB keys**. Importing the full dump overwrites the
+> deployed instance's DB keys with the *local* instance's, so the deployed drive
+> files can no longer be decrypted → every OAuth2 token/registration request fails
+> with `"problem with authorization server keys"` / `"Key in drive is not compatible
+> with key in database"`. The web UI still works (passwords are bcrypt, independent
+> of the drive key), which is why the breakage is silent until you exercise the API.
+> **This is a real flaw in the "dump-and-import" sample-data method** — it should have
+> excluded the crypto/config tables. Remediation (used here; no clinical-data loss
+> since 0 documents are encrypted): wipe **both halves** of the crypto and let
+> OpenEMR regenerate a consistent set on the next OAuth request:
+> ```bash
+> # 1. delete the DB crypto rows (via the MySQL proxy):
+> DELETE FROM `keys` WHERE name IN ('sevena','sevenb','oauth2key','oauth2passphrase');
+> # 2. delete the drive-key files + stale oauth keypair (via railway ssh; needs a
+> #    registered key: railway ssh keys add --key ~/.ssh/id_ed25519.pub):
+> rm -f sites/default/documents/logs_and_misc/methods/seven[ab] \
+>       sites/default/documents/certificates/oa{private,public}.key
+> # 3. trigger regeneration by hitting POST /oauth2/default/registration once.
+> ```
+> **Better fix for next time:** exclude the crypto/config tables from the dump —
+> add `--ignore-table=openemr.keys` (and re-assert only clinical tables), or seed
+> prod by re-running the Synthea devtool against the deployed instance instead of a
+> cross-instance DB copy.
+
 ## 6. Gotchas and pathfinding notes
 
 Every failure hit during pathfinding, with root cause and fix:
@@ -383,3 +410,50 @@ untouched). The `sites/` volume is likewise preserved across redeploys. Because 
 schema belongs to the code version, only roll back across commits that did not run
 a schema migration — for this fork's current history every deployment shares one
 schema, so rollback is always safe.
+
+## 8. Testing access — the four ways to exercise the deployment
+
+A tester can exercise the deployment through four independent surfaces. **Secret
+values are not committed** (they live in the deployment's Railway variables and a
+local gitignored `tmp/railway-secrets.env` / `tmp/tester_client.json`); hand them
+over privately.
+
+| Surface | How | Credential |
+|---|---|---|
+| **1. Web UI** (clinician/admin experience) | Open the public URL → login | `admin` / *(rotated `OE_PASS`)* — the default `admin/pass` is rejected |
+| **2. REST + FHIR API** | OAuth2 token → call `/apis/default/fhir/*` | a dedicated **enabled** OAuth client (`client_id` + `client_secret`) via password grant |
+| **3. FHIR capability (no auth)** | `GET /apis/default/fhir/metadata` | none (public) |
+| **4. Database (deep inspection)** | MySQL over the Railway TCP proxy | proxy host:port + `root` pw from the MySQL service's `MYSQL_PUBLIC_URL` |
+
+**API token (password grant) — the recipe a tester runs:**
+```bash
+BASE=https://openemr-production-cc95.up.railway.app
+curl -s -X POST -H 'Content-Type: application/x-www-form-urlencoded' "$BASE/oauth2/default/token" \
+  --data-urlencode 'grant_type=password' \
+  --data-urlencode 'client_id=<CLIENT_ID>' --data-urlencode 'client_secret=<CLIENT_SECRET>' \
+  --data-urlencode 'scope=openid api:oemr api:fhir user/Patient.read user/Observation.read user/Condition.read user/MedicationRequest.read user/AllergyIntolerance.read user/Encounter.read user/Immunization.read' \
+  --data-urlencode 'user_role=users' --data-urlencode 'username=admin' --data-urlencode 'password=<OE_PASS>'
+# → {"access_token": "...", ...}; then:
+curl -s -H "Authorization: Bearer <ACCESS_TOKEN>" -H 'Accept: application/fhir+json' \
+  "$BASE/apis/default/fhir/Condition?patient=a234b786-539a-4f9a-96a0-432293226f02&_count=100"
+```
+Rich sample patient (12 allergies / 9 meds / 19 problems / 37 encounters):
+`a234b786-539a-4f9a-96a0-432293226f02`. Password grant is enabled on this demo
+instance (`oauth_password_grant=3`) for easy scripted testing; **the production
+agent (D9) will use `authorization_code` + PKCE instead**, not password grant.
+
+**Provisioning notes (why a tester couldn't hit the API until 2026-07-08):** the
+sample-data DB import silently broke the OAuth2 crypto (§5 warning); after the
+crypto reset, a fresh OAuth client was registered and **enabled** (new SMART apps
+register *disabled* — `oauth_clients.is_enabled=0` — until enabled in
+Administration → API Clients, or `UPDATE oauth_clients SET is_enabled=1`, matching
+architecture decision D14). To give someone **Railway dashboard** access (deploys,
+logs, metrics, volume), invite them as a project collaborator in the Railway UI —
+that is an account action, not a credential to share.
+
+> **Ops note:** a temporary SSH key (`claude-deploy-fix`) was registered with Railway
+> to perform the §5 crypto reset. Remove it when done: `railway ssh keys` →
+> `railway ssh keys remove`. The open MySQL TCP proxy (used for testing surface 4)
+> should be closed in the Railway dashboard (MySQL → Settings → Networking) once
+> external DB testing is finished — the app itself reaches MySQL only over the
+> private network.

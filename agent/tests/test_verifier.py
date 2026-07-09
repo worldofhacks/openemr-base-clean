@@ -291,6 +291,25 @@ def test_treatment_verb_text_claim_refused():  # spec: §5 treatment-verb blockl
     assert result.refusal_kind is RefusalKind.TREATMENT_ADVICE
 
 
+def test_text_claim_unresolvable_citation_is_blocked():  # spec: finding-2 / §5 D7 fail-closed citation
+    # A descriptive TextClaim (no treatment verb, no forbidden phrasing) whose evidence_ids
+    # do NOT resolve in the packet must be BLOCKED — fabricated provenance is fail-closed.
+    # We use plainly descriptive text so the ONLY possible rejection reason is the citation.
+    packet = build_evidence_packet(PID, {"get_conditions": _ok(
+        "get_conditions", [ConditionRecord(resource_id="c1", display="Asthma")])})
+    # "Condition:ghost:00000000" is NOT in the packet — it is fabricated provenance.
+    claim = TextClaim(
+        text="Patient has a documented history of asthma.",
+        evidence_ids=["Condition:ghost:00000000"],
+    )
+    result = Verifier().verify(claim, packet)
+    # Fail-closed: an unresolvable citation must be BLOCKED, not merely FLAGGED.
+    assert result.verdict == Verdict.BLOCKED, (
+        f"Expected BLOCKED for unresolvable citation, got {result.verdict} "
+        f"(reason: {result.reason!r})"
+    )
+
+
 def test_descriptive_text_claim_not_refused_as_treatment():  # spec: §5 (read-only descriptive)
     packet = build_evidence_packet(PID, {"get_active_medications": _ok(
         "get_active_medications", [MedicationRecord(resource_id="m1", name="lisinopril",

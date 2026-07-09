@@ -50,3 +50,13 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
 #   D12 deceased pre-flight before the LLM. Trace.verdicts populated. source stays "llm" so the
 #   frozen E5/E7 orchestrator tests (which assert source+structure, not served text) stay green.
 # Test Agent owns tests/ (freezes the end-to-end invariant); Impl Agent owns app/ (no test edits).
+
+## TEST_DISPUTE (adjudicated) — verify-then-flush vs an E7 test pinning served prose
+- Impl Agent returned BLOCKED(TEST_DISPUTE), refusing to weaken §5: `test_orchestrator_trace.py::
+  test_tracing_failure_never_breaks_the_brief` asserts `res.text == "brief"` on the end_turn-no-
+  submit_claims path. Under verify-then-flush, uncited prose is BLOCKED and never served → that
+  assertion encodes the superseded "serve raw prose" contract.
+- Orchestrator adjudication: dispute VALID. The test's real intent is the SOFT-DEPENDENCY property
+  (source=="llm" + tracer.dropped==1); the served-text pin was incidental to the old behavior.
+  Resolution: a Test Agent updates that test to assert the soft-dep intent (drop the res.text pin).
+  Separation of powers held — the Impl Agent did not touch it; a Test-role agent does.

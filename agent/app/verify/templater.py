@@ -19,9 +19,17 @@ is a pre-flight refusal upstream of any render, so it is not re-checked here.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.evidence.packet import EvidencePacket
+from app.verify.claims import Verdict
+from app.verify.rules import (
+    contains_criticality_risk_phrase,
+    contains_forbidden_phrase,
+)
+
+if TYPE_CHECKING:
+    from app.verify.verifier import VerificationResult
 
 FALLBACK_BANNER = (
     "⚠️ Generated WITHOUT LLM assistance (automated fallback). "
@@ -149,3 +157,88 @@ def render_packet_fallback(packet: EvidencePacket) -> str:
         lines.extend(leftover)
 
     return "\n".join(lines).rstrip() + "\n"
+
+
+# ---------------------------------------------------------------------------
+# E6.1 — verified-claims re-render (the normal path; ARCHITECTURE.md §5, D7)
+# ---------------------------------------------------------------------------
+
+_VERIFIED_HEADER = "Verified summary (each line re-rendered from cited evidence):"
+
+
+def _render_verified_line(verified: dict[str, Any]) -> str | None:
+    """Deterministically render ONE verified result's fields into a display line.
+
+    Text is built ONLY from `verified` (fields the verifier proved against the cited
+    record) — never from the model's prose — so a divergent number can never survive. Field
+    presence, not claim type, selects the phrasing.
+    """
+    if "substance" in verified:
+        # F-D.4: only the substance renders; criticality is never surfaced as risk.
+        return f"Allergy: {verified['substance']}"
+
+    if "vaccine" in verified:
+        return f"Immunization: {verified['vaccine']}"
+
+    if "display" in verified and ("value" in verified or "unit" in verified):
+        # §5a lab: value + unit from the verified fields.
+        value = verified.get("value")
+        unit = verified.get("unit")
+        val = f"{value} {unit}".strip() if value is not None else "no value recorded"
+        return f"{verified['display']}: {val}"
+
+    if "name" in verified:
+        # Medication: dose only if the record actually carried one (rule 6/F-D.2 — never invent).
+        dose = verified.get("dose")
+        if dose:
+            return f"{verified['name']} — {dose}"
+        return f"{verified['name']} — dose not specified — confirm before dosing"
+
+    if "display" in verified:
+        # Condition (no lab value/unit): re-render the display, status-aware.
+        status = verified.get("clinical_status")
+        head = str(verified["display"])
+        return f"{head} [{status}]" if status else head
+
+    return None
+
+
+def render_from_verified(
+    results: list["VerificationResult"], *, packet: EvidencePacket | None = None
+) -> str:
+    """Re-render display text ONLY from the verified fields of PASS/FLAGGED results (§5 D7).
+
+    The LLM's prose is discarded: every line is rebuilt from fields the verifier proved
+    against the cited record, so a BLOCKED/REFUSED result's contradicted value never appears.
+    Deterministic (same input → identical output). Forbidden phrasing (F-D.1 status-inversion,
+    F-D.4 criticality-as-risk) is screened out as a final backstop.
+
+    With no verified content and a `packet`, the no-records path is surfaced from the packet's
+    notices — an empty allergy result renders "confirm with patient," never "NKDA" (F-D.5).
+    """
+    lines: list[str] = []
+    for result in results:
+        if result.verdict not in (Verdict.PASS, Verdict.FLAGGED):
+            continue  # blocked/refused content is never rendered as verified
+        line = _render_verified_line(result.verified)
+        if line is None:
+            continue
+        if contains_forbidden_phrase(line) or contains_criticality_risk_phrase(line):
+            continue  # final backstop — trap phrasing never survives the re-render
+        lines.append(line)
+
+    body: list[str] = []
+    if lines:
+        body.append(_VERIFIED_HEADER)
+        body.extend(f"- {line}" for line in lines)
+
+    # No verified content: surface the packet's honest gap notices (F-D.5 confirm-with-patient).
+    if packet is not None:
+        for notice in packet.notices:
+            rendered = _render_notice(notice.kind, notice.tool, notice.detail)
+            if rendered:
+                body.append(rendered)
+
+    if not body:
+        return ""
+    return "\n".join(body).rstrip() + "\n"

@@ -86,7 +86,7 @@ class Verifier:
     def verify(self, claim: Claim, packet: EvidencePacket) -> VerificationResult:
         # A TextClaim is free prose — it never resolves a field, so it is screened, not matched.
         if isinstance(claim, TextClaim):
-            return self._verify_text(claim)
+            return self._verify_text(claim, packet)
 
         matched = self._resolve(claim, packet)
 
@@ -299,7 +299,7 @@ class Verifier:
 
     # --- free-prose screens --------------------------------------------------
 
-    def _verify_text(self, claim: TextClaim) -> VerificationResult:
+    def _verify_text(self, claim: TextClaim, packet: EvidencePacket | None = None) -> VerificationResult:
         # Treatment-verb blocklist → REFUSED(TREATMENT_ADVICE). Checked first: an "advise to
         # act" claim is refused regardless of citation.
         if contains_treatment_verb(claim.text):
@@ -324,6 +324,19 @@ class Verifier:
                 verdict=Verdict.BLOCKED,
                 reason="text claim cites no evidence",
             )
+
+        # D7 fail-closed citation resolution: if evidence_ids are provided but NONE resolve
+        # in the packet, the citation is fabricated provenance — BLOCKED, not merely FLAGGED.
+        if packet is not None:
+            resolved_ids = [eid for eid in claim.evidence_ids if packet.by_id(eid) is not None]
+            if not resolved_ids:
+                unresolvable = claim.evidence_ids[0]
+                return VerificationResult(
+                    verdict=Verdict.BLOCKED,
+                    reason=f"text claim cites unresolvable evidence: '{unresolvable}' not found in packet",
+                    matched_evidence_ids=[],
+                )
+
         return VerificationResult(verdict=Verdict.FLAGGED, reason="free-prose claim not field-verifiable")
 
 

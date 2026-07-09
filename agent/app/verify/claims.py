@@ -103,7 +103,7 @@ class TextClaim(Claim):
     text: str
 
 
-def parse_claims(items: list[dict]) -> list[Claim]:
+def parse_claims(items: object) -> list[Claim]:
     """Parse the LLM's ``submit_claims`` payload into typed claim value objects (§5 D7).
 
     Each raw item is mapped by its ``"type"`` key to the matching E6 claim class, passing
@@ -112,33 +112,55 @@ def parse_claims(items: list[dict]) -> list[Claim]:
     ``TextClaim`` carrying the item's string form, and unexpected extra keys are dropped
     rather than raising — a malformed tool call must never crash the serving loop. The
     verifier is where safety is enforced; here we only shape the input into typed claims.
+
+    Fail-closed (§6 finding-1): ``items`` must be a list; any other value is treated as
+    empty. Non-dict items and malformed ``evidence_ids`` degrade to uncited/blocked
+    ``TextClaim`` instances rather than raising — one bad item can never abort the whole
+    parse. Every returned element is a ``Claim`` instance.
     """
+    if not isinstance(items, list):
+        return []
+
     claims: list[Claim] = []
     for item in items:
-        evidence_ids = item.get("evidence_ids", [])
+        # Non-dict item: degrade to an uncited TextClaim (no evidence → BLOCKED downstream).
+        if not isinstance(item, dict):
+            claims.append(TextClaim(text=str(item), evidence_ids=[]))
+            continue
+
+        # Coerce evidence_ids: must be a list; anything else is treated as empty so the
+        # claim is uncited (→ BLOCKED) rather than crashing the parse.
+        ev = item.get("evidence_ids")
+        evidence_ids: list[str] = ev if isinstance(ev, list) else []
+
         claim_type = item.get("type")
-        if claim_type == "medication":
-            claims.append(MedicationClaim(
-                name=item.get("name", ""), dose=item.get("dose"), evidence_ids=evidence_ids))
-        elif claim_type == "lab":
-            claims.append(LabValueClaim(
-                display=item.get("display", ""), value=item.get("value"),
-                unit=item.get("unit"), evidence_ids=evidence_ids))
-        elif claim_type == "condition":
-            claims.append(ConditionClaim(
-                display=item.get("display", ""), present=item.get("present", True),
-                evidence_ids=evidence_ids))
-        elif claim_type == "allergy":
-            claims.append(AllergyClaim(
-                substance=item.get("substance", ""), risk=item.get("risk"),
-                evidence_ids=evidence_ids))
-        elif claim_type == "immunization":
-            claims.append(ImmunizationClaim(
-                vaccine=item.get("vaccine", ""), declined=item.get("declined", False),
-                evidence_ids=evidence_ids))
-        elif claim_type == "text":
-            claims.append(TextClaim(text=item.get("text", ""), evidence_ids=evidence_ids))
-        else:
-            # Unknown/missing type → fail safe to prose the verifier will screen, not a crash.
+        try:
+            if claim_type == "medication":
+                claims.append(MedicationClaim(
+                    name=item.get("name", ""), dose=item.get("dose"), evidence_ids=evidence_ids))
+            elif claim_type == "lab":
+                claims.append(LabValueClaim(
+                    display=item.get("display", ""), value=item.get("value"),
+                    unit=item.get("unit"), evidence_ids=evidence_ids))
+            elif claim_type == "condition":
+                claims.append(ConditionClaim(
+                    display=item.get("display", ""), present=item.get("present", True),
+                    evidence_ids=evidence_ids))
+            elif claim_type == "allergy":
+                claims.append(AllergyClaim(
+                    substance=item.get("substance", ""), risk=item.get("risk"),
+                    evidence_ids=evidence_ids))
+            elif claim_type == "immunization":
+                claims.append(ImmunizationClaim(
+                    vaccine=item.get("vaccine", ""), declined=item.get("declined", False),
+                    evidence_ids=evidence_ids))
+            elif claim_type == "text":
+                claims.append(TextClaim(text=item.get("text", ""), evidence_ids=evidence_ids))
+            else:
+                # Unknown/missing type → fail safe to prose the verifier will screen, not a crash.
+                claims.append(TextClaim(text=str(item), evidence_ids=evidence_ids))
+        except Exception:
+            # Construction failure for a well-typed item: degrade to an uncited TextClaim.
+            # An uncited/degraded claim is BLOCKED by the verifier — it can never be a PASS.
             claims.append(TextClaim(text=str(item), evidence_ids=evidence_ids))
     return claims

@@ -359,21 +359,32 @@ class Orchestrator:
             submit = next((tu for tu in resp.tool_uses() if tu.name == "submit_claims"), None)
             if submit is not None:
                 tool_calls.append(submit.name)
-                claims = parse_claims(submit.input.get("claims", []))
-                results_v: list[VerificationResult] = []
-                t_verify = time.monotonic()
-                for claim in claims:
-                    r = self._verifier.verify(claim, packet)
-                    results_v.append(r)
+                # Defense-in-depth (finding-2, §6): even though parse_claims is now total,
+                # guard the entire verify+render block so an unexpected verifier or renderer
+                # failure degrades to the deterministic fallback rather than escaping to the
+                # caller. A single bad claim must never abort the entire brief.
+                try:
+                    claims = parse_claims(submit.input.get("claims", []))
+                    results_v: list[VerificationResult] = []
+                    t_verify = time.monotonic()
+                    for claim in claims:
+                        r = self._verifier.verify(claim, packet)
+                        results_v.append(r)
+                        if builder is not None:
+                            builder.record_verdict(str(r.verdict.value))
                     if builder is not None:
-                        builder.record_verdict(str(r.verdict.value))
-                if builder is not None:
-                    builder.step("verify", latency_ms=(time.monotonic() - t_verify) * 1000,
-                                 claims=len(claims))
-                served = render_from_verified(results_v, packet=packet)
-                return BriefResult(text=served, source="llm", degraded=False,
-                                   usage=total, iterations=iteration, tool_calls=tool_calls,
-                                   verdicts=[str(r.verdict.value) for r in results_v])
+                        builder.step("verify", latency_ms=(time.monotonic() - t_verify) * 1000,
+                                     claims=len(claims))
+                    served = render_from_verified(results_v, packet=packet)
+                    return BriefResult(text=served, source="llm", degraded=False,
+                                       usage=total, iterations=iteration, tool_calls=tool_calls,
+                                       verdicts=[str(r.verdict.value) for r in results_v])
+                except Exception:
+                    # Unexpected failure in parse/verify/render: fall back to the deterministic
+                    # packet render (D13 _fallback) rather than surfacing an exception. The
+                    # fallback is the safe floor — the physician always gets something grounded.
+                    return self._fallback(packet, total, iteration, tool_calls, "client_error",
+                                         "unexpected error during submit_claims verify+render")
 
             messages.append({"role": "assistant", "content": _assistant_content(resp)})
             results: list[dict] = []

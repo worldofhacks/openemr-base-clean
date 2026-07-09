@@ -21,14 +21,19 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import pytest
 
+from app.auth.scopes import (
+    REQUIRED_FHIR_SCOPES,
+    assert_required_scopes_granted,
+    requested_scope_string,
+)
 from app.auth.smart_client import SmartClient, generate_pkce
 
 pytestmark = pytest.mark.live
 
 BASE = os.environ.get("OPENEMR_BASE_URL", "https://openemr-production-cc95.up.railway.app")
 SELENIUM_URL = os.environ.get("SELENIUM_URL", "http://localhost:4444/wd/hub")
-SCOPE = ("openid offline_access api:oemr api:fhir user/Patient.read user/Condition.read "
-         "user/AllergyIntolerance.read")
+# Minimum-necessary scope set (openid + the six FHIR read scopes; NO offline_access).
+SCOPE = requested_scope_string()
 
 _skip = pytest.mark.skipif(
     os.environ.get("RUN_LIVE") != "1"
@@ -98,6 +103,13 @@ async def test_live_auth_code_flow_returns_real_fhir_data(capsys):
     token = await client.exchange_code(code=code, code_verifier=verifier)
     assert token.access_token.get_secret_value(), "no access_token returned"
 
+    # GATE: all six FHIR read scopes must come back granted, or the meds/labs/
+    # encounter tools would 401 at runtime (the coverage gap being closed here).
+    assert_required_scopes_granted(token.scopes)
+    assert REQUIRED_FHIR_SCOPES <= set(token.scopes)
+    # offline_access was not requested → no refresh token (D9 addendum, minimum-necessary).
+    assert token.refresh_token is None, "unexpected refresh token — offline_access should be dropped"
+
     # The whole point of E2 "done": the token must return REAL FHIR data.
     async with httpx.AsyncClient(timeout=20.0) as http:
         pt = await http.get(
@@ -121,6 +133,8 @@ async def test_live_auth_code_flow_returns_real_fhir_data(capsys):
 
     # Report the granted scopes (the resume prompt asks for the exact scopes).
     with capsys.disabled():
-        print(f"\n[E2.1 LIVE] token OK — granted scopes: {token.scopes}")
-        print(f"[E2.1 LIVE] FHIR Patient bundle total={bundle['total']} first_id={first_id}; "
+        print(f"\n[E2 LIVE] token OK — granted scopes ({len(token.scopes)}): {sorted(token.scopes)}")
+        print(f"[E2 LIVE] all six required FHIR scopes granted: {REQUIRED_FHIR_SCOPES <= set(token.scopes)}")
+        print(f"[E2 LIVE] refresh_token present: {token.refresh_token is not None} (offline_access dropped)")
+        print(f"[E2 LIVE] FHIR Patient bundle total={bundle['total']} first_id={first_id}; "
               f"Condition HTTP={cond.status_code}")

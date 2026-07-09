@@ -32,6 +32,20 @@ class CostCapExceeded(RuntimeError):
     """The daily USD cap has been reached. The orchestrator degrades to the D13 fallback."""
 
 
+def estimate_cost(usage: Usage, model: str) -> float:
+    """USD cost of one usage record under the model's D4 pricing. Cache reads ≈ 0.1x input
+    (R1), cache writes ≈ 1.25x input. KeyError on an unpriced model — never silently free.
+    Shared by the cost cap and the observability tracer so pricing lives in one place."""
+    in_rate, out_rate = _MODEL_PRICES[model]
+    per = 1_000_000
+    return (
+        usage.input_tokens / per * in_rate
+        + usage.output_tokens / per * out_rate
+        + usage.cache_read_input_tokens / per * in_rate * _CACHE_READ_MULT
+        + usage.cache_creation_input_tokens / per * in_rate * _CACHE_WRITE_MULT
+    )
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -44,14 +58,7 @@ class DailyCostCap:
         self._spent: float = 0.0
 
     def cost_of(self, usage: Usage, model: str) -> float:
-        in_rate, out_rate = _MODEL_PRICES[model]  # KeyError on an unpriced model — never free
-        per = 1_000_000
-        return (
-            usage.input_tokens / per * in_rate
-            + usage.output_tokens / per * out_rate
-            + usage.cache_read_input_tokens / per * in_rate * _CACHE_READ_MULT
-            + usage.cache_creation_input_tokens / per * in_rate * _CACHE_WRITE_MULT
-        )
+        return estimate_cost(usage, model)  # KeyError on an unpriced model — never free
 
     def _roll(self) -> None:
         today = self._now().strftime("%Y-%m-%d")

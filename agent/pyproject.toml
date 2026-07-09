@@ -12,6 +12,9 @@ dependencies = [
     # LLM provider (Zone C, D4). Reached only through app/llm/provider.py's
     # llm.complete() seam, so the model is swappable by config, not code.
     "anthropic>=0.40",
+    # Observability (§7, D5-rev). Lazy-imported behind app/observability's sink seam;
+    # a soft dependency — its absence/failure degrades the trace, never serving.
+    "langfuse>=2.0",
 ]
 
 [project.optional-dependencies]

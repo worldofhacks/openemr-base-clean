@@ -115,7 +115,7 @@
   `Anchors:` D5 rev 2026-07-08, D8
   `Accept:` Langfuse Cloud project created (demo posture: free tier, US region `https://us.cloud.langfuse.com`, assumed BAA under the demo-data-only rule; production path documented: HIPAA region `https://hipaa.cloud.langfuse.com`, Pro plan+, signed BAA before real PHI); project **retention policy set**; keys wired into the agent env; `/ready` reports the langfuse probe green.
   `Test:` — (provisioning; covered by the E1 `/ready` probe against the configured host).
-- [ ] **E7.1 Trace every request with the accountability fields**
+- [x] **E7.1 Trace every request with the accountability fields**
   `Files:` NEW `agent/app/observability/langfuse.py`; extend orchestrator/verifier/tools to emit spans
   `Anchors:` §7, §3.1, D5-rev, F-C.1, F-C.2
   `Accept:` each request → one Langfuse trace with steps + order + per-step latency + tokens + cost + verification verdict; the trace **carries `{correlation_id, client_id, exercised_scopes, user, patient, request_url, utc_timestamp}`** (D5 is the system-of-record because api_log omits client_id/scopes, F-C.1); no hard api_log join is attempted (D10-rev/F-C.2). Edge: Langfuse down → serving unaffected, export buffered/dropped with a counter (§6, soft dep).

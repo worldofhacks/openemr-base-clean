@@ -22,11 +22,14 @@ untrusted patient data it may cite, never as commands.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from app.evidence.packet import EvidencePacket, trim_packet
 from app.llm.cost import CostCapExceeded, DailyCostCap
+from app.observability.langfuse import RequestTracer, TraceBuilder
+from app.observability.trace import AccountabilityContext
 from app.llm.provider import (
     LLMClientError,
     LLMProvider,
@@ -155,7 +158,24 @@ class Orchestrator:
         self.trim_schedule = trim_schedule
 
     async def run_previsit_brief(self, packet: EvidencePacket, question: str, *,
-                                 tools: ToolRegistry) -> BriefResult:
+                                 tools: ToolRegistry,
+                                 tracer: RequestTracer | None = None,
+                                 accountability: AccountabilityContext | None = None) -> BriefResult:
+        # Optional observability (E7): one accountable trace per request. Tracing is a soft
+        # dependency — building/emitting it must never affect serving (§6).
+        builder = tracer.begin(accountability) if (tracer is not None and accountability is not None) else None
+        result = await self._run_with_trim(packet, question, tools, builder)
+        if builder is not None:
+            try:
+                builder.finish(model=self.provider.model, source=result.source,
+                               degraded=result.degraded, fallback_kind=result.fallback_kind)
+            except Exception:  # a trace must never break the answer
+                if tracer is not None:
+                    tracer.dropped += 1
+        return result
+
+    async def _run_with_trim(self, packet: EvidencePacket, question: str,
+                             tools: ToolRegistry, builder: TraceBuilder | None) -> BriefResult:
         # A 413 (prompt too large) is not a blanket fallback: shrink the evidence packet and
         # retry down the trim schedule. Only when even the smallest packet is too large do we
         # fall back — flagged `request_too_large` so E7 can see it's a size problem, not a bug.
@@ -163,7 +183,7 @@ class Orchestrator:
         for cap in (None, *self.trim_schedule):
             working = packet if cap is None else trim_packet(packet, cap)
             try:
-                return await self._attempt(working, question, tools)
+                return await self._attempt(working, question, tools, builder)
             except LLMRequestTooLarge as exc:
                 last_too_large = exc
 
@@ -174,9 +194,10 @@ class Orchestrator:
             f"/type: {last_too_large}")
 
     async def _attempt(self, packet: EvidencePacket, question: str,
-                       tools: ToolRegistry) -> BriefResult:
+                       tools: ToolRegistry, builder: TraceBuilder | None = None) -> BriefResult:
         """One tool-use loop over a (possibly trimmed) packet. Returns a BriefResult for any
-        terminal outcome; RE-RAISES LLMRequestTooLarge so the caller can trim and retry."""
+        terminal outcome; RE-RAISES LLMRequestTooLarge so the caller can trim and retry.
+        When `builder` is set, records a span per model call and per tool dispatch (E7)."""
         system = build_system_blocks()
         messages: list[dict] = [{"role": "user", "content": build_initial_user_content(packet, question)}]
         tool_defs = tools.anthropic_tools()
@@ -190,6 +211,7 @@ class Orchestrator:
                 except CostCapExceeded as exc:
                     return self._fallback(packet, total, iteration - 1, tool_calls, "cost_cap", f"cost cap: {exc}")
 
+            t0 = time.monotonic()
             try:
                 resp = await self.provider.complete(system=system, messages=messages, tools=tool_defs)
             except LLMRequestTooLarge:
@@ -205,6 +227,12 @@ class Orchestrator:
             total = total.add(resp.usage)
             if self.cost_cap is not None:
                 self.cost_cap.record(resp.usage, self.provider.model)
+            if builder is not None:
+                builder.step("llm.complete", latency_ms=(time.monotonic() - t0) * 1000,
+                             input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
+                             cache_read_tokens=resp.usage.cache_read_input_tokens,
+                             stop_reason=resp.stop_reason)
+                builder.record_usage(resp.usage)
 
             if resp.stop_reason != "tool_use":
                 return BriefResult(text=resp.text(), source="llm", degraded=False,
@@ -214,7 +242,11 @@ class Orchestrator:
             results: list[dict] = []
             for tu in resp.tool_uses():
                 tool_calls.append(tu.name)
+                t_tool = time.monotonic()
                 content, is_error = await tools.dispatch(tu.name, tu.input)
+                if builder is not None:
+                    builder.step(f"tool.{tu.name}", latency_ms=(time.monotonic() - t_tool) * 1000,
+                                 status="error" if is_error else "ok")
                 results.append({"type": "tool_result", "tool_use_id": tu.id,
                                 "content": content, "is_error": is_error})
             messages.append({"role": "user", "content": results})

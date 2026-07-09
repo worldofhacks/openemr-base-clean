@@ -101,3 +101,44 @@ class TextClaim(Claim):
     """Free prose fed to the forbidden-phrasing + treatment-verb screens (§5)."""
 
     text: str
+
+
+def parse_claims(items: list[dict]) -> list[Claim]:
+    """Parse the LLM's ``submit_claims`` payload into typed claim value objects (§5 D7).
+
+    Each raw item is mapped by its ``"type"`` key to the matching E6 claim class, passing
+    only the fields that class declares plus ``evidence_ids``. Parsing is LENIENT at the
+    system boundary (parse, don't validate): an unknown or missing ``type`` degrades to a
+    ``TextClaim`` carrying the item's string form, and unexpected extra keys are dropped
+    rather than raising — a malformed tool call must never crash the serving loop. The
+    verifier is where safety is enforced; here we only shape the input into typed claims.
+    """
+    claims: list[Claim] = []
+    for item in items:
+        evidence_ids = item.get("evidence_ids", [])
+        claim_type = item.get("type")
+        if claim_type == "medication":
+            claims.append(MedicationClaim(
+                name=item.get("name", ""), dose=item.get("dose"), evidence_ids=evidence_ids))
+        elif claim_type == "lab":
+            claims.append(LabValueClaim(
+                display=item.get("display", ""), value=item.get("value"),
+                unit=item.get("unit"), evidence_ids=evidence_ids))
+        elif claim_type == "condition":
+            claims.append(ConditionClaim(
+                display=item.get("display", ""), present=item.get("present", True),
+                evidence_ids=evidence_ids))
+        elif claim_type == "allergy":
+            claims.append(AllergyClaim(
+                substance=item.get("substance", ""), risk=item.get("risk"),
+                evidence_ids=evidence_ids))
+        elif claim_type == "immunization":
+            claims.append(ImmunizationClaim(
+                vaccine=item.get("vaccine", ""), declined=item.get("declined", False),
+                evidence_ids=evidence_ids))
+        elif claim_type == "text":
+            claims.append(TextClaim(text=item.get("text", ""), evidence_ids=evidence_ids))
+        else:
+            # Unknown/missing type → fail safe to prose the verifier will screen, not a crash.
+            claims.append(TextClaim(text=str(item), evidence_ids=evidence_ids))
+    return claims

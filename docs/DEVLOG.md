@@ -253,3 +253,9 @@
 - Why: §4 puts trust-boundary/contract work before features; the scope gap would have 401'd meds/labs/encounter at runtime. Contracts are the source of truth before tools.
 - Result: **proved live** — the six-tool fan-out against the deployed OpenEMR returns real data for ALL six (patient 1, conditions 19 incl. inactive, meds 18, labs 11, encounters 37, allergies 12); zero 401s. Suite **62 passed, 1 skipped**. Next unbuilt = **E4** (EvidencePacket builder).
 - Stage: EARLY (E3 done).
+
+## [2026-07-09] E4 — EvidencePacket builder (stable, unique evidence IDs) · type: milestone
+- What: `app/evidence/packet.py` — normalizes the six tools' `ToolResult`s into typed `EvidenceRecord`s (the only thing the LLM + E6 verifier see, §5/§6a), each with a §5a `ResourceType:id:hash8` evidence id. **Null/empty FHIR id → deterministic synthetic id** (hash of type+date+display+patient, so citations survive the audit's null-id records); **within-request uniqueness guaranteed** (duplicate/collision ids disambiguated with `#n`) since the verifier resolves every claim against these ids. Packet carries `notices`: tool_failed (missing data — named), no_records (allergy → "confirm with patient", never NKDA), and trimmed (large-chart cap → what was dropped, §6/F-P.3). Made the FHIR mappers tolerate a null id (`res.get("id") or ""`) so the pipeline never crashes on the audit's case.
+- Why: evidence-id stability + uniqueness are load-bearing for E6 — an ambiguous/absent id breaks a citation. The audit flagged that Med/Condition/Allergy records can lack ids.
+- Result: **proved live** — packet built from the real fan-out = **98 evidence records, all ids unique, 0 notices**; plus an end-to-end null-id test (missing FHIR id → synthetic id, no crash). Suite **73 passed, 1 skipped**. Next unbuilt = **E5** (orchestrator: direct Anthropic tool-use loop).
+- Stage: EARLY (E4 done).

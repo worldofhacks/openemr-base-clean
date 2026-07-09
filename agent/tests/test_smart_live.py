@@ -27,6 +27,7 @@ from app.auth.scopes import (
     requested_scope_string,
 )
 from app.auth.smart_client import SmartClient, generate_pkce
+from app.evidence.packet import build_evidence_packet
 from app.tools.contracts import ToolStatus
 from app.tools.fhir_client import FhirClient
 from app.tools.fhir_tools import run_previsit_fanout
@@ -147,8 +148,17 @@ async def test_live_auth_code_flow_returns_real_fhir_data(capsys):
     for name in ("get_active_medications", "get_recent_labs", "get_encounters"):
         assert fanout[name].status is ToolStatus.OK, f"{name} returned {fanout[name].status}, not OK"
 
+    # E4 GATE: build the EvidencePacket from the live fan-out; all evidence ids must
+    # be unique (the E6 verifier resolves every claim against them).
+    packet = build_evidence_packet(CANONICAL_PATIENT, fanout)
+    eids = [r.evidence_id for r in packet.records]
+    assert eids, "empty evidence packet from live data"
+    assert len(eids) == len(set(eids)), "duplicate evidence ids in live packet"
+
     with capsys.disabled():
         print(f"\n[E2 LIVE] token OK — granted scopes ({len(token.scopes)}): {sorted(token.scopes)}")
+        print(f"[E4 LIVE] packet: {len(packet.records)} evidence records, "
+              f"all ids unique={len(eids) == len(set(eids))}, notices={len(packet.notices)}")
         print(f"[E2 LIVE] all six required FHIR scopes granted: {REQUIRED_FHIR_SCOPES <= set(token.scopes)}")
         print(f"[E2 LIVE] refresh_token present: {token.refresh_token is not None} (offline_access dropped)")
         print(f"[E2 LIVE] FHIR Patient bundle total={bundle['total']} first_id={first_id}")

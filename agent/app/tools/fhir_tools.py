@@ -68,7 +68,7 @@ def map_patient(res: dict) -> PatientRecord:
         name = f"{given} {n.get('family', '')}".strip() or n.get("text")
         break
     return PatientRecord(
-        resource_id=res["id"], name=name, birth_date=_as_date(res.get("birthDate")),
+        resource_id=res.get("id") or "", name=name, birth_date=_as_date(res.get("birthDate")),
         gender=res.get("gender"),
         deceased_boolean=res.get("deceasedBoolean"),
         deceased_datetime=res.get("deceasedDateTime"),
@@ -77,7 +77,7 @@ def map_patient(res: dict) -> PatientRecord:
 
 def map_condition(res: dict) -> ConditionRecord:
     return ConditionRecord(
-        resource_id=res["id"], code=_coding_code(res.get("code")),
+        resource_id=res.get("id") or "", code=_coding_code(res.get("code")),
         display=_text_or_display(res.get("code")),
         clinical_status=_status_code(res.get("clinicalStatus")),  # rule 4: keep it
         onset=_as_date(res.get("onsetDateTime")), recorded_date=_as_date(res.get("recordedDate")),
@@ -92,7 +92,7 @@ def map_medication(res: dict) -> MedicationRecord:
     if di and isinstance(di[0], dict) and di[0].get("text"):
         dose = di[0]["text"]
     return MedicationRecord(
-        resource_id=res["id"], name=_text_or_display(res.get("medicationCodeableConcept")),
+        resource_id=res.get("id") or "", name=_text_or_display(res.get("medicationCodeableConcept")),
         rxnorm=_coding_code(res.get("medicationCodeableConcept")),
         dose_text=dose,                              # rule 6: may be None
         status=res.get("status"), intent=res.get("intent"),
@@ -106,7 +106,7 @@ def map_observation(res: dict) -> LabObservation:
     for c in res.get("category", []):
         cat = _coding_code(c) or cat
     return LabObservation(
-        resource_id=res["id"], loinc=_coding_code(res.get("code")),
+        resource_id=res.get("id") or "", loinc=_coding_code(res.get("code")),
         display=_text_or_display(res.get("code")),
         value=vq.get("value"), value_string=res.get("valueString"), unit=vq.get("unit"),
         effective=_as_date(res.get("effectiveDateTime")),
@@ -119,7 +119,7 @@ def map_encounter(res: dict) -> EncounterRecord:
     period = res.get("period") or {}
     types = res.get("type") or []
     return EncounterRecord(
-        resource_id=res["id"], status=res.get("status"),           # rule 1: non-asserted
+        resource_id=res.get("id") or "", status=res.get("status"),           # rule 1: non-asserted
         **{"class": (res.get("class") or {}).get("code")},
         type_display=_text_or_display(types[0]) if types else None,
         period_start=_as_date(period.get("start")), period_end=_as_date(period.get("end")),
@@ -133,7 +133,7 @@ def map_allergy(res: dict) -> AllergyRecord:
     if rx and rx[0].get("manifestation"):
         reaction = _text_or_display(rx[0]["manifestation"][0])
     return AllergyRecord(
-        resource_id=res["id"], substance=_text_or_display(res.get("code")),
+        resource_id=res.get("id") or "", substance=_text_or_display(res.get("code")),
         criticality=res.get("criticality"),                        # rule 2: untrusted
         clinical_status=_status_code(res.get("clinicalStatus")),
         verification_status=_status_code(res.get("verificationStatus")),

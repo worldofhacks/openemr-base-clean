@@ -79,7 +79,7 @@
   `Test:` `test_delta_computed_deterministically`, `test_no_prior_encounter_signals_refusal` (boundary). *(UC2 is Early-optional; see Cut section — ship if E1–E6 land with time.)*
 
 ### E4 — EvidencePacket builder (the only thing LLM+verifier see)
-- [ ] **E4.1 Normalize tool results → typed evidence records + stable IDs**
+- [x] **E4.1 Normalize tool results → typed evidence records + stable IDs**
   `Files:` NEW `agent/app/evidence/packet.py`
   `Anchors:` §5 (pipeline top), §4 (input-side injection enforcer), §6a ledger, F-C.6
   `Accept:` every tool result becomes an `EvidenceRecord` with stable id `ResourceType:{uuid}:{hash8}`; chart free-text is stored as **typed, delimited data — never instructions** (input-side injection containment, §4); Observation records carry their `category` so vitals/labs/social-history aren't conflated (F-S.8/F-C.6 caveat); the packet — not raw FHIR — is what the LLM and verifier consume (§6a).

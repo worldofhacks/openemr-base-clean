@@ -235,3 +235,9 @@
 - Why: A grounded, sequential record to study and defend the process in interviews.
 - Result: `docs/DEVLOG.md`, `docs/PROJECT_STORY.md`.
 - Stage: EARLY (documentation).
+
+## [2026-07-09] Build resume — Phase 0 green baseline + plan reconcile · type: milestone
+- What: Resumed the Early build. Installed the agent package (`pip install -e ".[dev]"`, Python 3.12) and ran the suite — **19 passed, 0 failed**. Confirmed the app boots (uvicorn) with `/health`→200 and a real `/ready`→503 against the LIVE OpenEMR (openemr_fhir probe HTTP 200; anthropic/session correctly down). Ticked E1.1/E1.2/E1.3 in `IMPLEMENTATION_PLAN.md` — the plan now truthfully reflects state.
+- Why: "Building properly" means a clean green baseline before stacking features; the plan must be a truthful state tracker before continuing E2→E9.
+- Result: green baseline confirmed; true next-unbuilt task = **E2.1** (authorization_code + PKCE client). No code changed (E1 already committed at `447bb19`/`e2e04e2`/`4c6f846`).
+- Stage: EARLY (E1 done, resuming at E2).

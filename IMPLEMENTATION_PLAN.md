@@ -33,17 +33,17 @@
 **Ordering is a hard dependency chain (E1→E9); parallelizable tracks marked `∥`.**
 
 ### E1 — Agent service skeleton + observability scaffold (FIRST, per §7)
-- [ ] **E1.1 FastAPI skeleton + config**
+- [x] **E1.1 FastAPI skeleton + config**
   `Files:` NEW `agent/app/main.py`, `agent/app/config.py`, `agent/pyproject.toml`, `agent/Dockerfile`
   `Anchors:` §2, D3
   `Accept:` app boots; typed settings load from env (no hardcoded secrets, D-secrets); missing required env → fail-fast at startup with a clear error (not a 500 at request time).
   `Test:` `test_config_missing_env_fails_fast` (unit); app-boot smoke test.
-- [ ] **E1.2 `/health` (liveness) + REAL `/ready` (readiness)**
+- [x] **E1.2 `/health` (liveness) + REAL `/ready` (readiness)**
   `Files:` NEW `agent/app/routes/health.py`
   `Anchors:` §2, §7 (hard/soft deps), §5a endpoint table
   `Accept:` `/health` = process 200. `/ready` checks **hard** deps (OpenEMR FHIR metadata reachable, Anthropic API, session store) → **503** with a per-dependency body when any is down; **soft** dep (Langfuse) down → still **200** with `degraded` in body (§6, §7 — must not pull the instance from rotation). No unconditional 200.
   `Test:` `test_ready_503_when_openemr_down`, `test_ready_200_degraded_when_langfuse_down` (integration, deps mocked).
-- [ ] **E1.3 Structured logging + correlation-ID middleware** (∥ with E1.2)
+- [x] **E1.3 Structured logging + correlation-ID middleware** (∥ with E1.2)
   `Files:` NEW `agent/app/middleware/correlation.py`, `agent/app/logging.py`
   `Anchors:` §3.1, §7, D10-rev, E2 (correlation minted at launch)
   `Accept:` every request has a correlation id (minted at session launch, propagated to every log line + span, §3.1); id appears as `X-Copilot-Request-Id` on outbound FHIR calls; logs are JSON with no PHI in the message field.

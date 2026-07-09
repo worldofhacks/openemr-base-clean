@@ -9,6 +9,9 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.5",
     "httpx>=0.27",
+    # LLM provider (Zone C, D4). Reached only through app/llm/provider.py's
+    # llm.complete() seam, so the model is swappable by config, not code.
+    "anthropic>=0.40",
 ]
 
 [project.optional-dependencies]

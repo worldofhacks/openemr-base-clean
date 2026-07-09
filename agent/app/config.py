@@ -16,7 +16,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=None, extra="ignore")
+    # Load the gitignored agent/.env when present (real env vars still win over it, so
+    # tests that monkeypatch.setenv stay isolated). Secrets live only in .env, never source.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # --- OpenEMR (Zone A) — read-only FHIR + OAuth surfaces (D9) ---
     openemr_fhir_base_url: HttpUrl = Field(..., description="OpenEMR FHIR R4 base, e.g. .../apis/default/fhir")
@@ -28,6 +30,12 @@ class Settings(BaseSettings):
 
     # --- LLM provider (Zone C, D4) ---
     anthropic_api_key: SecretStr = Field(...)
+    llm_model: str = Field(default="claude-sonnet-4-6", min_length=1)  # primary (D4); swap = config
+    llm_max_tokens: int = Field(default=2048, gt=0)
+    llm_max_tool_iterations: int = Field(default=6, gt=0)  # tool loop cap → D13 if not converged
+    # Small daily USD cap — first real LLM spend (E5). A trip degrades to the D13 fallback,
+    # never an uncapped bill. In-process for the demo; prod needs a shared counter.
+    daily_cost_cap_usd: float = Field(default=5.0, gt=0)
 
     # --- Session store (Postgres, D-O2 / §3a) ---
     session_store_dsn: SecretStr = Field(...)

@@ -86,12 +86,12 @@
   `Test:` `test_stable_evidence_ids`, `test_injection_text_is_delimited_data` (adversarial), `test_observation_category_preserved`.
 
 ### E5 — Orchestrator (direct Anthropic tool-use loop)
-- [ ] **E5.1 Direct tool-use loop + prompt-cached patient prefix**
+- [x] **E5.1 Direct tool-use loop + prompt-cached patient prefix**
   `Files:` NEW `agent/app/orchestrator/loop.py`, `agent/app/llm/provider.py` (thin `llm.complete()` seam, D4)
   `Anchors:` §3 (UC1), §5, D4, D6, R1 (prompt cache)
   `Accept:` runs the UC1 summary plan (fan-out → prompt assembly → stream); the stable patient-context prefix is structured for prompt-cache hits on later turns (D4/R1); the LLM is instructed to answer only in typed claims (E6); provider access is behind `llm.complete()` (swap = config, D4). Edge: 429 → backoff within turn budget before falling to D13 (§6).
   `Test:` `test_loop_emits_typed_claims`, `test_429_backoff_then_fallback` (boundary).
-- [ ] **E5.2 Deterministic degradation on LLM failure (D13)**
+- [x] **E5.2 Deterministic degradation on LLM failure (D13)**
   `Files:` extend `agent/app/orchestrator/loop.py`
   `Anchors:` §6, D13
   `Accept:` LLM hard-fail (retries exhausted/timeout) → render the EvidencePacket via the templater (grouped, values+dates, state-aware) with an explicit "generated without LLM assistance" banner; the verifier still runs; fallback rate is traced + alertable. Never "LLM failed, no answer."

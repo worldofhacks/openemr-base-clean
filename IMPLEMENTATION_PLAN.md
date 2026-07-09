@@ -62,7 +62,7 @@
   `Test:` `test_cross_patient_request_refused` (invariant), `test_session_expiry_min_of_three`, `test_session_store_down_fails_closed` (§6).
 
 ### E3 — FHIR tool layer (∥ internal tracks once contracts frozen)
-- [ ] **E3.1 Pydantic tool contracts (freeze first — source of truth)**
+- [x] **E3.1 Pydantic tool contracts (freeze first — source of truth)**
   `Files:` NEW `agent/app/tools/contracts.py`
   `Anchors:` §5a, PRD strict-schemas, D3
   `Accept:` typed input+output Pydantic models for all 6 tools + `get_changes_since_last_visit`; outputs are EvidencePacket record shapes (§5a worked example); invalid tool output → validation error surfaced as a tool failure, not a silent pass.

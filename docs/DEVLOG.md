@@ -241,3 +241,9 @@
 - Why: "Building properly" means a clean green baseline before stacking features; the plan must be a truthful state tracker before continuing E2→E9.
 - Result: green baseline confirmed; true next-unbuilt task = **E2.1** (authorization_code + PKCE client). No code changed (E1 already committed at `447bb19`/`e2e04e2`/`4c6f846`).
 - Stage: EARLY (E1 done, resuming at E2).
+
+## [2026-07-09] E2 — SMART/OAuth client + session pin (trust boundary before features) · type: milestone
+- What: **E2.1** — `app/auth/smart_client.py`: authorization_code + PKCE(S256) SMART client (SMART-conformant authorize URL with `aud`=FHIR base + EHR-launch scope; auth-code token exchange; `TokenResponse` with SecretStr + launch/patient binding). Guardrails encoded + tested: never `client_credentials` (F-S.5), never `APICSRFTOKEN` (F-S.3); disabled client → explicit `CoPilotNotEnabledError` (§6/D14). **Proved live** (Selenium-in-harness-only, opt-in `RUN_LIVE=1`): full flow against the deployed OpenEMR → token → **real FHIR data** (Patient bundle total=3, Condition 200); granted scopes `openid, offline_access, user/{Patient,Condition,AllergyIntolerance}.read`. **E2.2** — `app/session/store.py` + `migrations/001_sessions.sql`: session pinned to (clinician, patient); cross-patient request refused (`CrossPatientError` — the real enforcer since OpenEMR's check is a stub, F-S.2); lifetime = MIN(token exp, idle, turn cap); store-down → fail-closed (`SessionStoreUnavailable`, §6).
+- Why: §4 says trust-boundary + auth land before features. The pin is the true clinician↔patient guarantee (F-S.2). Proving real FHIR before "E2 done" de-risks the whole D9 data path.
+- Result: registered + enabled an auth-code client on prod (D14). Suite **34 passed, 1 skipped** (live opt-in). Commits: E2.1, E2.2. Next unbuilt = **E3.1** (freeze Pydantic tool contracts).
+- Stage: EARLY (E2 done).

@@ -55,7 +55,7 @@
   `Anchors:` §4 (Zone B), §5a SMART exchange, D2, D9, F-A.2 (S256 enforced), F-S.5
   `Accept:` completes the SMART EHR-launch code+PKCE(S256) exchange against the provisioned enabled client; **never negotiates `client_credentials`** (F-S.5) and never sends `APICSRFTOKEN` (F-S.3); token cached per session; on `launch/patient` context, binds that patient. Edge: launch against a disabled client (D14) → explicit "co-pilot not enabled" error, not a hang (§6).
   `Test:` `test_auth_code_pkce_s256_happy`, `test_refuses_client_credentials` (guardrail, F-S.5), `test_disabled_client_explicit_error` (§6).
-- [ ] **E2.2 Session store pinned to (clinician, patient)**
+- [x] **E2.2 Session store pinned to (clinician, patient)**
   `Files:` NEW `agent/app/session/store.py` (Postgres, D-O2), `agent/migrations/001_sessions.sql`
   `Anchors:` §3a lifecycles, §4, §6a ledger, D12, F-S.2
   `Accept:` session row created at launch pinned to (clinician, patient); patient switch **requires a fresh launch** (cross-patient reuse refused — the pin is the real enforcer since OpenEMR's check is a stub, F-S.2); lifetime = `MIN(token exp, idle timeout, turn cap)` (§3a); session-store unreachable → **fail-closed**, refuse to serve (§6), never serve unpinned.

@@ -275,3 +275,79 @@ async def test_fully_supported_claims_are_served():  # spec: §5 verify-then-flu
     assert len(sink.traces) == 1
     traced = [str(v).lower() for v in sink.traces[0].verdicts]
     assert any("pass" in v for v in traced)
+
+
+# ============================================================================
+# 5. Finding #1 / §6 fail-closed parse — malformed submit_claims payloads must
+#    NOT crash the serving turn (parse-don't-validate boundary).
+# ============================================================================
+
+async def test_non_dict_claim_item_does_not_crash_turn():  # spec: finding-1 / §6 fail-closed parse
+    """A non-dict item mixed into the claims list must never raise; the valid claim is served."""
+    packet = _med_packet(name="metformin", dose_text="500 mg")
+    eid = _med_evidence_id(packet)
+    # Mix a raw string (non-dict) with a fully-valid supported claim.
+    claims = [
+        "a raw string",
+        {"type": "medication", "name": "metformin", "dose": "500 mg", "evidence_ids": [eid]},
+    ]
+    prov = SubmitClaimsProvider(claims)
+    sink = InMemoryTraceSink()
+    # Must NOT raise — if it does the test fails via unhandled exception.
+    res = await _run(prov, packet, sink=sink)
+
+    # The run returned a BriefResult (not an exception).
+    assert res.source == "llm"
+
+    # The valid medication claim IS rendered and served in the output text.
+    assert "500 mg" in res.text
+
+    # The raw-string item must NOT have produced a PASS verdict (it has no evidence).
+    verdicts = [str(v).lower() for v in res.verdicts]
+    # At most one PASS (for the good medication claim); the malformed item is not a PASS.
+    # We assert on count: only the valid claim may be PASS, the raw string may not add one.
+    pass_count = sum(1 for v in verdicts if v == "pass")
+    # The only PASS-eligible claim is the well-formed medication; the raw string cannot PASS.
+    assert pass_count <= 1, "malformed non-dict item must not produce an extra PASS verdict"
+
+
+async def test_non_list_evidence_ids_does_not_crash_turn():  # spec: finding-1 / §6 fail-closed parse
+    """A claim whose evidence_ids is a scalar string must not crash the serving turn."""
+    packet = _med_packet(name="metformin", dose_text="500 mg")
+    claims = [
+        {"type": "medication", "name": "metformin", "dose": "500 mg",
+         "evidence_ids": "not-a-list"},
+    ]
+    prov = SubmitClaimsProvider(claims)
+    sink = InMemoryTraceSink()
+    # Must NOT raise — a ValidationError escaping to the caller is the bug being frozen.
+    res = await _run(prov, packet, sink=sink)
+
+    # The run returned (did not raise) and is attributed to the LLM turn.
+    assert res.source == "llm"
+
+    # The malformed claim cannot be served as PASS (its evidence lookup is broken/empty).
+    verdicts = [str(v).lower() for v in res.verdicts]
+    assert not any(v == "pass" for v in verdicts), (
+        "a claim with non-list evidence_ids must not receive a PASS verdict"
+    )
+
+
+def test_parse_claims_never_raises_on_malformed_items():  # spec: finding-1 / §6 fail-closed parse
+    """Unit: parse_claims is safe against every malformed item shape the model might emit."""
+    from app.verify.claims import Claim, parse_claims
+
+    malformed = [
+        "x",                                             # non-dict string
+        None,                                            # None
+        42,                                              # integer
+        {"type": "medication", "evidence_ids": "bad"},  # non-list evidence_ids
+    ]
+    # Must NOT raise AttributeError, ValidationError, or anything else.
+    result = parse_claims(malformed)
+
+    # Returns a list of Claim instances — every malformed item degraded, none dropped silently.
+    assert isinstance(result, list)
+    assert len(result) == len(malformed)
+    for claim in result:
+        assert isinstance(claim, Claim), f"expected Claim, got {type(claim)!r}: {claim!r}"

@@ -50,7 +50,7 @@
   `Test:` `test_correlation_id_propagates_to_logs_and_outbound_headers` (integration).
 
 ### E2 — SMART/OAuth client (trust boundary before features, §4)
-- [ ] **E2.1 authorization_code + PKCE(S256) client**
+- [x] **E2.1 authorization_code + PKCE(S256) client**
   `Files:` NEW `agent/app/auth/smart_client.py`
   `Anchors:` §4 (Zone B), §5a SMART exchange, D2, D9, F-A.2 (S256 enforced), F-S.5
   `Accept:` completes the SMART EHR-launch code+PKCE(S256) exchange against the provisioned enabled client; **never negotiates `client_credentials`** (F-S.5) and never sends `APICSRFTOKEN` (F-S.3); token cached per session; on `launch/patient` context, binds that patient. Edge: launch against a disabled client (D14) → explicit "co-pilot not enabled" error, not a hang (§6).

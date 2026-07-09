@@ -15,12 +15,19 @@ dependencies = [
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
+    # Selenium is a TEST-HARNESS-ONLY dependency (drives the interactive SMART
+    # login/consent to prove the token returns real FHIR data). The runtime agent
+    # never imports it.
+    "selenium>=4.20",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 filterwarnings = ["error::DeprecationWarning"]
+markers = [
+    "live: hits the live deployed OpenEMR / drives Selenium (opt-in via RUN_LIVE=1)",
+]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

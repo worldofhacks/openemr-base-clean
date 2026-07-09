@@ -16,7 +16,7 @@ from datetime import date
 
 import pytest
 
-from app.evidence.packet import EvidencePacket, build_evidence_packet
+from app.evidence.packet import EvidencePacket, build_evidence_packet, trim_packet
 from app.tools.contracts import (
     AllergyRecord,
     ConditionRecord,
@@ -140,6 +140,26 @@ async def test_end_to_end_null_fhir_id_from_tool_to_synthetic_packet_id():
     assert result.records[0].resource_id == ""  # tolerated, not crashed
     packet = build_evidence_packet(PID, {"get_conditions": result})
     assert "syn-" in packet.records[0].evidence_id  # synthetic fallback engaged
+
+
+# --- trim policy (E5 413 recovery) ---------------------------------------
+
+def test_trim_packet_caps_per_type_and_names_the_drop():
+    recs = [ConditionRecord(resource_id=f"c{i}", display=f"cond{i}") for i in range(10)]
+    packet = build_evidence_packet(PID, {"get_conditions": _ok("get_conditions", recs)})
+    trimmed = trim_packet(packet, 4)
+    assert len(trimmed.by_type("Condition")) == 4
+    trim = [n for n in trimmed.notices if n.kind == "trimmed"]
+    assert trim and "6" in trim[0].detail            # 10 - 4 = 6 dropped, named (never silent)
+    for r in trimmed.records:
+        assert trimmed.by_id(r.evidence_id) is not None  # kept ids still resolvable for E6
+
+
+def test_trim_packet_preserves_order_and_ids():
+    recs = [ConditionRecord(resource_id=f"c{i}", display=f"cond{i}") for i in range(5)]
+    packet = build_evidence_packet(PID, {"get_conditions": _ok("get_conditions", recs)})
+    trimmed = trim_packet(packet, 3)
+    assert [r.evidence_id for r in trimmed.records] == [r.evidence_id for r in packet.records[:3]]
 
 
 def test_by_type_and_by_id_resolution():

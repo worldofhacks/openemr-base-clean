@@ -16,9 +16,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # Load the gitignored agent/.env when present (real env vars still win over it, so
-    # tests that monkeypatch.setenv stay isolated). Secrets live only in .env, never source.
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Read only from the real process environment — never auto-load a file, so config is a
+    # deliberate wiring step and tests stay isolated. Locally, source the gitignored
+    # agent/.env into the environment before running (`set -a; . .env; set +a`); on Railway
+    # the platform injects the same vars. Secrets live in .env / the platform, never source.
+    model_config = SettingsConfigDict(env_file=None, extra="ignore")
 
     # --- OpenEMR (Zone A) — read-only FHIR + OAuth surfaces (D9) ---
     openemr_fhir_base_url: HttpUrl = Field(..., description="OpenEMR FHIR R4 base, e.g. .../apis/default/fhir")

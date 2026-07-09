@@ -155,3 +155,40 @@ def build_evidence_packet(
             ))
 
     return EvidencePacket(patient_id=patient_id, records=records, notices=notices)
+
+
+# resource_type → the tool whose notice section it belongs under (for trim notices).
+_RESOURCE_TO_TOOL: dict[str, str] = {
+    "Patient": "get_patient_summary",
+    "Condition": "get_conditions",
+    "MedicationRequest": "get_active_medications",
+    "Observation": "get_recent_labs",
+    "Encounter": "get_encounters",
+    "AllergyIntolerance": "get_allergies",
+}
+
+
+def trim_packet(packet: EvidencePacket, max_records_per_type: int) -> EvidencePacket:
+    """Return a smaller copy of `packet` keeping at most `max_records_per_type` records of each
+    resource type, with a `trimmed` notice per type that was cut. This is the E4 trim policy
+    applied post-hoc: the orchestrator uses it to recover from a 413 (prompt too large) by
+    shrinking the evidence prefix and retrying — never a silent omission (the notice names the
+    drop). Record order is preserved, so kept ids stay stable and resolvable."""
+    kept: list[EvidenceRecord] = []
+    counts: dict[str, int] = {}
+    dropped: dict[str, int] = {}
+    for r in packet.records:
+        seen = counts.get(r.resource_type, 0)
+        if seen < max_records_per_type:
+            kept.append(r)
+            counts[r.resource_type] = seen + 1
+        else:
+            dropped[r.resource_type] = dropped.get(r.resource_type, 0) + 1
+
+    notices = list(packet.notices)
+    for rt, n in dropped.items():
+        total = counts.get(rt, 0) + n
+        notices.append(Notice(
+            kind="trimmed", tool=_RESOURCE_TO_TOOL.get(rt, rt),
+            detail=f"showing {counts.get(rt, 0)} of {total} {rt}; {n} not shown (prompt-size trim)"))
+    return EvidencePacket(patient_id=packet.patient_id, records=kept, notices=notices)

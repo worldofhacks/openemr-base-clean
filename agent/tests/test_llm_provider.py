@@ -15,12 +15,23 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+import anthropic
+
 from app.llm.provider import (
     AnthropicLLMProvider,
+    LLMClientError,
+    LLMRequestTooLarge,
     LLMUnavailable,
     TextBlock,
     ToolUseBlock,
 )
+
+
+def _status_error(status: int, message="boom"):
+    """A real anthropic.APIStatusError carrying the given HTTP status (version-robust —
+    classification keys on status_code, not the subclass name)."""
+    req = httpx.Request("POST", "http://x")
+    return anthropic.APIStatusError(message, response=httpx.Response(status_code=status, request=req), body=None)
 
 
 class _FakeMessages:
@@ -112,8 +123,38 @@ async def test_omits_empty_system_and_tools():
 
 
 async def test_transport_failure_wrapped_as_llm_unavailable():
-    # Any SDK APIError (after its own retries) must surface as the single D13 trigger.
-    exc = __import__("anthropic").APIConnectionError(request=httpx.Request("POST", "http://x"))
+    # A connection error has no status → transient (graceful degradation).
+    exc = anthropic.APIConnectionError(request=httpx.Request("POST", "http://x"))
     prov = AnthropicLLMProvider(api_key="k", model="claude-sonnet-4-6", client=_FakeClient(exc=exc))
     with pytest.raises(LLMUnavailable):
         await prov.complete(system=[], messages=[{"role": "user", "content": "hi"}], tools=[])
+
+
+@pytest.mark.parametrize("status", [429, 500, 529])
+async def test_transient_statuses_wrap_as_unavailable(status):
+    prov = AnthropicLLMProvider(api_key="k", model="claude-sonnet-4-6",
+                                client=_FakeClient(exc=_status_error(status)))
+    with pytest.raises(LLMUnavailable) as ei:
+        await prov.complete(system=[], messages=[{"role": "user", "content": "hi"}], tools=[])
+    # sibling classes — a transient must NOT be mistaken for a persistent client error
+    assert not isinstance(ei.value, LLMClientError)
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 422])
+async def test_client_error_statuses_wrap_as_client_error_with_status(status):
+    prov = AnthropicLLMProvider(api_key="k", model="claude-sonnet-4-6",
+                                client=_FakeClient(exc=_status_error(status)))
+    with pytest.raises(LLMClientError) as ei:
+        await prov.complete(system=[], messages=[{"role": "user", "content": "hi"}], tools=[])
+    assert ei.value.status == status
+    assert not isinstance(ei.value, LLMRequestTooLarge)  # only 413 is the too-large case
+    assert not isinstance(ei.value, LLMUnavailable)      # distinct from transient → distinct alert
+
+
+async def test_413_wraps_as_request_too_large():
+    prov = AnthropicLLMProvider(api_key="k", model="claude-sonnet-4-6",
+                                client=_FakeClient(exc=_status_error(413)))
+    with pytest.raises(LLMRequestTooLarge) as ei:
+        await prov.complete(system=[], messages=[{"role": "user", "content": "hi"}], tools=[])
+    assert ei.value.status == 413
+    assert isinstance(ei.value, LLMClientError)  # taxonomy: a too-large is a kind of client error

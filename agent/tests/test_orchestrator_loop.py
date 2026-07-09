@@ -16,7 +16,15 @@ import pytest
 
 from app.evidence.packet import build_evidence_packet
 from app.llm.cost import DailyCostCap
-from app.llm.provider import LLMResponse, LLMUnavailable, TextBlock, ToolUseBlock, Usage
+from app.llm.provider import (
+    LLMClientError,
+    LLMRequestTooLarge,
+    LLMResponse,
+    LLMUnavailable,
+    TextBlock,
+    ToolUseBlock,
+    Usage,
+)
 from app.orchestrator.loop import (
     Orchestrator,
     ToolRegistry,
@@ -37,6 +45,12 @@ def _packet(display="Type 2 diabetes"):
     return build_evidence_packet(PID, {"get_conditions": ToolResult(
         tool="get_conditions", status=ToolStatus.OK,
         records=[ConditionRecord(resource_id="c1", display=display)])})
+
+
+def _big_packet(n=70):
+    return build_evidence_packet(PID, {"get_conditions": ToolResult(
+        tool="get_conditions", status=ToolStatus.OK,
+        records=[ConditionRecord(resource_id=f"c{i}", display=f"Condition {i}") for i in range(n)])})
 
 
 def _text_resp(text, stop="end_turn"):
@@ -163,7 +177,43 @@ async def test_llm_hard_failure_renders_grounded_fallback_with_banner():
     assert res.source == "deterministic_fallback" and res.degraded
     assert FALLBACK_BANNER in res.text
     assert "Type 2 diabetes" in res.text          # grounded in the packet, not an error
+    assert res.fallback_kind == "transient"       # graceful degradation, not a defect
     assert res.fallback_reason and "retries exhausted" in res.fallback_reason
+
+
+async def test_client_error_is_flagged_distinctly_from_transient():
+    # A 4xx recurs — it's a bug/misconfig, not graceful degradation. Still grounded for the
+    # physician, but flagged so E7 alerts on it separately (the point of the refinement).
+    prov = FakeProvider([LLMClientError("bad request", status=400)])
+    res = await Orchestrator(prov).run_previsit_brief(
+        _packet(display="Gout"), "Summarize.", tools=_empty_registry())
+    assert res.source == "deterministic_fallback" and res.degraded
+    assert res.fallback_kind == "client_error"
+    assert "Gout" in res.text
+    assert "400" in (res.fallback_reason or "")
+
+
+async def test_413_triggers_trim_retry_then_succeeds():
+    # First (full) call 413s; the loop shrinks the packet and the retry succeeds — not a
+    # blanket fallback (the user's 413-routes-to-trim requirement).
+    prov = FakeProvider([LLMRequestTooLarge("payload too large", status=413), _text_resp("brief after trim")])
+    res = await Orchestrator(prov).run_previsit_brief(_big_packet(70), "Summarize.", tools=_empty_registry())
+    assert res.source == "llm" and not res.degraded
+    assert len(prov.calls) == 2
+    first_prefix = prov.calls[0]["messages"][0]["content"][0]["text"]
+    second_prefix = prov.calls[1]["messages"][0]["content"][0]["text"]
+    assert len(second_prefix) < len(first_prefix)  # retry used a smaller (trimmed) prefix
+
+
+async def test_413_exhausting_trim_schedule_falls_back_flagged_too_large():
+    # Always-too-large → walk the whole trim schedule, then a grounded fallback flagged as a
+    # size problem (request_too_large), NOT a bug or a generic degradation.
+    prov = FakeProvider([LLMRequestTooLarge("too large", status=413)] * 10)
+    orch = Orchestrator(prov, trim_schedule=(60, 25, 10))
+    res = await orch.run_previsit_brief(_big_packet(70), "Summarize.", tools=_empty_registry())
+    assert res.source == "deterministic_fallback"
+    assert res.fallback_kind == "request_too_large"
+    assert len(prov.calls) == 4  # full + 3 trim caps, then give up
 
 
 async def test_429_exhausted_falls_back_grounded_never_errors():
@@ -183,6 +233,7 @@ async def test_cost_cap_trip_degrades_without_ever_calling_the_llm():
     res = await Orchestrator(prov, cost_cap=cap).run_previsit_brief(
         _packet(display="Asthma"), "Summarize.", tools=_empty_registry())
     assert res.source == "deterministic_fallback"
+    assert res.fallback_kind == "cost_cap"
     assert prov.calls == []          # spend prevented — LLM never called
     assert "Asthma" in res.text
     assert "cost cap" in (res.fallback_reason or "").lower()
@@ -194,6 +245,7 @@ async def test_tool_iteration_cap_falls_back_not_infinite_loop():
     res = await Orchestrator(prov, max_tool_iterations=3).run_previsit_brief(
         _packet(display="CKD"), "Summarize.", tools=reg)
     assert res.degraded and res.source == "deterministic_fallback"
+    assert res.fallback_kind == "no_convergence"
     assert res.iterations == 3 and len(stub.invoked_with) == 3
     assert "CKD" in res.text
 

@@ -25,11 +25,12 @@ import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
-from app.evidence.packet import EvidencePacket
+from app.evidence.packet import EvidencePacket, trim_packet
 from app.llm.cost import CostCapExceeded, DailyCostCap
 from app.llm.provider import (
-    ContentBlock,
+    LLMClientError,
     LLMProvider,
+    LLMRequestTooLarge,
     LLMResponse,
     LLMUnavailable,
     TextBlock,
@@ -37,6 +38,10 @@ from app.llm.provider import (
     Usage,
 )
 from app.verify.templater import render_packet_fallback
+
+# Records-per-type caps tried on successive 413s before giving up (D13 fallback). The
+# evidence packet is the dominant source of prompt size, so shrinking it is the fix.
+_DEFAULT_TRIM_SCHEDULE: tuple[int, ...] = (60, 25, 10)
 
 # Frozen — no volatile data (dates, ids) may enter this string or the cache breaks (R1).
 SYSTEM_PROMPT = (
@@ -124,6 +129,9 @@ class BriefResult:
     iterations: int
     tool_calls: list[str] = field(default_factory=list)
     fallback_reason: str | None = None
+    # Machine-readable degradation class for E7 alerting. "transient" is graceful
+    # degradation; "client_error" / "request_too_large" signal a defect to alert on.
+    fallback_kind: str | None = None  # transient|client_error|request_too_large|cost_cap|no_convergence
 
 
 def _assistant_content(resp: LLMResponse) -> list[dict]:
@@ -139,13 +147,36 @@ def _assistant_content(resp: LLMResponse) -> list[dict]:
 
 class Orchestrator:
     def __init__(self, provider: LLMProvider, *, max_tool_iterations: int = 6,
-                 cost_cap: DailyCostCap | None = None):
+                 cost_cap: DailyCostCap | None = None,
+                 trim_schedule: tuple[int, ...] = _DEFAULT_TRIM_SCHEDULE):
         self.provider = provider
         self.max_tool_iterations = max_tool_iterations
         self.cost_cap = cost_cap
+        self.trim_schedule = trim_schedule
 
     async def run_previsit_brief(self, packet: EvidencePacket, question: str, *,
                                  tools: ToolRegistry) -> BriefResult:
+        # A 413 (prompt too large) is not a blanket fallback: shrink the evidence packet and
+        # retry down the trim schedule. Only when even the smallest packet is too large do we
+        # fall back — flagged `request_too_large` so E7 can see it's a size problem, not a bug.
+        last_too_large: LLMRequestTooLarge | None = None
+        for cap in (None, *self.trim_schedule):
+            working = packet if cap is None else trim_packet(packet, cap)
+            try:
+                return await self._attempt(working, question, tools)
+            except LLMRequestTooLarge as exc:
+                last_too_large = exc
+
+        floor = trim_packet(packet, self.trim_schedule[-1]) if self.trim_schedule else packet
+        return self._fallback(
+            floor, Usage(), 0, [], "request_too_large",
+            f"prompt too large even after trimming to {self.trim_schedule[-1] if self.trim_schedule else 'n/a'}"
+            f"/type: {last_too_large}")
+
+    async def _attempt(self, packet: EvidencePacket, question: str,
+                       tools: ToolRegistry) -> BriefResult:
+        """One tool-use loop over a (possibly trimmed) packet. Returns a BriefResult for any
+        terminal outcome; RE-RAISES LLMRequestTooLarge so the caller can trim and retry."""
         system = build_system_blocks()
         messages: list[dict] = [{"role": "user", "content": build_initial_user_content(packet, question)}]
         tool_defs = tools.anthropic_tools()
@@ -157,12 +188,19 @@ class Orchestrator:
                 try:
                     self.cost_cap.guard()
                 except CostCapExceeded as exc:
-                    return self._fallback(packet, total, iteration - 1, tool_calls, f"cost cap: {exc}")
+                    return self._fallback(packet, total, iteration - 1, tool_calls, "cost_cap", f"cost cap: {exc}")
 
             try:
                 resp = await self.provider.complete(system=system, messages=messages, tools=tool_defs)
+            except LLMRequestTooLarge:
+                raise  # bubble up to trim-and-retry (must precede the LLMClientError clause)
             except LLMUnavailable as exc:
-                return self._fallback(packet, total, iteration - 1, tool_calls, f"LLM unavailable: {exc}")
+                return self._fallback(packet, total, iteration - 1, tool_calls, "transient",
+                                      f"LLM transient failure — retries exhausted; graceful degradation: {exc}")
+            except LLMClientError as exc:
+                return self._fallback(packet, total, iteration - 1, tool_calls, "client_error",
+                                      f"LLM client error HTTP {exc.status} — likely bug/misconfig, not "
+                                      f"normal degradation: {exc}")
 
             total = total.add(resp.usage)
             if self.cost_cap is not None:
@@ -183,10 +221,10 @@ class Orchestrator:
 
         # Tool loop did not converge within the cap → deterministic partial answer (D13).
         return self._fallback(packet, total, self.max_tool_iterations, tool_calls,
-                              "tool-use iteration cap reached before a final answer")
+                              "no_convergence", "tool-use iteration cap reached before a final answer")
 
     def _fallback(self, packet: EvidencePacket, usage: Usage, iterations: int,
-                  tool_calls: list[str], reason: str) -> BriefResult:
+                  tool_calls: list[str], kind: str, reason: str) -> BriefResult:
         return BriefResult(
             text=render_packet_fallback(packet),
             source="deterministic_fallback",
@@ -195,4 +233,5 @@ class Orchestrator:
             iterations=iterations,
             tool_calls=tool_calls,
             fallback_reason=reason,
+            fallback_kind=kind,
         )

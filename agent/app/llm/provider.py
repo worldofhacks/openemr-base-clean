@@ -4,11 +4,19 @@ This is the ONLY module that imports the Anthropic SDK. The orchestrator depends
 the normalized `LLMResponse`/`Usage`/block types below — never on SDK internals — so
 swapping models (Sonnet 4.6 ↔ Haiku 4.5, D4) is a config change, not a code change.
 
-Failure contract: the Anthropic SDK already retries 429/5xx with backoff (its
-`max_retries`). When it still fails — transport error, timeout, retries exhausted —
-we wrap it into a single `LLMUnavailable`. That is the one exception the orchestrator's
-D13 deterministic fallback keys on, so "the physician always gets something grounded"
-(§6) has exactly one trigger to catch, not a scattered SDK exception surface.
+Failure contract (classified, so E7 can alert on the two kinds separately):
+  * `LLMUnavailable` — TRANSIENT: 429 / 5xx (500/529) / timeout / connection error, after
+    the SDK's own retry-with-backoff (`max_retries`). This is genuine graceful degradation
+    → the orchestrator renders the D13 fallback.
+  * `LLMClientError` — PERSISTENT client error: a 4xx (400/401/403/422 …) that will recur on
+    retry because it signals a bug, misconfig, or bad request. Carries the HTTP status. The
+    orchestrator still returns a grounded answer, but flags it distinctly so E7 alerts on it
+    as a defect, not as normal degradation.
+  * `LLMRequestTooLarge` — 413 specifically (a `LLMClientError`): the assembled prompt is too
+    big. The orchestrator routes this to the trim policy (shrink the evidence packet and
+    retry) rather than a blanket fallback.
+All three derive from `LLMError`, so "the physician always gets something grounded" (§6) still
+has a single base to catch, while the subclasses drive distinct handling and alerting.
 
 Prompt caching (R1) is not done here: the caller passes `system`/`messages` content
 blocks that already carry `cache_control` breakpoints (assembled in the orchestrator),
@@ -23,9 +31,40 @@ from typing import Any, Protocol, runtime_checkable
 import anthropic
 
 
-class LLMUnavailable(RuntimeError):
-    """The model could not be reached / failed after the SDK's own retries. Signals the
-    orchestrator to fall back to the deterministic D13 render (never a raw error to the user)."""
+class LLMError(RuntimeError):
+    """Base for every failure surfaced by the provider seam."""
+
+
+class LLMUnavailable(LLMError):
+    """TRANSIENT failure (429 / 5xx / timeout / connection) after the SDK's own retries.
+    Genuine graceful degradation → the orchestrator renders the deterministic D13 fallback."""
+
+
+class LLMClientError(LLMError):
+    """PERSISTENT client-side error (a 4xx that recurs on retry): a bug, misconfig, or bad
+    request. Carries the HTTP status so E7 alerts on it as a defect, not normal degradation."""
+
+    def __init__(self, message: str, *, status: int):
+        super().__init__(message)
+        self.status = status
+
+
+class LLMRequestTooLarge(LLMClientError):
+    """413 — the assembled prompt is too large. Routed to the trim policy (shrink the
+    evidence packet and retry), not a blanket fallback."""
+
+
+def classify_llm_error(exc: BaseException) -> LLMError:
+    """Map a raised SDK/transport error to the seam's taxonomy by HTTP status. Status-driven
+    (not subclass-name-driven) so it is robust across anthropic SDK versions."""
+    status = getattr(exc, "status_code", None)
+    label = f"{type(exc).__name__}: {exc}"
+    if status == 413:
+        return LLMRequestTooLarge(label, status=413)
+    if status is not None and 400 <= status < 500 and status != 429:
+        return LLMClientError(label, status=status)  # 400/401/403/422/… — recurs → defect
+    # 429, 5xx, or no status (connection/timeout) → transient, keep serving via D13.
+    return LLMUnavailable(label)
 
 
 # --- normalized response types (SDK-agnostic; the loop depends only on these) ---
@@ -136,9 +175,9 @@ class AnthropicLLMProvider:
         try:
             raw = await self._client.messages.create(**kwargs)
         except (anthropic.APIError, TimeoutError) as exc:
-            # SDK already backed off on 429/5xx (max_retries); a failure here is terminal
-            # for this turn → single D13 trigger. Original chained for the trace/logs.
-            raise LLMUnavailable(f"{type(exc).__name__}: {exc}") from exc
+            # SDK already backed off on 429/5xx (max_retries). Classify what remains so the
+            # orchestrator can degrade (transient), flag a defect (client error), or trim (413).
+            raise classify_llm_error(exc) from exc
         return LLMResponse(
             content=_normalize_content(getattr(raw, "content", [])),
             stop_reason=getattr(raw, "stop_reason", None),

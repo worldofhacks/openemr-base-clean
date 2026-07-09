@@ -22,7 +22,7 @@ Original PRD: `Week_1_AgentForge.pdf` (repo/project root). Deliverables checklis
 - O3 submission portal + GitLab mirror requirement (staff answer pending — logistics).
 - Demo-data richness for labs/trends (Stage 1 confirmed the Synthea set is rich enough for UC1–UC4; heavy-patient pid=7 is the load worst case, F-P.3).
 - Verify-then-flush streaming granularity (per-block verification UX) — stream-interruption handling now specified in §6.
-- Langfuse self-host alert delivery channel — resolved to checker→webhook/Slack in §7; still a known op tension (self-host alerting thinner than SaaS).
+- Langfuse alert delivery channel — resolved to checker→webhook/Slack in §7. *(Revised 2026-07-08: D5 flipped to Langfuse Cloud under an assumed BAA, so the original "self-host alerting thinner than SaaS" tension is gone; the checker now reads the cloud API. Remaining tension = vendor dependency, owned via the MIT self-host exit.)*
 - Parallel fan-out cap (D10): pick concurrency limit after observing OpenEMR under k6 (§7 load tests).
 - Note: voice I/O (D11) was cut from wk1 scope on 2026-07-06 — do not resurrect without the user's say-so; prior analysis in DECISIONS.md D11 + git history.
 

@@ -105,8 +105,8 @@ wipe volumes for a from-scratch reinstall).
 │  │ openemr-volume:   │                     │   mysql     │  │
 │  │ /var/www/localhost│                     └─────────────┘  │
 │  │ /htdocs/openemr/  │                                      │
-│  │ sites             │   (room for later: agent service,    │
-│  └───────▲───────────┘    Langfuse stack)                   │
+│  │ sites             │   (room for later: agent service —   │
+│  └───────▲───────────┘    Langfuse is cloud-hosted, D5 rev) │
 │          │ :80 (HTTP, dual-stack)                           │
 └──────────┼──────────────────────────────────────────────────┘
            │ TLS terminated at Railway edge
@@ -115,10 +115,13 @@ wipe volumes for a from-scratch reinstall).
 
 - **No compose in production** — each container is a Railway service; the compose
   files in this repo are local-dev only.
-- One Railway project (`openemr`) so the later agent service and Langfuse stack can
-  join it. Services: `openemr` (app) and the managed MySQL (template display name
-  "MySQL"; its private DNS alias is already lowercase `mysql.railway.internal`, and
-  reference variables use `${{MySQL.*}}`).
+- One Railway project (`openemr`) so the later agent service can join it. Services:
+  `openemr` (app) and the managed MySQL (template display name "MySQL"; its private
+  DNS alias is already lowercase `mysql.railway.internal`, and reference variables
+  use `${{MySQL.*}}`). No Langfuse services deploy here — observability is Langfuse
+  Cloud under an assumed BAA (D5 rev 2026-07-08): the agent service gets
+  `LANGFUSE_HOST` (demo: `https://us.cloud.langfuse.com`; production:
+  `https://hipaa.cloud.langfuse.com` + signed BAA) plus project keys as env vars.
 
 ### Environment variables (openemr service)
 

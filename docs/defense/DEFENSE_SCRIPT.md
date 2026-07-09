@@ -179,7 +179,7 @@ Three states, three mandatory phrasings. Collapsing them is how a failed allergy
 
 ## 8 · Observability
 
-**Chose:** correlation IDs end-to-end + self-hosted Langfuse inside my own deployment.
+**Chose:** correlation IDs end-to-end + Langfuse Cloud under an assumed BAA.
 
 ```
 request → correlation ID minted
@@ -190,13 +190,14 @@ request → correlation ID minted
 
 **Considered:**
 
+- Self-hosted Langfuse (my own v1 of this decision)
 - LangSmith
 - Braintrust
 
 **Why mine wins:**
 
-- Traces contain PHI. Self-hosting keeps PHI inside my trust boundary — **no observability SaaS ever sees patient data.** That's a compliance argument, not a tooling preference.
-- LangSmith's per-trace pricing scales badly (~$2.5K/month at 1M traces) and is LangChain-shaped. Braintrust is eval-first and closed SaaS — same PHI egress problem.
+- Traces contain PHI. Langfuse Cloud offers a **BAA** — a dedicated HIPAA data region — so the observability vendor sits in **the same assumed-BAA posture as the LLM provider**, traces are minimized to hashes, and the MIT self-host migration path stays as my exit. That's a compliance argument, not a tooling preference — and it's why self-hosting (my v1) no longer earns its four-service ops cost.
+- LangSmith's per-trace pricing scales badly (~$2.5K/month at 1M traces) and is LangChain-shaped. Braintrust is eval-first, closed SaaS at $249/mo, no equivalent BAA story at that tier.
 - Dashboard covers the required minimum and more: requests, error rate, p50/p95, tool calls, retries, verification pass/fail, cost per request. Four alerts with runbooks: p95 latency, error rate, tool-failure rate, LLM-fallback rate.
 
 ---
@@ -222,7 +223,7 @@ request → correlation ID minted
 
 ## 10 · Deployment
 
-**Chose:** Railway — one project: OpenEMR (image + volume) · managed MySQL · agent service · Langfuse stack.
+**Chose:** Railway — one project: OpenEMR (image + volume) · managed MySQL · agent service. (Langfuse is cloud-hosted — nothing observability-shaped to operate.)
 
 ```
 git push → GitHub Actions: tests + evals → green → Railway deploys

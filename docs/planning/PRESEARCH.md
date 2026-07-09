@@ -29,7 +29,7 @@ Agentic multi-turn chatbot w/ tool use; verification layer (source attribution +
 Prompt-injection defense (eval case "inputs that attempt to extract unauthorized info" implies it); graceful degradation when OpenEMR/LLM/observability is down; conversation state management scoped to (clinician, patient) pair; audit logging of agent access to PHI (HIPAA audit-controls implication); latency budget "seconds, not minutes" → streaming + caching; demo-data-only guard.
 
 ### External Dependencies
-OpenEMR fork (PHP/Laminas + MariaDB), Anthropic API (assumed BAA), self-hosted Langfuse, Railway (D8), GitHub (+ optional GitLab mirror).
+OpenEMR fork (PHP/Laminas + MariaDB), Anthropic API (assumed BAA), Langfuse Cloud *(assumed BAA — revised 2026-07-08 from self-hosted, see DECISIONS.md D5 revision)*, Railway (D8), GitHub (+ optional GitLab mirror).
 
 ### Ambiguities / Open Questions
 See OPEN QUESTIONS section below.
@@ -62,7 +62,7 @@ Default mode; production-grade posture (both confirmed by Alex 2026-07-06). MVP-
 Nurse (different ACL profile), resident (supervised access), practice admin (no clinical data). Architecture must not preclude them: authz model is role-based via OpenEMR scopes, so adding them is config, not redesign.
 
 ### Non-Human Actors
-Agent service (OAuth2 client, acts *as* the launching clinician — never as a super-user); Langfuse worker; health/readiness probes; load-test harness; CI deploy job.
+Agent service (OAuth2 client, acts *as* the launching clinician — never as a super-user); Langfuse Cloud trace export *(revised 2026-07-08: no self-hosted Langfuse worker)*; health/readiness probes; load-test harness; CI deploy job.
 
 ### Permission Matrix
 | Actor | Can | Cannot | Risk if violated |

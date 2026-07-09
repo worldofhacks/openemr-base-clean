@@ -14,9 +14,9 @@ For the LLM, I chose Claude Sonnet 4.6 as primary with Haiku 4.5 for cheap utili
 
 The most important layer is deterministic verification. Tool results are normalized into an evidence packet with stable evidence IDs — the packet is the only thing the model sees. The model must answer in typed, structured claims — a medication claim is fields: name, dose, status — each carrying evidence IDs. The verifier does field-level comparison against the cited record: reject on contradiction, not absence. Then the text the physician reads is re-rendered deterministically from the verified fields; the model's own prose is discarded if it diverges. The model drafts; the verifier decides; the model cannot phrase its way past verification.
 
-Observability and evals are built in from day one. Every request gets a correlation ID at birth that rides every log line, tool call, and LLM span — and travels to OpenEMR as an `X-Copilot-Request-Id` header so traces join across systems. Traces land in self-hosted Langfuse inside my own deployment: no observability SaaS ever receives PHI. Evals are pytest-based and deterministic; every case is tagged boundary, invariant, or regression — happy-path-only suites explicitly fail this brief — and an adversarial set is hand-built to try to beat my own verifier.
+Observability and evals are built in from day one. Every request gets a correlation ID at birth that rides every log line, tool call, and LLM span — and travels to OpenEMR as an `X-Copilot-Request-Id` header so traces join across systems. Traces land in Langfuse Cloud under an assumed BAA — the same PRD-sanctioned posture as the LLM provider — and are PHI-minimized to hashes, not identifiers; the named production path is Langfuse's dedicated HIPAA data region with a signed BAA before any real PHI. Evals are pytest-based and deterministic; every case is tagged boundary, invariant, or regression — happy-path-only suites explicitly fail this brief — and an adversarial set is hand-built to try to beat my own verifier.
 
-For deployment, I chose Railway: one project containing OpenEMR (Docker image plus volume), managed MySQL, the agent service, and the Langfuse stack. In a one-week solo sprint, engineering hours are the scarcest resource, and Railway converts ops — TLS, domains, deploys, per-service metrics — to zero. The tradeoffs are documented, not hidden: no known prior art for OpenEMR on Railway (timeboxed pathfinding, with local-compose parity for continuity), a real 2025–26 outage record (the production answer is exiting managed PaaS at scale, and it's in my cost analysis), and usage-based cost monitored from day one. Local dev remains Docker Compose for parity. This is demo-data-only; I would not represent it as production-ready for real PHI.
+For deployment, I chose Railway: one project containing OpenEMR (Docker image plus volume), managed MySQL, and the agent service — observability is Langfuse Cloud, so no observability services to operate. In a one-week solo sprint, engineering hours are the scarcest resource, and Railway converts ops — TLS, domains, deploys, per-service metrics — to zero. The tradeoffs are documented, not hidden: no known prior art for OpenEMR on Railway (timeboxed pathfinding, with local-compose parity for continuity), a real 2025–26 outage record (the production answer is exiting managed PaaS at scale, and it's in my cost analysis), and usage-based cost monitored from day one. Local dev remains Docker Compose for parity. This is demo-data-only; I would not represent it as production-ready for real PHI.
 
 The architecture is intentionally conservative: keep OpenEMR authoritative, add AI as an isolated read-only sidecar, retrieve minimum necessary data with the user's own authority, verify every clinical claim field-by-field, fail closed on authorization and patient-context errors, refuse rather than guess when data is ambiguous, and stay transparent when data is missing or tools fail.
 
@@ -58,7 +58,7 @@ Constraint + phrasing rules → pass | flag | block | refuse(kind)
         ↓
 Source-cited streamed response → Physician in OpenEMR
         ↓
-Trace → self-hosted Langfuse (tokens, cost, latency, verdicts)
+Trace → Langfuse Cloud, assumed BAA (tokens, cost, latency, verdicts)
 ```
 
 **Core principle:** OpenEMR is the source of truth. The LLM is a drafting component, not the authority. The verifier decides.
@@ -78,7 +78,7 @@ Trace → self-hosted Langfuse (tokens, cost, latency, verdicts)
 | DB access | None at runtime | Direct SQL would bypass authorization; audit-research only |
 | LLM | Claude Sonnet 4.6 + Haiku 4.5, thin provider seam | ~40–50% cheaper than equivalent class; 90% prompt-cache discount matches traffic shape |
 | Verification | EvidencePacket → typed claims → field-match → templater | Deterministic safety gate; model prose never reaches the screen |
-| Observability | Correlation IDs + self-hosted Langfuse | PHI never leaves our deployment; dashboards, cost, verdicts |
+| Observability | Correlation IDs + Langfuse Cloud (assumed BAA) | Same BAA posture as the LLM provider; PHI-minimized traces; dashboards, cost, verdicts |
 | Evals | pytest, boundary/invariant/regression-tagged + adversarial | Happy-path-only fails the brief; evals gate deploys |
 | API collection | Bruno (repo-committed) | Graders run workflows without reading source |
 | Load testing | k6 @ 10/50 concurrent users | p50/p95/p99 + error rate baselines required |
@@ -158,10 +158,11 @@ Why: authorization is enforced by OpenEMR's own certified OAuth2/SMART scopes an
 
 ## 4.8 Observability Stack
 
-**Chosen: correlation IDs everywhere + self-hosted Langfuse (in-project).**
-Every request: ID minted at session start, on every log line, tool call, LLM span — and propagated to OpenEMR as `X-Copilot-Request-Id`, so agent traces join the EHR's own API log. Langfuse dashboards: request count, error rate, p50/p95 latency, tool calls, retries, verification pass/fail, token cost per request. **Alerts (≥3, runbook-documented):** p95 latency (threshold re-baselined from measured data), error rate > 5%, tool-failure rate > 10%, plus LLM-fallback rate.
-**Not chosen: LangSmith.** SaaS traces carry PHI to a third party, and per-trace pricing scales badly (~$2.5K/mo at 1M traces).
-**Not chosen: Braintrust.** Best-in-class evals, same PHI-egress problem; our evals are pytest + Langfuse datasets.
+**Chosen: correlation IDs everywhere + Langfuse Cloud under an assumed BAA.**
+Every request: ID minted at session start, on every log line, tool call, LLM span — and propagated to OpenEMR as `X-Copilot-Request-Id`, so agent traces join the EHR's own API log. Langfuse offers a BAA — a dedicated HIPAA data region (Pro plan+, signed BAA) — so the observability vendor sits in the same assumed-BAA posture as the LLM provider; demo runs on the cloud free tier under the demo-data-only rule, and the MIT self-host migration path is the documented exit if vendor terms change. Langfuse dashboards: request count, error rate, p50/p95 latency, tool calls, retries, verification pass/fail, token cost per request. **Alerts (≥3, runbook-documented):** p95 latency (threshold re-baselined from measured data), error rate > 5%, tool-failure rate > 10%, plus LLM-fallback rate.
+**Not chosen: self-hosted Langfuse (my own v1 of this decision).** Once the vendor offers a BAA, self-hosting buys no compliance advantage and costs a four-service stack (web/worker + Postgres + ClickHouse + Redis) plus its ops in a one-week sprint.
+**Not chosen: LangSmith.** Per-trace pricing scales badly (~$2.5K/mo at 1M traces) and it's LangChain-shaped.
+**Not chosen: Braintrust.** Best-in-class evals but closed SaaS at $249/mo with no equivalent BAA story at that tier; our evals are pytest + Langfuse datasets.
 **Not logged by default:** raw FHIR payloads, full prompts/responses, tokens/keys/secrets, patient identifiers in traces beyond hashes.
 
 ## 4.9 Eval and Testing Stack
@@ -175,9 +176,9 @@ Every case is tagged **boundary** (empty record, malformed query, huge chart), *
 
 ## 4.10 Deployment Stack
 
-**Chosen: Railway — one project: OpenEMR (image + volume), managed MySQL, agent service, Langfuse services.**
+**Chosen: Railway — one project: OpenEMR (image + volume), managed MySQL, agent service. (Langfuse is cloud-hosted — no observability services to run.)**
 Why: in a one-week solo sprint the scarcest resource is engineering hours; Railway zeroes out TLS, domains, deploy pipeline, DB provisioning, per-service metrics — and SMART/OAuth requires HTTPS everywhere, which comes free. Deploy-on-push waits on CI checks → the eval gate survives. Rollback is one click to a previous deployment.
-**Tradeoffs owned out loud:** no known OpenEMR-on-Railway prior art (timeboxed pathfinding; local-compose parity keeps the demo alive during any migration hiccup); a real 2025–26 platform outage record (contingency: one-click redeploy of previous deployments; production answer: exit managed PaaS at the ~10K-user tier — it's in the cost analysis); usage-based cost variance (monitored day one; Langfuse Cloud free tier as flagged fallback under the demo-data-only rule).
+**Tradeoffs owned out loud:** no known OpenEMR-on-Railway prior art (timeboxed pathfinding; local-compose parity keeps the demo alive during any migration hiccup); a real 2025–26 platform outage record (contingency: one-click redeploy of previous deployments; production answer: exit managed PaaS at the ~10K-user tier — it's in the cost analysis); usage-based cost variance (monitored day one — and smaller since the D5 revision removed the memory-hungry self-hosted ClickHouse from the project).
 **Not chosen: VPS + Compose (my own v1).** Strongest control/cost story and compose parity, but spends the week's scarcest resource on undifferentiated ops.
 **Not chosen: AWS ECS/Fargate, Kubernetes.** Production-plausible, deadline-implausible; the risk this week is safe brownfield AI integration, not orchestration.
 **Production evolution (before real PHI):** BAA-covered vendors end-to-end, private networking, secrets manager, managed DB with backups/restore tests, SIEM/audit-log review, MFA/session policy, incident response, clinical validation.
@@ -232,7 +233,7 @@ Unsupported clinical claims are never displayed with a weak confidence score. Th
 - FHIR/REST behind OpenEMR's authorization — no runtime DB credentials anywhere in the agent.
 - Tool whitelist; no arbitrary SQL/HTTP/shell/web tools; no cross-patient search.
 - Secrets in Railway env vars / non-committed .env; never in code, prompts, or logs; tokens backend-held, never in browser storage; nothing token-like ever logged.
-- PHI-minimized traces (hashes, not identifiers); self-hosted observability so no third-party SaaS receives PHI; the single PHI egress is the LLM provider under the PRD's assumed BAA.
+- PHI-minimized traces (hashes, not identifiers); exactly **two** PHI egress points, both under the PRD's assumed BAAs — the LLM provider and Langfuse Cloud — each inventoried with an incident-response owner; production path for observability is Langfuse's HIPAA data region + signed BAA.
 - **Prompt injection:** chart notes and documents are untrusted *data*, never instructions — delimited and hardened in the system prompt; the read-only tool surface means worst-case injection yields wrong words, not wrong writes; the verifier catches unsupported words; injection fixtures live in the eval suite.
 - Model output is untrusted until verified and sanitized before render.
 
@@ -240,7 +241,7 @@ Unsupported clinical claims are never displayed with a weak confidence score. Th
 
 # 9. Deployment and Operations
 
-**MVP deployment (Railway project):** OpenEMR (Docker image + `sites/` volume) + managed MySQL + FastAPI agent service + Langfuse service group. Railway-managed TLS and domains. Local dev = Docker Compose (dev-easy) for parity.
+**MVP deployment (Railway project):** OpenEMR (Docker image + `sites/` volume) + managed MySQL + FastAPI agent service; observability exports to Langfuse Cloud (external, assumed BAA — D5 rev). Railway-managed TLS and domains. Local dev = Docker Compose (dev-easy) for parity.
 
 **CI/CD gates:** unit tests → mocked integration tests → security/adversarial tests → deterministic eval subset → secret scan + dependency audit → Railway deploys only on green → `/ready` healthcheck validates OpenEMR FHIR metadata, LLM provider, Langfuse, and session store — real checks, no unconditional 200.
 
@@ -295,7 +296,7 @@ The physician gets faster access to patient context. OpenEMR remains the source 
 "Tool failure: bounded retries, then a partial answer that names what's missing — never silent. LLM down: the templater renders the evidence packet directly — degraded but grounded, with an explicit 'no LLM synthesis' banner. A deceased indicator is a hard-stop before any summarization. Ambiguous data — can't reliably resolve the prior visit — the agent refuses and says check the chart. Refusal is a feature: the confidently wrong answer is what kills clinical trust. And the non-goals are explicit: no diagnosis, no prescribing, no orders, no chart writes — read-only by construction, so worst-case prompt injection produces wrong words, never wrong writes."
 
 **[3:30–4:15] Observability & evals**
-"Every request mints a correlation ID that rides every log line, tool call, and LLM span — and goes to OpenEMR as an X-Copilot-Request-Id header, so traces join across both systems' logs. Traces land in Langfuse, self-hosted inside my deployment — no observability SaaS ever sees PHI. Dashboard: requests, error rate, p50/p95, tool calls, verification pass/fail, cost per request; alerts on p95 latency, error rate, tool-failure rate, and fallback rate — each with a runbook. Evals are pytest: every case tagged boundary, invariant, or regression — empty records, cross-patient leakage, injection attempts — plus adversarial cases hand-built to beat my own verifier. Evals gate every deploy."
+"Every request mints a correlation ID that rides every log line, tool call, and LLM span — and goes to OpenEMR as an X-Copilot-Request-Id header, so traces join across both systems' logs. Traces land in Langfuse Cloud under an assumed BAA — the same posture as the LLM provider — minimized to hashes, never raw identifiers. Dashboard: requests, error rate, p50/p95, tool calls, verification pass/fail, cost per request; alerts on p95 latency, error rate, tool-failure rate, and fallback rate — each with a runbook. Evals are pytest: every case tagged boundary, invariant, or regression — empty records, cross-patient leakage, injection attempts — plus adversarial cases hand-built to beat my own verifier. Evals gate every deploy."
 
 **[4:15–4:45] Stack, one line each**
 "Claude Sonnet 4.6: three dollars in, fifteen out, versus five and thirty for GPT-5.5 — same capability class, and its ninety-percent prompt-cache discount matches my exact traffic: the same patient prefix every turn. Haiku for cheap utility calls, thin provider seam for the exit. Pydantic contracts on every tool boundary. No agent framework — one agent, six read-only tools, a loop I defend line by line. Railway: one project, all services; deploy-on-green, one-click rollback; its outage record and cost curve are documented risks, and the exit-at-scale is in my cost analysis. Load-tested with k6 at ten and fifty concurrent users for baselines."

@@ -2,6 +2,7 @@
 
 > Status: rough draft for adversarial finalization (`/arch-finalize` → repo-root `ARCHITECTURE.md`, which must open with a ~500-word summary per PRD).
 > Posture: **production-grade**. Mode: Default. Decisions referenced as D# (DECISIONS.md).
+> **Superseded note (2026-07-08):** this draft predates the D5 revision — Langfuse is now **Langfuse Cloud under an assumed BAA**, not self-hosted in the Railway project. Every "Langfuse (self-hosted)" reference below is historical; the binding text is repo-root `ARCHITECTURE.md` + DECISIONS.md D5 revision 2026-07-08.
 
 ## §1 System Overview
 

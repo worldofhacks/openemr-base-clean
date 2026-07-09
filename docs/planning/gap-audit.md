@@ -85,7 +85,7 @@ No blank cells. Every `partial` maps to a finding id resolved below or an explic
 - **G7(ops)** F-S.9 deploy caveats not in ops → folded into §4/§6 (https-pin, close proxy) via T3.
 - **G8-2** D14 "registers-disabled" vs F-S.6 "manual-approval" wording → reconciled in D14 text (same gate; both mechanisms named).
 - **G9-2** Encounter.status=finished non-assertion rule missing from draft §5 list → added to ARCHITECTURE.md §5 rule 1.
-- **G7-2** Langfuse self-hosted alert delivery is an unresearched op assumption + open item → resolved by G2 (delivery channel stated) and carried as a known tension in the handoff.
+- **G7-2** Langfuse self-hosted alert delivery is an unresearched op assumption + open item → resolved by G2 (delivery channel stated) and carried as a known tension in the handoff. *(Superseded 2026-07-08: D5 revised to Langfuse Cloud — the self-host alerting tension no longer exists; checker→webhook stands against the cloud API.)*
 - **G8 / G9-3 / G8-3** — positive confirmations (no action): correlation-ID/api_log revision fully consistent; UC↔capability trace clean both directions; no residual hard-join or scope∧ACL claim survives in live body text.
 - **T5-T8** eval nice-to-haves (LLM-judge pinning, ground-truth source, gate scope) → folded into §8 where concrete.
 

@@ -14,9 +14,9 @@ The Clinical Co-Pilot is a **read-only, multi-turn conversational agent** that g
 
 **Verification (D7 / §5) is the load-bearing trust mechanism**, and the audit proved it is not optional theater: the stock FHIR Immunization mapper inverts status so **every completed vaccine reports as "patient refused"** (F-D.1). The agent therefore never surfaces a FHIR field verbatim — every tool result is normalized into an **EvidencePacket** of typed evidence records, the model answers in **typed claims carrying evidence_ids**, a deterministic verifier rejects on field-level contradiction, and a **deterministic templater re-renders the displayed text from verified fields** so the model cannot phrase its way past a check. Concrete rules the audit forced: empty allergy → "confirm with patient," never "NKDA" (F-D.5); never infer allergy risk from the (dataset-wide null) criticality field (F-D.4); consume all conditions (F-D.6); flag stale labs.
 
-**Observability (D5, elevated).** Self-hosted Langfuse inside the same Railway project (D8) is now also the **HIPAA §164.312(b) accountability record** — the system of record for OAuth client_id + exercised scopes + correlation id per call — because OpenEMR's `api_log` omits them (F-C.1) and cannot be joined by a shared id (F-C.2, D10 revised). Every request is fully traced; the dashboard and ≥3 alerts read from Langfuse.
+**Observability (D5, elevated; hosting revised 2026-07-08).** **Langfuse Cloud** — an external processor under an **assumed BAA, the same PRD-sanctioned posture as the LLM provider (D4)** — is also the **HIPAA §164.312(b) accountability record**: the system of record for OAuth client_id + exercised scopes + correlation id per call, because OpenEMR's `api_log` omits them (F-C.1) and cannot be joined by a shared id (F-C.2, D10 revised). Every request is fully traced; the dashboard and ≥3 alerts read from Langfuse. Demo runs on the cloud free tier under the demo-data-only rule; the production path is Langfuse's dedicated HIPAA data region (`hipaa.cloud.langfuse.com`, Pro plan+, signed BAA before real PHI).
 
-**Owned tradeoffs (not hidden):** the sidecar spends latency on an OAuth hop (mitigated by caching + parallel calls); self-hosting Langfuse is ops cost (the point — no LLM-observability SaaS receives PHI); Railway has an outage history (mitigated by one-click rollback + local-compose demo continuity); and the "seconds not minutes" story is defended at *perceived* latency (streaming), with the 28s prior-art anchor an unverified assumption to be re-measured at Early (R12). Deployment must also close two audit items: pin `https://` (edge-only TLS, F-S.9) and set an `api_log` retention posture (Full-Logging default stores PHI at rest, F-S.4/D15).
+**Owned tradeoffs (not hidden):** the sidecar spends latency on an OAuth hop (mitigated by caching + parallel calls); observability adds a **second external PHI processor** — Langfuse Cloud under an assumed BAA, owned via PHI-minimized traces (hashes, not identifiers), project-level retention, and a documented MIT self-host exit if vendor terms change (D5 rev); Railway has an outage history (mitigated by one-click rollback + local-compose demo continuity); and the "seconds not minutes" story is defended at *perceived* latency (streaming), with the 28s prior-art anchor an unverified assumption to be re-measured at Early (R12). Deployment must also close two audit items: pin `https://` (edge-only TLS, F-S.9) and set an `api_log` retention posture (Full-Logging default stores PHI at rest, F-S.4/D15).
 
 ---
 
@@ -33,14 +33,16 @@ The Clinical Co-Pilot is a **read-only, multi-turn conversational agent** that g
 │  │  • volume: sites/ state               │ + token│  • Session store (Postgres)    │ │
 │  └───────────────────────────────────────┘        │  • /health /ready              │ │
 │                                                   └───────┬──────────────┬─────────┘ │
-│  ┌── Langfuse (self-hosted svc group) ──┐                 │              │           │
-│  │ traces • dashboards • costs • evals  │◄──── traces ────┘              │           │
-│  │ = HIPAA accountability record (D5)   │                        Claude API (BAA)    │
-│  └──────────────────────────────────────┘                        Sonnet 4.6 + Haiku │
-└──────────────────────────────────────────────────────────────────────────────────────┘
+└───────────────────────────────────────────────────────────┼──────────────┼───────────┘
+                                                     traces │              │ prompts
+                        (both egress points under assumed BAAs)            │
+   ┌── Langfuse Cloud (assumed BAA, D5) ──┐                 │              ▼
+   │ traces • dashboards • costs • evals  │◄────────────────┘      Claude API (BAA)
+   │ = HIPAA accountability record        │                        Sonnet 4.6 + Haiku
+   └──────────────────────────────────────┘
 ```
 
-One Railway project (D8), three trust zones (§4). The agent is an OAuth2/SMART client of OpenEMR (D2); all patient reads via FHIR with the clinician's delegated token (D9); all LLM calls via a provider abstraction (D4); every request fully traced to Langfuse in the same project (D5). Local dev = Docker Compose (dev-easy); prod = Railway services.
+One Railway project (D8), three trust zones (§4). The agent is an OAuth2/SMART client of OpenEMR (D2); all patient reads via FHIR with the clinician's delegated token (D9); all LLM calls via a provider abstraction (D4); every request fully traced to Langfuse Cloud under an assumed BAA (D5 rev 2026-07-08). Local dev = Docker Compose (dev-easy); prod = Railway services.
 
 **Non-goals (D12, explicit — do not soften).** No diagnosis, no treatment recommendations, no prescribing or ordering, no patient messaging, no chart writes, no cross-patient search, no write scopes. The agent is **read-only by construction**, not by policy.
 
@@ -48,7 +50,7 @@ One Railway project (D8), three trust zones (§4). The agent is an OAuth2/SMART 
 
 - **OpenEMR (fork):** unmodified except (a) SMART app registration, (b) a launch affordance on the patient chart. The affordance already exists as a near-zero-diff attach point — `SMARTLaunchController` on the `PatientDemographics` render event (F-A.3) — so the diff is registration + opt-in, not a core patch. OpenEMR remains the source of truth for identity, authorization, clinical data, and its own audit log.
 - **Agent service (FastAPI):** routes `/chat` (SSE), `/sessions`, `/health`, `/ready` (contracts in §5a). Internals: SMART/OAuth client (auth-code + PKCE-S256; per-session token cache); tool registry (Pydantic-contracted FHIR tools — `get_patient_summary`, `get_active_medications`, `get_recent_labs`, `get_encounters`, `get_allergies`, `get_conditions` — plus deterministic composites like `get_changes_since_last_visit`, computed by code and only narrated by the LLM); **EvidencePacket builder** (normalizes tool results into typed evidence records with stable IDs — the only thing the LLM and verifier see, and the **input-side injection enforcer**, §4); orchestrator (direct Anthropic tool-use loop, D6; concurrent fan-out of independent calls, D10; per-session FHIR TTL cache; outbound `X-Copilot-Request-Id` on every FHIR call); verification gate + deterministic templater (§5); session store (Postgres, pinned to clinician+patient at creation, D12).
-- **Langfuse stack:** langfuse-web/worker + Postgres + ClickHouse + Redis as Railway services; the dashboards + alert checker (§7) and the HIPAA accountability record (D5). Fallback under service sprawl: Langfuse Cloud free tier — `scope simplification`, acceptable only under the demo-data-only rule.
+- **Langfuse Cloud (external, D5 rev 2026-07-08):** no Langfuse services in the Railway project — traces export to Langfuse Cloud (demo: free tier, US region, assumed BAA under the demo-data-only rule; production: HIPAA data region `hipaa.cloud.langfuse.com`, Pro plan+, signed BAA before real PHI). Hosts the dashboards, eval datasets, and the HIPAA accountability record (D5); the alert checker (§7) reads its API. Exit: MIT-licensed self-host migration path if vendor terms change.
 - **Edge/TLS:** Railway-managed domains + HTTPS per service (SMART/OAuth requires HTTPS — free here). TLS is **edge-only** (F-S.9) → the agent pins `https://` and rejects downgrade (§4).
 
 **Scope-trace note (gap-audit G9-1):** the observability/ops surfaces (dashboard, `/health`, `/ready`, alerts, load tests) trace to the PRD's **engineering requirements**, not to a USERS.md use case — they are graded infrastructure, not user-facing capability, and so are exempt from the "every capability traces to a UC" rule (which governs *agent capabilities*). Every *agent capability* does trace to UC1–UC4 (`USERS.md` traceability table).
@@ -75,7 +77,7 @@ One Railway project (D8), three trust zones (§4). The agent is an OAuth2/SMART 
 | OAuth access token | SMART launch | SMART ~1h; refreshed via refresh_token grant if a turn outlives it (else re-launch) | not stored beyond session |
 | Session | launch | `MIN(token exp, idle timeout, turn cap)`; patient switch → new launch | Postgres; purged on expiry per retention rule |
 | FHIR TTL cache | first read in a turn | short per-session TTL (staleness bound); dropped at session end | in-memory, never persisted |
-| Langfuse trace | per request | — | retention policy set on the Langfuse project (PHI-bearing, D5) |
+| Langfuse trace | per request | — | retention policy set on the Langfuse Cloud project (PHI-minimized but PHI-bearing; external under assumed BAA, D5 rev) |
 | Session store (Postgres) | session | row deleted on expiry | **a PHI store** — inventoried in §6a; retention + encryption-at-rest owned by deployment |
 | OpenEMR `api_log` | every FHIR call | — | **second PHI store** (Full-Logging default, F-S.4/D15) — deployment sets `api_log_option`/retention |
 
@@ -83,8 +85,7 @@ One Railway project (D8), three trust zones (§4). The agent is an OAuth2/SMART 
 
 - **Zone A — OpenEMR:** owns identity, ACL, clinical truth. Nothing bypasses it: the agent has no DB credentials (D9). *Authz reality (D2 rev, F-S.1/F-S.2):* for the agent's patient-scoped tokens, enforcement is **granted scopes + single-patient compartment binding** (the FHIR service overwrites the `patient` param with the server-derived puuid → no cross-patient read), **not** scope∧GACL; OpenEMR's own `checkUserHasAccessToPatient()` is a stub — so the **agent-side session pin (Zone B / D12) is the real clinician↔patient enforcer.**
 - **Zone B — Agent service:** trusts only validated OAuth tokens; acts strictly *as* the clinician (no super-user; **never `client_credentials`**, F-S.5; **never the local-API `APICSRFTOKEN` shortcut**, F-S.3 — Bearer path only). Cross-patient queries structurally refused (session pin = the enforcement point). **Prompt-injection enforcement (gap-audit T1):** the crossing where untrusted chart text reaches the LLM is owned input-side by the **EvidencePacket builder** (chart data becomes typed, delimited evidence records — data, not instructions) and backstopped output-side by the **templater + treatment-verb blocklist** (§5); the read-only scope set means worst-case injection yields wrong words, never wrong writes. Injection eval cases required (§8).
-- **Zone C — LLM provider:** receives PHI under an assumed BAA (PRD-sanctioned, D4); no training on data; provider abstraction limits coupling.
-- Langfuse sits **inside Zone B's boundary** (self-hosted — the point of D5).
+- **Zone C — external BAA-covered processors:** the **LLM provider** receives PHI under an assumed BAA (PRD-sanctioned, D4); no training on data; provider abstraction limits coupling. **Langfuse Cloud** (D5 rev 2026-07-08) is the second Zone-C processor: traces egress under the same assumed-BAA posture, PHI-minimized (hashes, not identifiers), project-level retention set; production path = HIPAA data region + signed BAA. Both egress points are inventoried in §6a/D15.
 - **Transport (F-S.9):** TLS is Railway-edge-only → the agent **pins `https://` in the FHIR base URL and rejects downgrade.** **Deployment action:** close the Railway MySQL TCP proxy (DEPLOYMENT.md §4.5) before Final — it is a direct-DB path bypassing the entire Zone A FHIR/ACL boundary; nothing but OpenEMR should reach MySQL.
 - Secrets: Railway per-service env vars (not in repo; local via non-committed `.env`); rotated post-cohort; API keys never in prompts/logs.
 
@@ -157,7 +158,7 @@ get_recent_labs(input: {patient_id: PatientId, category="laboratory", lookback_d
 | Datum | Single authority |
 |-------|------------------|
 | Identity + ACL + clinical truth | **OpenEMR** (Zone A, D9) |
-| App-level attribution (client_id + exercised scopes + correlation id) | **Langfuse** (D5 rev — api_log omits it, F-C.1) |
+| App-level attribution (client_id + exercised scopes + correlation id) | **Langfuse Cloud** (external, assumed BAA; D5 rev — api_log omits it, F-C.1) |
 | Patient id + session pin | **Agent session store** (D12), seeded **once** from the untrusted SMART launch context, never re-derived from client input |
 | Verified display text | **Deterministic templater** (§5) — not the LLM's prose |
 | Verifier ground truth | **EvidencePacket** (typed records) — not raw FHIR JSON |
@@ -204,7 +205,7 @@ Per-brief ≈ (patient-context tokens × cache economics) + output; **measured f
 ## §10 Build Order (roadmap → downstream `/tasks-gen`)
 
 1. **MVP (done/now):** local run + Synthea data → OpenEMR on Railway (D8) → AUDIT.md (gate) → USERS.md → this ARCHITECTURE.md. *No agent code — the audit gates it.*
-2. **Early:** SMART registration + OAuth flow (enable the app, D14) → tool layer w/ Pydantic contracts (§5a) → orchestrator loop → verification v1 (citations + §5 rules) → Langfuse wired (traces, correlation IDs, dashboard) → live agent → eval framework v1 with the required fixtures (§8), GH Actions eval-gate → **re-measure latency (R12)** → demo video.
+2. **Early:** SMART registration + OAuth flow (enable the app, D14) → tool layer w/ Pydantic contracts (§5a) → orchestrator loop → verification v1 (citations + §5 rules) → Langfuse wired (cloud project created — US region demo posture, D5 rev; traces, correlation IDs, dashboard) → live agent → eval framework v1 with the required fixtures (§8), GH Actions eval-gate → **re-measure latency (R12)** → demo video.
 3. **Final:** verification v2 (full constraint rules) → dashboard + alerts + runbooks (§7) → Bruno collection + token-mint helper → k6 load tests + baselines → cost analysis from real traces (§9) → close the audit deploy items (https-pin, MySQL proxy, api_log retention) → eval suite full → demo video + social post.
 
 ## §11 Submission checklist (gap-audit G5 — runtime deliverables owned)
@@ -216,5 +217,5 @@ Per checkpoint (so no graded artifact is dropped): **deployed URL string** in th
 - **O1** UI embed: SMART launch in new tab (default) vs iframe polish — resolve during Early build.
 - **O2** Session store Postgres vs Redis — default Postgres; revisit if latency demands.
 - **R12** latency anchor is an unverified assumption — **replace with measured Langfuse data at Early** (the one number in this doc awaiting real measurement).
-- **Known tension** self-hosted Langfuse alerting is thinner than SaaS (delivery via checker→webhook, §7) — monitor; Langfuse Cloud free tier is the flagged fallback under the demo-data-only rule.
+- **Known tension (revised with D5 rev 2026-07-08)** Langfuse Cloud is a vendor dependency for the HIPAA accountability record — owned via the MIT self-host migration exit and project-level retention; alert delivery stays checker→webhook (§7) against the cloud API.
 - **Deploy actions before Final** (from the audit): pin `https://` (F-S.9), close the Railway MySQL TCP proxy (F-S.9), set `api_log_option`/retention (F-S.4/D15).

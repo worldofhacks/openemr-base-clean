@@ -65,9 +65,10 @@ CONTENT — six rows:
    [Railway MySQL — OpenEMR clinical data] (dashed)
    [Postgres — agent sessions] (dashed)
    [Claude API — Sonnet 4.6 + Haiku 4.5, assumed BAA, no training] (dashed border)
-   annotation in red: "the ONLY point PHI leaves the deployment"
-   [Langfuse (self-hosted) — traces, dashboards, costs, correlation IDs]
-   annotation: "observability SaaS never sees PHI"
+   [Langfuse Cloud — traces, dashboards, costs, correlation IDs; assumed BAA,
+   HIPAA-region production path] (dashed border)
+   annotation in red: "PHI exits the deployment at exactly TWO points — both
+   BAA-covered (LLM provider + Langfuse Cloud); traces PHI-minimized to hashes"
 
 6. BUILD / DEPLOY (blue) — "Ship & prove it":
    [GitHub push to main] → [GH Actions — tests + eval suite gate

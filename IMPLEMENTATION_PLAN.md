@@ -109,7 +109,12 @@
   `Accept:` (1) FHIR `status` never rendered verbatim — an immunization never renders "patient refused" (F-D.1), Encounter.status not asserted (F-D.6); (2) reject any criticality-based claim, never rank/deprioritize allergy risk (F-D.4); (3) empty allergy result → **"no allergy records returned; confirm with patient,"** never "NKDA" (F-D.5); (4) consume all conditions, never send `clinical-status=active`, reject "no history of X" if an inactive match exists (F-D.6); (5) empty dose → "dose not specified — confirm before dosing," de-dup order+plan (F-D.2); (6) **deceased-indicator pre-flight → deterministic refusal** before any summarization (D12, keys on `deceasedDateTime`/`deceasedBoolean`); treatment-verb blocklist → refusal.
   `Test:` one invariant per rule (§8/E8) — `test_immunization_never_rendered_refused`, `test_reject_criticality_claim`, `test_empty_allergy_phrasing`, `test_no_history_rejected_when_inactive_match`, `test_empty_dose_phrasing`, `test_deceased_hardstop_refusal`, `test_treatment_verb_refused`.
 
-### E7 — Langfuse wired (traces = HIPAA system-of-record, D5-rev)
+### E7 — Langfuse wired (traces = HIPAA system-of-record, D5-rev; **cloud-hosted per D5 rev 2026-07-08 — no Langfuse services to deploy**)
+- [ ] **E7.0 Provision the Langfuse Cloud project**
+  `Files:` — (console step; keys land in Railway/agent env as `LANGFUSE_HOST`/`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`)
+  `Anchors:` D5 rev 2026-07-08, D8
+  `Accept:` Langfuse Cloud project created (demo posture: free tier, US region `https://us.cloud.langfuse.com`, assumed BAA under the demo-data-only rule; production path documented: HIPAA region `https://hipaa.cloud.langfuse.com`, Pro plan+, signed BAA before real PHI); project **retention policy set**; keys wired into the agent env; `/ready` reports the langfuse probe green.
+  `Test:` — (provisioning; covered by the E1 `/ready` probe against the configured host).
 - [ ] **E7.1 Trace every request with the accountability fields**
   `Files:` NEW `agent/app/observability/langfuse.py`; extend orchestrator/verifier/tools to emit spans
   `Anchors:` §7, §3.1, D5-rev, F-C.1, F-C.2

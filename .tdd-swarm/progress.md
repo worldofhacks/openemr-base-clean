@@ -60,3 +60,19 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
   (source=="llm" + tracer.dropped==1); the served-text pin was incidental to the old behavior.
   Resolution: a Test Agent updates that test to assert the soft-dep intent (drop the res.text pin).
   Separation of powers held — the Impl Agent did not touch it; a Test-role agent does.
+
+## T-E6a — review-passed (verify-then-flush wired + findings closed)
+- Verify-then-flush impl @ 9c10488; TEST_DISPUTE adjudicated (test updated); Finding #1/#2 fixed
+  fail-closed @ 200b39b (Test froze 939040a → Impl fixed → Reviewer APPROVE). Suite 190 passed.
+- Orchestrator re-ran gates itself (trust nothing): 190 passed; frozen invariant + finding-1 tests
+  byte-identical since their freezes; impl commits app/ only. Reviewer: no safety/behavioral findings.
+
+## Findings DEFERRED (recorded, reasons)
+- E6-verifier label fallback (out-of-scope note from the T-E6a review): `_verify_medication`/`_verify_lab`
+  set the verified LABEL as `record.fields.get("name"/"display") or claim.X`, so when a CITED record's
+  label is empty (absence, not contradiction — §5 passes) the claim's own label renders. Assessed NOT a
+  critical bypass: (1) it's the documented §5 limitation ("field-level match proves provenance, not
+  synthesis"); (2) the SENSITIVE fields (dose, lab value) are ALWAYS record-sourced, never the claim's
+  (F-D.2 holds); (3) real records carry labels. Deferred to E6-verifier hardening (drop/annotate a label
+  the record lacks) — needs its own Test-Agent-frozen test; flagged to owner. Lives in verifier.py (E6),
+  not the T-E6a diff.

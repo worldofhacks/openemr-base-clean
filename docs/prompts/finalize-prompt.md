@@ -33,6 +33,8 @@ rewriting history (keep the prior wording noted):
   3. D5 — elevate. Self-hosted Langfuse is now also a HIPAA §164.312(b) accountability
      control (the system of record for client_id + exercised scopes), because
      OpenEMR's api_log omits them — not merely observability. Evidence: F-C.1.
+     [Archive note 2026-07-08: hosting later revised to Langfuse Cloud under an
+     assumed BAA (DECISIONS.md D5 rev 2026-07-08); the elevated role stands.]
   4. D12 — close the test gap. The deceased hard-stop and the empty-allergy path are
      untestable on demo data (zero deceased Synthea patients). Add a requirement that
      the eval suite injects synthetic fixtures for both. Evidence: F-S.7, F-D.5.

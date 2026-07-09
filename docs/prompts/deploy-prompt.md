@@ -48,8 +48,10 @@ PHASE 1 — LOCAL (Stage 1):
 4. Document every command and click as you go — this becomes the README setup guide.
 
 PHASE 2 — RAILWAY (Stage 2):
-1. Create one Railway project (it will later also host an agent service and a
-   Langfuse stack — name services accordingly: "openemr", "mysql").
+1. Create one Railway project (it will later also host an agent service — name
+   services accordingly: "openemr", "mysql"). [Archive note 2026-07-08: originally
+   "and a Langfuse stack"; D5 rev moved Langfuse to Langfuse Cloud — nothing
+   Langfuse-shaped deploys to Railway.]
 2. Provision Railway managed MySQL. Wire OpenEMR to it via env vars (the OpenEMR
    image supports auto-configuration via MYSQL_HOST / MYSQL_USER / MYSQL_PASS /
    MYSQL_DATABASE and admin bootstrap vars — verify exact names against the image

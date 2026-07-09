@@ -14,7 +14,13 @@ clear so the trace can actually answer "which client, acting as whom, touched th
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
+
+# A patient id can ride in a URL path segment (…/patients/<uuid>/…) or a query param
+# (?mrn=…). Redact both so the trace URL is a PHI-safe route template (D5).
+_UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+_LONGNUM_RE = re.compile(r"\d{4,}")
 
 
 def hash_identifier(value: str | None) -> str:
@@ -22,6 +28,17 @@ def hash_identifier(value: str | None) -> str:
     if not value:
         return ""
     return hashlib.sha256(value.encode()).hexdigest()[:16]
+
+
+def sanitize_request_url(url: str | None) -> str:
+    """Reduce a request URL to a PHI-safe route template (D5): drop the query string and
+    fragment (params carry patient/mrn) and replace UUID-shaped and long-numeric path segments
+    with `:id`. A patient identifier in the path or query therefore never reaches the trace."""
+    if not url:
+        return ""
+    base = url.split("?", 1)[0].split("#", 1)[0]  # drop query + fragment
+    base = _UUID_RE.sub(":id", base)
+    return _LONGNUM_RE.sub(":id", base)
 
 
 @dataclass(frozen=True)

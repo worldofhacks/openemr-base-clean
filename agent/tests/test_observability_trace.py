@@ -75,6 +75,17 @@ def test_hash_identifier_is_deterministic_and_distinct():
     assert hash_identifier("") == "" and hash_identifier(None) == ""
 
 
+def test_request_url_is_sanitized_of_phi():  # invariant, D5 — a patient id in the URL never leaks
+    sink = InMemoryTraceSink()
+    b = RequestTracer(sink).begin(_acct(
+        request_url="https://agent.example/patients/a234b786-539a-4f9a-96a0-432293226f02/chat?mrn=12345678"))
+    b.finish(model="claude-sonnet-4-6", fallback_kind=None, degraded=False, source="llm")
+    url = sink.traces[0].request_url
+    assert "a234b786-539a-4f9a-96a0-432293226f02" not in url  # UUID path segment redacted
+    assert "12345678" not in url                              # query string (mrn=…) dropped
+    assert url.startswith("https://agent.example/patients/") and url.endswith("/chat")  # route kept
+
+
 # --- cost/tokens + the E5 degradation taxonomy (alertable) -------------------
 
 def test_trace_carries_tokens_and_cost():  # §7 dashboard: token cost per request

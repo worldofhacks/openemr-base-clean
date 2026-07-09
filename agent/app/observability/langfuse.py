@@ -19,6 +19,7 @@ from app.observability.trace import (
     RequestTrace,
     TraceStep,
     hash_identifier,
+    sanitize_request_url,
 )
 
 
@@ -100,7 +101,8 @@ class LangfuseSink:
                 name="previsit-brief",
                 user_id=trace.user_hash,          # already hashed (D5)
                 session_id=trace.correlation_id,
-                input={"request_url": trace.request_url},
+                # No `input=` payload: never surface the URL (or anything PHI-bearing) as the
+                # visible trace input. The sanitized route lives in metadata only.
                 metadata=metadata,
                 tags=tags,
             )
@@ -145,7 +147,7 @@ class TraceBuilder:
             correlation_id=self._acct.correlation_id,
             client_id=self._acct.client_id,
             exercised_scopes=tuple(self._acct.exercised_scopes),
-            request_url=self._acct.request_url,
+            request_url=sanitize_request_url(self._acct.request_url),  # D5: PHI-safe route template
             user_hash=hash_identifier(self._acct.user_id),        # D5: hashed, never raw
             patient_hash=hash_identifier(self._acct.patient_id),  # D5: hashed, never raw
             utc_timestamp=self._acct.utc_timestamp,

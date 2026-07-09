@@ -22,3 +22,21 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
   3. render_from_verified surfaces all packet notices unconditionally when packet passed (cosmetic).
   4. Screens are demo-depth (§5-sanctioned): audited literal cases all caught; some tense/synonym variants not (documented extension path).
 - Ticket T-E6: review-passed. Boundary reached — pausing for owner review before PR merge (no merge to main by the swarm).
+
+## Finding #2 — CLOSED (fail-closed) via a second swarm micro-cycle
+- Test Agent added frozen test @ 2b58dea (unresolvable-cited TextClaim → BLOCKED; additions-only, RED against FLAGGED).
+- Impl Agent fixed verifier.py @ e5197da (fail-closed on unresolvable citation; no test edited).
+- Ticket reviewer: APPROVE, 0 findings. Orchestrator re-ran: 167 passed. Separation of powers intact.
+
+## Findings DEFERRED (recorded, with reasons — not this-week work)
+- #1 F-D.1 immunization explicit declined-trap — FORWARD-LOOKING. The Early six-tool scope
+  (Patient/Condition/MedicationRequest/Observation/Encounter/AllergyIntolerance) has NO
+  Immunization tool, so an ImmunizationClaim already fails closed at citation-resolution
+  (correct outcome: "declined" is never emitted). The dedicated declined-branch trap +
+  its exercising test are wired only when/if an Immunization read tool is added (post-Early).
+- #3 Cosmetic notice rendering — render_from_verified surfaces all packet notices when a
+  packet is passed. Honest, not a correctness/safety issue; refine when the /chat SSE
+  contract (§5a) pins who owns notice surfacing. Deferred to Final polish.
+- #4 Demo-depth screens — §5 explicitly sanctions demo-depth rule tables ("rule tables are
+  demo-depth, extension path documented"). Every AUDITED literal phrase/verb is caught
+  case-insensitively; tense/synonym expansion is Final-scope (verification v2, E-Final).

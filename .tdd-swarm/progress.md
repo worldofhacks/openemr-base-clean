@@ -40,3 +40,13 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
 - #4 Demo-depth screens — §5 explicitly sanctions demo-depth rule tables ("rule tables are
   demo-depth, extension path documented"). Every AUDITED literal phrase/verb is caught
   case-insensitively; tense/synonym expansion is Final-scope (verification v2, E-Final).
+
+# ============================================================================
+# Ticket T-E6a — wire E6 verification into the serving loop (verify-then-flush, §5)
+# Branch swarm/e6a-verify-in-loop off main @ 411108a (182 passed baseline).
+# Traces to: ARCHITECTURE §5 (verify-then-flush), §3 UC1 step 3, D7, D12, F-C.1 (verdicts→trace).
+# Design: LLM answers via a `submit_claims` tool (typed E6 claims + evidence_ids) → Verifier.verify
+#   each vs the EvidencePacket → render_from_verified (BLOCKED/REFUSED dropped) → served text.
+#   D12 deceased pre-flight before the LLM. Trace.verdicts populated. source stays "llm" so the
+#   frozen E5/E7 orchestrator tests (which assert source+structure, not served text) stay green.
+# Test Agent owns tests/ (freezes the end-to-end invariant); Impl Agent owns app/ (no test edits).

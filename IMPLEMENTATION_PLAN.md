@@ -67,7 +67,7 @@
   `Anchors:` §5a, PRD strict-schemas, D3
   `Accept:` typed input+output Pydantic models for all 6 tools + `get_changes_since_last_visit`; outputs are EvidencePacket record shapes (§5a worked example); invalid tool output → validation error surfaced as a tool failure, not a silent pass.
   `Test:` `test_tool_output_schema_rejects_malformed` (contract).
-- [ ] **E3.2 The 6 read tools + parallel fan-out**
+- [x] **E3.2 The 6 read tools + parallel fan-out**
   `Files:` NEW `agent/app/tools/fhir_tools.py`, `agent/app/tools/fhir_client.py`
   `Anchors:` §2, §3 (UC1 step 2), D9, D10, F-P.2, F-P.5
   `Accept:` `get_patient_summary / get_active_medications / get_recent_labs / get_encounters / get_allergies / get_conditions` each call FHIR with the delegated token over pinned `https://` (reject downgrade, F-S.9); the 6 independent reads run concurrently via `asyncio.gather` (D10) with **per-call timeout + total turn budget**; `get_recent_labs` passes explicit `category=laboratory` to prune the 10-way Observation fan-out (F-P.2). Edge: one call fails/times out → partial result that **names** what's missing, never silent omission (§6/F3); huge chart (pid=7-class) → bounded selection + note (§6, F-P.3).

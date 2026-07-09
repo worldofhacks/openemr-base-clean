@@ -27,6 +27,11 @@ from app.auth.scopes import (
     requested_scope_string,
 )
 from app.auth.smart_client import SmartClient, generate_pkce
+from app.tools.contracts import ToolStatus
+from app.tools.fhir_client import FhirClient
+from app.tools.fhir_tools import run_previsit_fanout
+
+CANONICAL_PATIENT = "a234b786-539a-4f9a-96a0-432293226f02"
 
 pytestmark = pytest.mark.live
 
@@ -131,10 +136,22 @@ async def test_live_auth_code_flow_returns_real_fhir_data(capsys):
         )
         assert cond.status_code == 200
 
-    # Report the granted scopes (the resume prompt asks for the exact scopes).
+    # E3.2 GATE: run the six-tool fan-out with the delegated token and prove EVERY
+    # tool returns real data — especially meds/labs/encounter (the scope gap closed).
+    fclient = FhirClient(base_url=f"{BASE}/apis/default/fhir",
+                         access_token=token.access_token.get_secret_value())
+    fanout = await run_previsit_fanout(fclient, CANONICAL_PATIENT,
+                                       per_call_timeout=12.0, turn_budget=25.0)
+    failed = {n: r.missing_reason for n, r in fanout.items() if r.status is ToolStatus.FAILED}
+    assert not failed, f"tools failed against live OpenEMR: {failed}"
+    for name in ("get_active_medications", "get_recent_labs", "get_encounters"):
+        assert fanout[name].status is ToolStatus.OK, f"{name} returned {fanout[name].status}, not OK"
+
     with capsys.disabled():
         print(f"\n[E2 LIVE] token OK — granted scopes ({len(token.scopes)}): {sorted(token.scopes)}")
         print(f"[E2 LIVE] all six required FHIR scopes granted: {REQUIRED_FHIR_SCOPES <= set(token.scopes)}")
         print(f"[E2 LIVE] refresh_token present: {token.refresh_token is not None} (offline_access dropped)")
-        print(f"[E2 LIVE] FHIR Patient bundle total={bundle['total']} first_id={first_id}; "
-              f"Condition HTTP={cond.status_code}")
+        print(f"[E2 LIVE] FHIR Patient bundle total={bundle['total']} first_id={first_id}")
+        print("[E3.2 LIVE] six-tool fan-out against live OpenEMR:")
+        for name, r in fanout.items():
+            print(f"    {name:24s} {r.status.value:10s} records={len(r.records)}")

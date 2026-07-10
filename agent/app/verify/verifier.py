@@ -118,8 +118,18 @@ def _labels_match(claim_label: str, record_label: str) -> bool:
     if len(shorter) >= _MIN_SIGNIFICANT_LEN and _contains_at_boundary(longer, shorter):
         return True
 
-    # Shared significant token (rejects generic stopwords and short fragments).
-    return bool(_significant_tokens(a) & _significant_tokens(b))
+    # Token-subset check: the SHORTER label's significant tokens must be a full SUBSET of
+    # the LONGER label's significant tokens. A mere intersection (one shared token) is not
+    # enough — that would collapse genuinely distinct entities that share a class word
+    # ("insulin glargine" vs "insulin lispro", "total cholesterol" vs "HDL cholesterol").
+    # Reordered paraphrases still PASS because ALL shorter-side tokens appear in the longer
+    # label ("Type 2 diabetes" → {"type","diabetes"} ⊆ {"diabetes","mellitus","type"}).
+    st_a, st_b = _significant_tokens(a), _significant_tokens(b)
+    if len(st_a) <= len(st_b):
+        st_short, st_long = st_a, st_b
+    else:
+        st_short, st_long = st_b, st_a
+    return bool(st_short) and st_short <= st_long
 
 
 def _contains_at_boundary(haystack: str, needle: str) -> bool:

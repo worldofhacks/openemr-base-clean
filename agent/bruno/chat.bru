@@ -1,0 +1,56 @@
+meta {
+  name: Authenticated UC1 pre-visit brief
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{agent_base_url}}/chat
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "session_id": "{{session_id}}",
+    "message": "Give me the pre-visit brief."
+  }
+}
+
+tests {
+  test("authenticated chat returns HTTP 200", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("chat returns the verified serving envelope", function () {
+    const body = res.getBody();
+
+    expect(body.brief).to.be.a("string");
+    expect(body.source).to.be.oneOf([
+      "llm",
+      "deterministic_fallback",
+      "deterministic_refusal"
+    ]);
+    expect(body.degraded).to.be.a("boolean");
+    expect(body.verdicts).to.be.an("array");
+    body.verdicts.forEach(function (verdict) {
+      expect(verdict).to.be.a("string");
+    });
+    expect(body.correlation_id).to.be.a("string").and.not.be.empty;
+  });
+
+  test("body and response header carry the same correlation id", function () {
+    expect(res.getBody().correlation_id).to.equal(
+      res.getHeader("x-copilot-request-id")
+    );
+  });
+}
+
+settings {
+  encodeUrl: true
+  timeout: 180000
+}

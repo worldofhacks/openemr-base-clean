@@ -1,0 +1,48 @@
+meta {
+  name: Readiness
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{agent_base_url}}/ready
+  body: none
+  auth: none
+}
+
+tests {
+  test("readiness returns its dependency envelope", function () {
+    const status = res.getStatus();
+    const body = res.getBody();
+
+    expect([200, 503]).to.include(status);
+    expect(body.status).to.be.oneOf(["ready", "degraded", "not_ready"]);
+    expect(body.checks).to.be.an("array").and.not.be.empty;
+    body.checks.forEach(function (check) {
+      expect(check.name).to.be.a("string").and.not.be.empty;
+      expect(check.kind).to.be.oneOf(["hard", "soft"]);
+      expect(check.ok).to.be.a("boolean");
+      expect(check.detail).to.be.a("string");
+    });
+  });
+
+  test("HTTP status agrees with hard dependency state", function () {
+    const status = res.getStatus();
+    const body = res.getBody();
+    const hardDown = body.checks.some(function (check) {
+      return check.kind === "hard" && check.ok === false;
+    });
+
+    if (hardDown) {
+      expect(status).to.equal(503);
+      expect(body.status).to.equal("not_ready");
+    } else {
+      expect(status).to.equal(200);
+      expect(body.status).to.be.oneOf(["ready", "degraded"]);
+    }
+  });
+
+  test("readiness carries a correlation id", function () {
+    expect(res.getHeader("x-copilot-request-id")).to.be.a("string").and.not.be.empty;
+  });
+}

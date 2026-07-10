@@ -1,0 +1,25 @@
+meta {
+  name: Health
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{agent_base_url}}/health
+  body: none
+  auth: none
+}
+
+tests {
+  test("liveness returns HTTP 200", function () {
+    expect(res.getStatus()).to.equal(200);
+  });
+
+  test("liveness returns the process-only contract", function () {
+    expect(res.getBody()).to.deep.equal({ status: "alive" });
+  });
+
+  test("liveness carries a correlation id", function () {
+    expect(res.getHeader("x-copilot-request-id")).to.be.a("string").and.not.be.empty;
+  });
+}

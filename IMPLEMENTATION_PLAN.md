@@ -144,7 +144,7 @@
   `Test:` a deliberately-failing eval blocks the workflow (verified once).
 
 ### E9 — Deploy the live agent (needs a URL before the demo)
-- [ ] **E9.1 Agent as a new Railway service in the existing project**
+- [x] **E9.1 Agent as a new Railway service in the existing project**
   `Files:` NEW `agent/railway.json` (or service config); extend `DEPLOYMENT.md`
   `Anchors:` §1, §2, §10.2, D8 (same Railway project — PRD same-infra rule)
   `Accept:` agent builds from `agent/Dockerfile` and deploys as a service in the existing `openemr` Railway project; env wired (OpenEMR base URL pinned `https://`, Anthropic key, Langfuse, session-store DB); public HTTPS URL live; `/ready` green against the live OpenEMR.

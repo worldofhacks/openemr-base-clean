@@ -122,22 +122,22 @@
   `Test:` `test_trace_has_client_id_and_scopes` (invariant), `test_langfuse_down_serving_continues` (boundary).
 
 ### E8 — Eval framework v1 (production-grade — happy-path-only fails)
-- [ ] **E8.1 pytest harness + EvalCase schema + dataset**
+- [x] **E8.1 pytest harness + EvalCase schema + dataset**
   `Files:` NEW `agent/evals/conftest.py`, `agent/evals/schema.py`, `agent/evals/dataset/` (golden set from demo patients)
   `Anchors:` §8, PRD eval requirements
   `Accept:` `EvalCase{id, category: boundary|invariant|regression|adversarial, input, fixture?, expected, guards, pass_criteria}` — every case names the failure mode it guards; correctness measured vs FHIR ground truth; runner produces a results export (§11 deliverable).
   `Test:` the harness runs; a trivial invariant case passes/fails as expected (meta-test).
-- [ ] **E8.2 Required synthetic fixtures (the demo data can't provide these)**
+- [x] **E8.2 Required synthetic fixtures (the demo data can't provide these)**
   `Files:` NEW `agent/evals/fixtures/deceased_patient.py`, `agent/evals/fixtures/no_allergy.py`, `agent/evals/fixtures/llm_failure.py`, `agent/evals/fixtures/fhir_failure.py`
   `Anchors:` §8, D12-rev, F-S.7, F-D.5, D13, F3
   `Accept:` **deceased-patient** fixture (mocked `Patient.deceasedDateTime`) drives the D12 hard-stop refusal; **no-allergy** fixture drives the F-D.5 phrasing rule; **llm-failure** fixture drives the D13 banner; **fhir-failure** fixture drives the F3 partial-answer. Each is a failing-then-passing invariant, not a happy-path demo.
   `Test:` these fixtures back the E5.2/E6.2 invariant tests above.
-- [ ] **E8.3 Adversarial + guardrail cases** (∥ with E8.2)
+- [x] **E8.3 Adversarial + guardrail cases** (∥ with E8.2)
   `Files:` NEW `agent/evals/adversarial/`
   `Anchors:` §8, §4, F-S.5, F-S.3, D12
   `Accept:` prompt-injection attempts (chart text trying to issue instructions → treated as data, §4); unauthorized-data extraction (cross-patient ask → refused); guardrail assertions — agent never negotiates `client_credentials` (F-S.5), never sends `APICSRFTOKEN` (F-S.3).
   `Test:` these ARE the eval cases.
-- [ ] **E8.4 CI eval-gate-before-deploy**
+- [x] **E8.4 CI eval-gate-before-deploy**
   `Files:` NEW `.github/workflows/agent-evals.yml`
   `Anchors:` §8, §10.2, D8
   `Accept:` evals run per push; Railway deploys the agent **only on green** (eval-gate); red evals block deploy.

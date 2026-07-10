@@ -1,0 +1,41 @@
+# Clinical Co-Pilot agent — eval deploy-gate (ARCHITECTURE.md §8, E8.4).
+#
+# The eval suite must be GREEN before the agent deploys (E9): `python -m evals.runner` exits
+# non-zero on any eval failure, failing this required check and blocking the deploy. The evals
+# run fully offline (mocked fixtures — no OpenEMR / Anthropic / Langfuse), so no secrets are
+# needed and the gate is deterministic. Scoped to agent/** so it never collides with the
+# upstream OpenEMR CI.
+name: agent-eval-gate
+
+on:
+  push:
+    paths:
+      - 'agent/**'
+      - '.github/workflows/agent-eval-gate.yml'
+  pull_request:
+    paths:
+      - 'agent/**'
+      - '.github/workflows/agent-eval-gate.yml'
+
+jobs:
+  evals:
+    name: eval deploy-gate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install agent (runtime deps)
+        run: pip install -e .
+      - name: Run eval gate (non-zero exit blocks deploy)
+        run: python -m evals.runner
+      - name: Upload eval results export
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: agent/evals/results.json

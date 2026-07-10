@@ -76,3 +76,21 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
   (F-D.2 holds); (3) real records carry labels. Deferred to E6-verifier hardening (drop/annotate a label
   the record lacks) — needs its own Test-Agent-frozen test; flagged to owner. Lives in verifier.py (E6),
   not the T-E6a diff.
+
+# ============================================================================
+# Ticket T-E6b — verifier leniency + 3 review-flagged gaps (branch swarm/e6b-verifier-leniency off main)
+# Traces: §5 rule 1 (identity match), D7, D9/D5 (provider attribution), F-D.2.
+# Scope (4): (1) LENIENT label identity match (name/display) but STRICT exact dose+lab value;
+#   (2) all-claims-blocked → honest D13 grounded/"couldn't verify" render, NEVER empty source=llm;
+#   (3) clinician_sub from the token id_token fhirUser/sub (currently hardcoded in service.py) — D9/D5;
+#   (4) implement F-D.2 order/plan medication de-dup (NOT implemented; E6.2 checkbox is wrong → correct + add).
+# Orchestrated as a Workflow (ultracode): Test-freeze → RED → Impl → adversarial Review panel.
+
+## T-E6b workflow (Test→RED→Impl→adversarial Review) — 212 passed
+- Test froze 9e8326c (14 new invariants + 7 reconciled all-blocked→D13 tests). Impl d44df40 (app-only,
+  frozen tests untouched): lenient label match, all-blocked→D13 grounded, clinician_sub from id_token
+  fhirUser/sub, F-D.2 order/plan dedup. Both reviewers APPROVE.
+- Adversarial reviewer IMPORTANT finding: the "share one significant token" leniency over-collapses
+  distinct token-adjacent entities (insulin glargine≈insulin lispro, metoprolol tartrate≈succinate).
+  NOT a served-falsehood (strict dose/value + render uses the record's true identity), but the entity
+  gate is weaker than intended → micro-cycle to tighten (token-SUBSET, not shared-one-token).

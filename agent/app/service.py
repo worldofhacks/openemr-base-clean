@@ -92,9 +92,11 @@ class AgentServices:
         patient_id = token.patient or ""
         if not patient_id:
             raise ValueError("no launch/patient context in the token — cannot pin a session")
-        # Demo: one clinician (the launched admin). Production derives the sub from the id_token.
+        # Provider attribution (D9/D5): pin the session to the REAL launching clinician decoded
+        # from the token's id_token (fhirUser preferred, else sub), falling back to the demo
+        # placeholder only when the token carried no decodable id_token.
         session = await self.sessions.create(
-            clinician_sub="openemr-clinician", patient_id=patient_id,
+            clinician_sub=token.clinician_sub or "openemr-clinician", patient_id=patient_id,
             token_expires_at=self._token_deadline())
         self._tokens[session.session_id] = token
         return session

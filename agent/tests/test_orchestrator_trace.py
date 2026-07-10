@@ -109,8 +109,12 @@ async def test_tracing_failure_never_breaks_the_brief():  # boundary — §6 sof
     prov = FakeProvider([_text("brief")])
     res = await Orchestrator(prov).run_previsit_brief(
         _packet(), "Summarize.", tools=_registry(), tracer=tracer, accountability=_acct())
-    assert res.source == "llm" and res.text == "brief"  # answer returned; sink failure absorbed
-    assert tracer.dropped == 1                            # the dropped export was counted
+    # Under §5 verify-then-flush, an uncited prose turn is wrapped as a TextClaim, BLOCKED by
+    # the verifier, and therefore NOT served — the served text is legitimately notice-only.
+    # The soft-dependency invariant is: the REQUEST COMPLETED via the LLM path (res.source ==
+    # "llm"), not that any specific prose was served. The failed sink export must be counted.
+    assert res.source == "llm"  # request completed via LLM path; sink failure was absorbed
+    assert tracer.dropped == 1  # the dropped export was counted
 
 
 async def test_no_tracer_is_a_noop():

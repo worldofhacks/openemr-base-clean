@@ -40,3 +40,39 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
 - #4 Demo-depth screens — §5 explicitly sanctions demo-depth rule tables ("rule tables are
   demo-depth, extension path documented"). Every AUDITED literal phrase/verb is caught
   case-insensitively; tense/synonym expansion is Final-scope (verification v2, E-Final).
+
+# ============================================================================
+# Ticket T-E6a — wire E6 verification into the serving loop (verify-then-flush, §5)
+# Branch swarm/e6a-verify-in-loop off main @ 411108a (182 passed baseline).
+# Traces to: ARCHITECTURE §5 (verify-then-flush), §3 UC1 step 3, D7, D12, F-C.1 (verdicts→trace).
+# Design: LLM answers via a `submit_claims` tool (typed E6 claims + evidence_ids) → Verifier.verify
+#   each vs the EvidencePacket → render_from_verified (BLOCKED/REFUSED dropped) → served text.
+#   D12 deceased pre-flight before the LLM. Trace.verdicts populated. source stays "llm" so the
+#   frozen E5/E7 orchestrator tests (which assert source+structure, not served text) stay green.
+# Test Agent owns tests/ (freezes the end-to-end invariant); Impl Agent owns app/ (no test edits).
+
+## TEST_DISPUTE (adjudicated) — verify-then-flush vs an E7 test pinning served prose
+- Impl Agent returned BLOCKED(TEST_DISPUTE), refusing to weaken §5: `test_orchestrator_trace.py::
+  test_tracing_failure_never_breaks_the_brief` asserts `res.text == "brief"` on the end_turn-no-
+  submit_claims path. Under verify-then-flush, uncited prose is BLOCKED and never served → that
+  assertion encodes the superseded "serve raw prose" contract.
+- Orchestrator adjudication: dispute VALID. The test's real intent is the SOFT-DEPENDENCY property
+  (source=="llm" + tracer.dropped==1); the served-text pin was incidental to the old behavior.
+  Resolution: a Test Agent updates that test to assert the soft-dep intent (drop the res.text pin).
+  Separation of powers held — the Impl Agent did not touch it; a Test-role agent does.
+
+## T-E6a — review-passed (verify-then-flush wired + findings closed)
+- Verify-then-flush impl @ 9c10488; TEST_DISPUTE adjudicated (test updated); Finding #1/#2 fixed
+  fail-closed @ 200b39b (Test froze 939040a → Impl fixed → Reviewer APPROVE). Suite 190 passed.
+- Orchestrator re-ran gates itself (trust nothing): 190 passed; frozen invariant + finding-1 tests
+  byte-identical since their freezes; impl commits app/ only. Reviewer: no safety/behavioral findings.
+
+## Findings DEFERRED (recorded, reasons)
+- E6-verifier label fallback (out-of-scope note from the T-E6a review): `_verify_medication`/`_verify_lab`
+  set the verified LABEL as `record.fields.get("name"/"display") or claim.X`, so when a CITED record's
+  label is empty (absence, not contradiction — §5 passes) the claim's own label renders. Assessed NOT a
+  critical bypass: (1) it's the documented §5 limitation ("field-level match proves provenance, not
+  synthesis"); (2) the SENSITIVE fields (dose, lab value) are ALWAYS record-sourced, never the claim's
+  (F-D.2 holds); (3) real records carry labels. Deferred to E6-verifier hardening (drop/annotate a label
+  the record lacks) — needs its own Test-Agent-frozen test; flagged to owner. Lives in verifier.py (E6),
+  not the T-E6a diff.

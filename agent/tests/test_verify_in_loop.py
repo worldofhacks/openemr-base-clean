@@ -211,10 +211,14 @@ async def test_fabricated_citation_not_served_and_verdict_non_pass():  # spec: �
     sink = InMemoryTraceSink()
     res = await _run(prov, packet, sink=sink)
 
-    # Fabricated content never reaches the served text.
+    # Fabricated content never reaches the served text. (T-E6b change 2: this single-claim,
+    # all-blocked turn now serves the honest D13 grounded render — the metformin packet — so
+    # "warfarin" is doubly absent: neither served verbatim nor present in the real records.)
     assert "warfarin" not in res.text.lower()
 
-    # Its verdict is recorded and is NOT a pass.
+    # Its verdict is recorded and is NOT a pass. INVARIANT the D13-supersede must preserve:
+    # the per-claim verdicts are carried through on the served result AND the trace even when
+    # the all-blocked turn falls back to the grounded render.
     verdicts = [str(v).lower() for v in res.verdicts]
     assert verdicts, "the fabricated claim's verdict must be recorded"
     assert not any(v == "pass" for v in verdicts)
@@ -323,10 +327,14 @@ async def test_non_list_evidence_ids_does_not_crash_turn():  # spec: finding-1 /
     # Must NOT raise — a ValidationError escaping to the caller is the bug being frozen.
     res = await _run(prov, packet, sink=sink)
 
-    # The run returned (did not raise) and is attributed to the LLM turn.
-    assert res.source == "llm"
+    # The load-bearing invariant: the run RETURNED (did not raise). RECONCILED (T-E6b change 2):
+    # the single malformed claim is BLOCKED → all claims blocked → the served answer is the
+    # honest D13 grounded render (source="deterministic_fallback"), never an empty source="llm".
+    assert res.source == "deterministic_fallback"
+    assert res.text.strip() != ""            # grounded, non-empty — the run completed
 
-    # The malformed claim cannot be served as PASS (its evidence lookup is broken/empty).
+    # The malformed claim cannot be served as PASS (its evidence lookup is broken/empty). The
+    # per-claim verdict is still carried through the D13-supersede path.
     verdicts = [str(v).lower() for v in res.verdicts]
     assert not any(v == "pass" for v in verdicts), (
         "a claim with non-list evidence_ids must not receive a PASS verdict"

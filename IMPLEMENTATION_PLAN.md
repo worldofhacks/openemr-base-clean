@@ -103,7 +103,7 @@
   `Anchors:` §5, D7, F-D.1
   `Accept:` each typed claim carries `evidence_ids`; verifier does **field-level match, reject on contradiction not absence** (10mg vs 5mg → reject; both silent → pass); the templater **re-renders display text from verified fields** — the LLM's prose is discarded if it diverges (it cannot phrase past verification); verdict ∈ `pass|flagged|blocked|refused(kind)` logged per response.
   `Test:` `test_reject_on_contradiction_not_absence` (invariant), `test_templater_discards_divergent_prose` (invariant).
-- [x] **E6.2 Encode the audit's concrete §5/D7 rules**
+- [x] **E6.2 Encode the audit's concrete §5/D7 rules** *(F-D.2 order/plan med de-dup was marked done here but was NOT implemented — caught + implemented in T-E6b, 2026-07-10; see DECISIONS D7 addendum.)*
   `Files:` extend `agent/app/verify/verifier.py`, NEW `agent/app/verify/rules.py`
   `Anchors:` §5 rules 1–6, D7-rev, F-D.1/F-D.4/F-D.5/F-D.6/F-D.2, D12
   `Accept:` (1) FHIR `status` never rendered verbatim — an immunization never renders "patient refused" (F-D.1), Encounter.status not asserted (F-D.6); (2) reject any criticality-based claim, never rank/deprioritize allergy risk (F-D.4); (3) empty allergy result → **"no allergy records returned; confirm with patient,"** never "NKDA" (F-D.5); (4) consume all conditions, never send `clinical-status=active`, reject "no history of X" if an inactive match exists (F-D.6); (5) empty dose → "dose not specified — confirm before dosing," de-dup order+plan (F-D.2); (6) **deceased-indicator pre-flight → deterministic refusal** before any summarization (D12, keys on `deceasedDateTime`/`deceasedBoolean`); treatment-verb blocklist → refusal.

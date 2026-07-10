@@ -12,7 +12,9 @@ by the test harness (Selenium), never by this runtime code.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
+import json
 import secrets
 from urllib.parse import urlencode
 
@@ -41,6 +43,36 @@ def forbid_nondelegated_grant(grant_type: str) -> None:
         )
 
 
+def _clinician_sub_from_id_token(id_token: str | None) -> str | None:
+    """Decode the id_token JWT PAYLOAD (no signature check — it is our own freshly-exchanged
+    token) and return the launching clinician's identity: `fhirUser` preferred, else `sub`.
+
+    Defensive by design (fail-closed): any malformed JWT — wrong segment count, bad base64,
+    non-JSON payload, non-object payload — yields None rather than raising, so a token exchange
+    is never derailed by an unexpected id_token shape (§6)."""
+    if not id_token or not isinstance(id_token, str):
+        return None
+    segments = id_token.split(".")
+    if len(segments) < 2:
+        return None
+    seg = segments[1]
+    try:
+        padded = seg + "=" * (-len(seg) % 4)  # restore base64url padding
+        raw = base64.urlsafe_b64decode(padded)
+        payload = json.loads(raw)
+    except (binascii.Error, ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    fhir_user = payload.get("fhirUser")
+    if isinstance(fhir_user, str) and fhir_user:
+        return fhir_user
+    sub = payload.get("sub")
+    if isinstance(sub, str) and sub:
+        return sub
+    return None
+
+
 def generate_pkce() -> tuple[str, str, str]:
     """Return (code_verifier, code_challenge, method) for PKCE S256 (RFC 7636)."""
     verifier = base64.urlsafe_b64encode(secrets.token_bytes(64)).rstrip(b"=").decode()[:96]
@@ -60,6 +92,9 @@ class TokenResponse(BaseModel):
     scope: str = ""
     patient: str | None = None  # SMART launch/patient context, when present
     refresh_token: SecretStr | None = None
+    # The launching clinician's identity, decoded from the id_token (D9/D5 provider attribution):
+    # fhirUser when present, else sub. None when the response carried no (decodable) id_token.
+    clinician_sub: str | None = None
 
     @property
     def scopes(self) -> list[str]:
@@ -146,4 +181,8 @@ class SmartClient:
         if resp.status_code != 200 or "access_token" not in payload:
             # Never surface the raw error to a user; describe the failed operation (§ error handling).
             raise SmartAuthError(f"token exchange failed (HTTP {resp.status_code})")
-        return TokenResponse(**{k: payload[k] for k in TokenResponse.model_fields if k in payload})
+        fields = {k: payload[k] for k in TokenResponse.model_fields if k in payload}
+        # id_token is NOT a TokenResponse field — decode it separately (D9/D5): the clinician's
+        # identity is fhirUser (preferred) else sub, or None when there is no decodable id_token.
+        fields["clinician_sub"] = _clinician_sub_from_id_token(payload.get("id_token"))
+        return TokenResponse(**fields)

@@ -78,7 +78,11 @@ async def test_orchestrator_emits_one_trace_with_accountability_and_steps():
     prov = FakeProvider([_tool("toolu_1", "get_conditions"), _text("brief")])
     res = await Orchestrator(prov).run_previsit_brief(
         _packet(), "Summarize.", tools=_registry(), tracer=tracer, accountability=_acct())
-    assert res.source == "llm"
+    # RECONCILED (T-E6b change 2): the terminal turn is UNCITED prose → BLOCKED → all-blocked/
+    # empty → the served answer is the D13 grounded render (source="deterministic_fallback").
+    # The load-bearing invariant here is the TRACE (one trace, accountability, spans, accumulated
+    # tokens/cost), which is recorded per model-call/tool-dispatch and is unchanged.
+    assert res.source == "deterministic_fallback"
     assert len(sink.traces) == 1                 # exactly one trace per request
     t = sink.traces[0]
     assert t.client_id == "copilot-42"
@@ -110,14 +114,20 @@ async def test_tracing_failure_never_breaks_the_brief():  # boundary — §6 sof
     res = await Orchestrator(prov).run_previsit_brief(
         _packet(), "Summarize.", tools=_registry(), tracer=tracer, accountability=_acct())
     # Under §5 verify-then-flush, an uncited prose turn is wrapped as a TextClaim, BLOCKED by
-    # the verifier, and therefore NOT served — the served text is legitimately notice-only.
-    # The soft-dependency invariant is: the REQUEST COMPLETED via the LLM path (res.source ==
-    # "llm"), not that any specific prose was served. The failed sink export must be counted.
-    assert res.source == "llm"  # request completed via LLM path; sink failure was absorbed
+    # the verifier, so nothing verifies. RECONCILED (T-E6b change 2): an all-blocked/empty
+    # turn now serves the honest D13 grounded render (source="deterministic_fallback"), never
+    # an empty source="llm". The soft-dependency invariant is unchanged: the REQUEST COMPLETED
+    # and returned a grounded brief; the failed sink export was absorbed and counted.
+    assert res.source == "deterministic_fallback"  # all-blocked → grounded D13, request completed
+    assert "Type 2 diabetes" in res.text           # grounded in the real record, not empty
     assert tracer.dropped == 1  # the dropped export was counted
 
 
 async def test_no_tracer_is_a_noop():
     prov = FakeProvider([_text("brief")])
     res = await Orchestrator(prov).run_previsit_brief(_packet(), "Summarize.", tools=_registry())
-    assert res.source == "llm"  # tracing is optional — backward compatible with E5
+    # Tracing is optional — a no-tracer run must still complete and return a grounded brief.
+    # RECONCILED (T-E6b change 2): the uncited prose turn is BLOCKED → all-blocked/empty → the
+    # served answer is the D13 grounded render (source="deterministic_fallback"), not empty llm.
+    assert res.source == "deterministic_fallback"
+    assert "Type 2 diabetes" in res.text  # grounded, request completed without a tracer

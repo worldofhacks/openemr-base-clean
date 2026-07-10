@@ -48,11 +48,11 @@ def _launch_and_get_session() -> dict:
             if "OpenEMR" in b.text:
                 b.click()
                 break
-        # A patient selector may appear before consent; pick the first patient if so.
+        # Standalone launch/patient shows OpenEMR's patient selector (button.patient-btn per row);
+        # pick the first patient, then proceed to the consent screen.
         try:
-            sel = WebDriverWait(driver, 8).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='patient_id'], .patient-selection a")))
-            sel.click()
+            WebDriverWait(driver, 15).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button.patient-btn"))).click()
         except Exception:
             pass
         wait.until(EC.element_to_be_clickable((By.ID, "authorize-btn"))).click()
@@ -70,7 +70,7 @@ def test_live_chat_serves_verified_brief_from_real_data(capsys):
 
     resp = httpx.post(f"{AGENT}/chat",
                       json={"session_id": session["session_id"], "message": "Give the pre-visit brief."},
-                      timeout=90.0)
+                      timeout=180.0)  # the LLM call can retry on transient 429/529 (adds backoff)
     assert resp.status_code == 200, f"/chat failed: HTTP {resp.status_code} {resp.text[:200]}"
     body = resp.json()
     brief = body["brief"]

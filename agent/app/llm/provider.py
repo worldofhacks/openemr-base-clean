@@ -172,6 +172,11 @@ class AnthropicLLMProvider:
             kwargs["system"] = system  # cache_control breakpoints forwarded verbatim (R1)
         if tools:
             kwargs["tools"] = tools
+            # UC1: when the ONLY tool is submit_claims (the packet is pre-built, no FHIR reads
+            # to make), force it — the model must answer in typed claims, not prose, or verify-
+            # then-flush has nothing structured to verify and serves an empty brief.
+            if len(tools) == 1 and tools[0].get("name") == "submit_claims":
+                kwargs["tool_choice"] = {"type": "tool", "name": "submit_claims"}
         try:
             raw = await self._client.messages.create(**kwargs)
         except (anthropic.APIError, TimeoutError) as exc:

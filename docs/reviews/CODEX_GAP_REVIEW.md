@@ -1,38 +1,57 @@
 # Codex Gap Review — Clinical Co-Pilot
 
-> **Review snapshot:** `origin/main` at `04e7fc0` (2026-07-09)
-> **Method:** static, read-only review of the binding architecture, ADRs, audit, implementation plan, agent code, tests, DEVLOG, and recent Git history. No tests, builds, live requests, or deployments were run for this review.
+> **Original review snapshot:** `origin/main` at `04e7fc0` (2026-07-09)
+> **Reconciled:** 2026-07-10 against `origin/main` at `6ca8d4f` (PR #5 merged), plus pushed hotfix commit `65f97f5` on `origin/hotfix/e6b-citation-maxtokens` (not yet in `main`).
+> **Method:** static, read-only review of the binding architecture, dated ADR/architecture addenda, audit, implementation plan, agent code, tests, DEVLOG, and recent Git history. No tests, builds, live requests, or deployments were run for either review pass.
 > **Purpose:** actionable triage for the active builder. This report changes no implementation and does not supersede `ARCHITECTURE.md`.
 
 ## Executive triage
 
-The verification boundary is fail-safe against unsupported content: blocked claims are not displayed. The highest-priority defect is what happens next—when every claim is blocked, the serving path can return a blank response marked as a healthy LLM answer. The other Early blockers are identity/accountability and contract-completeness issues, not speculative polish.
+Three of the original thirteen findings are now fixed in merged PR #5: all-blocked output now becomes honest D13 degradation, clinician identity comes from the freshly exchanged `id_token`, and F-D.2 medication order/plan pairs are de-duplicated. Ten findings remain open. A separate live-E2E hotfix fixes short-form citation resolution and `max_tokens` truncation in commit `65f97f5`; that commit is pushed but was not merged into `main` at this reconciliation snapshot.
 
-| ID | Severity | Gate | Finding |
-|---|---|---|---|
-| CXR-01 | High | **Early blocker** | All-blocked claims can return an empty, falsely healthy response |
-| CXR-02 | High | **Early blocker** | Clinician identity is hardcoded, so the session is not actually clinician-pinned |
-| CXR-03 | Medium | **Early blocker** | F-D.2 order/plan medication de-duplication is absent despite E6.2 being checked |
-| CXR-04 | High | **Early blocker** | Actual `user/*` token breadth conflicts with the patient-compartment trust claim |
-| CXR-05 | High | **Early blocker** | Langfuse tracing starts after the six baseline FHIR reads |
-| CXR-06 | High | **Early blocker** | The required granted-scope guard is not wired into token exchange |
-| CXR-07 | High | **Early blocker** | Deployed composition uses an in-memory session/token store while readiness probes unused Postgres |
-| CXR-08 | High | **Early blocker** | `/chat` is buffered JSON without citations, SSE, or interrupted-stream semantics |
-| CXR-09 | Medium | Final | Session lifetime ignores token `expires_in`; a FHIR 401 becomes ordinary missing data |
-| CXR-10 | High | Final | A mapper exception can abort the whole fan-out instead of producing a named partial failure |
-| CXR-11 | Medium | Final | Pagination, recency, and selection semantics can silently omit clinically relevant records |
-| CXR-12 | Medium | Final | The D13 fallback bypasses the formal verifier despite the contract saying it still runs |
-| CXR-13 | Medium | Final | Langfuse export and flush execute synchronously on the serving path |
+The original evidence is retained below as the audit trail for what was observed at `04e7fc0`. Each finding's **Status** and **Closure/Revalidation** note is authoritative for current triage; current line references use `6ca8d4f` unless a different commit is named.
+
+| ID | Status | Severity | Gate | Current disposition |
+|---|---|---|---|---|
+| CXR-01 | **FIXED** | High | **Early blocker** | Honest all-blocked → D13 path merged in PR #5 (`d44df40`) |
+| CXR-02 | **FIXED** | High | **Early blocker** | Clinician `fhirUser`/`sub` derived from `id_token` in PR #5 (`d44df40`) |
+| CXR-03 | **FIXED** | Medium | **Early blocker** | F-D.2 order/plan medication de-dup merged in PR #5 (`d44df40`) |
+| CXR-04 | **STILL-OPEN** | High | **Early blocker** | `user/*` grant remains broader than the patient-compartment wording |
+| CXR-05 | **STILL-OPEN** | High | **Early blocker** | Baseline FHIR fan-out still precedes the request trace |
+| CXR-06 | **STILL-OPEN** | High | **Early blocker** | Granted-scope guard still has no production exchange-path call site |
+| CXR-07 | **STILL-OPEN** | High | **Early blocker** | In-memory serving state still conflicts with the Postgres readiness probe |
+| CXR-08 | **STILL-OPEN** | High | **Early blocker** | Route remains buffered JSON without surfaced citations/SSE/interruption semantics; internal citation hotfix is separate |
+| CXR-09 | **STILL-OPEN** | Medium | Final | Session deadline still ignores actual token `expires_in` |
+| CXR-10 | **STILL-OPEN** | High | Final | Mapper exceptions can still escape the per-tool partial-failure envelope |
+| CXR-11 | **STILL-OPEN** | Medium | Final | Pagination, recency, ordering, and selection semantics remain undefined |
+| CXR-12 | **STILL-OPEN** | Medium | Final | Generic D13 branches still render the packet without formal verifier execution |
+| CXR-13 | **STILL-OPEN** | Medium | Final | Langfuse export and flush remain synchronous |
+
+### Post-review live hotfix — citation resolution + output truncation — FIXED
+
+- **Status:** **FIXED (committed; merge pending)** in `65f97f5` on `origin/hotfix/e6b-citation-maxtokens`. No PR existed and the commit was not in `main` at the reconciliation snapshot.
+- `agent/app/evidence/packet.py:140-163` at `65f97f5` adds unique resolution for exact IDs, bare `hash8`, bare source IDs, and `ResourceType:source_id` forms.
+- `agent/app/verify/verifier.py:201-211` and `agent/app/verify/verifier.py:414-424` at `65f97f5` use that resolver while preserving fail-closed behavior for unresolvable citations.
+- `agent/app/config.py:39-42` at `65f97f5` raises the forced `submit_claims` output ceiling from 2,048 to 8,192 tokens so data-rich claim payloads are not lost to `stop_reason=max_tokens`.
+- The commit records live validation on a 199-record packet (22 pass, 6 flagged, 19 blocked). It does not close CXR-08: the HTTP route still does not surface citation objects or implement the binding SSE/interruption contract.
 
 ## Findings
 
-### CXR-01 — All-blocked claims can return an empty, falsely healthy response
+### CXR-01 — All-blocked claims can return an empty, falsely healthy response — FIXED
 
+- **Status:** **FIXED** by `d44df40`, merged through [PR #5](https://github.com/worldofhacks/openemr-base-clean/pull/5) as `6ca8d4f`.
 - **Severity:** High
 - **Gate:** **Early blocker**
 - **Touches:** D7, D13; UC1, UC3, UC4; `ARCHITECTURE.md` §5 and §6; block outcomes driven by F-D.1/F-D.2/F-D.4/F-D.5/F-D.6.
 
-**Evidence**
+**Closure (2026-07-10)**
+
+- `agent/app/orchestrator/loop.py:226-230` defines verified-content detection independently of packet notices.
+- `agent/app/orchestrator/loop.py:359-369` and `agent/app/orchestrator/loop.py:394-402` route zero surviving claims into grounded supersession.
+- `agent/app/orchestrator/loop.py:427-443` returns a non-empty `deterministic_fallback`, `degraded=True`, `fallback_kind="all_blocked"`, and preserves verdicts.
+- `agent/tests/test_verifier_leniency.py:194-221` freezes the behavior; the dated D7 addenda are in `ARCHITECTURE.md:120` and `docs/planning/DECISIONS.md:127`.
+
+**Original evidence (`04e7fc0`)**
 
 - `agent/app/verify/templater.py:219-228` discards all `blocked` and `refused` results.
 - `agent/app/verify/templater.py:230-243` then emits only packet notices and returns `""` when a populated packet has no notices.
@@ -51,13 +70,20 @@ Unsupported content still does not leak, which is the correct safety default. Ho
 
 When zero clinical lines survive verification, the response must be explicit and machine-readable: an honest verification failure/refusal or the documented deterministic fallback, with non-healthy status metadata and a traced/metered verdict. A packet notice may accompany it but must not be the only protection.
 
-### CXR-02 — Clinician identity is hardcoded
+### CXR-02 — Clinician identity is hardcoded — FIXED
 
+- **Status:** **FIXED** by `d44df40`, merged through [PR #5](https://github.com/worldofhacks/openemr-base-clean/pull/5) as `6ca8d4f`.
 - **Severity:** High
 - **Gate:** **Early blocker**
 - **Touches:** D2, D5, D9, D12; F-S.2, F-S.5, F-C.1; `ARCHITECTURE.md` §3, §4, §6a, §7; all UCs.
 
-**Evidence**
+**Closure (2026-07-10)**
+
+- `agent/app/auth/smart_client.py:46-73` derives `fhirUser` (preferred) or `sub` from the freshly exchanged `id_token`; `agent/app/auth/smart_client.py:184-188` stores it as `TokenResponse.clinician_sub`.
+- `agent/app/service.py:95-100` uses that identity for the clinician/patient session pin, and `agent/app/service.py:126-133` carries the pinned identity into accountability tracing.
+- `agent/tests/test_verifier_leniency.py:253-270` freezes the identity path. A demo placeholder remains only when the token has no decodable identity; the primary hardcoded-identity defect is closed.
+
+**Original evidence (`04e7fc0`)**
 
 - `agent/app/service.py:95-99` creates every session with `clinician_sub="openemr-clinician"`.
 - `agent/app/auth/smart_client.py:51-62` does not model an `id_token`.
@@ -74,13 +100,20 @@ The delegated token still reaches OpenEMR as the real user, but the agent's own 
 
 Derive and validate the clinician identity from the delegated OIDC result, seed the session once from that identity, and carry the same identity into the PHI-minimized accountability trace. Add a multi-clinician test that proves identities do not collapse.
 
-### CXR-03 — F-D.2 order/plan medication de-duplication is absent
+### CXR-03 — F-D.2 order/plan medication de-duplication is absent — FIXED
 
+- **Status:** **FIXED** by `d44df40`, merged through [PR #5](https://github.com/worldofhacks/openemr-base-clean/pull/5) as `6ca8d4f`.
 - **Severity:** Medium
 - **Gate:** **Early blocker** because E6.2 is checked complete
 - **Touches:** D7; F-D.2; UC1, UC2; `ARCHITECTURE.md` §5 rule 6 and §8; E6.2.
 
-**Evidence**
+**Closure (2026-07-10)**
+
+- `agent/app/evidence/packet.py:57-100` defines deterministic medication identity (`rxnorm`, else normalized name), prefers `order` over `plan`, and preserves distinct drugs.
+- `agent/app/evidence/packet.py:187-189` de-duplicates before trimming/counting at the EvidencePacket boundary.
+- `agent/tests/test_verifier_leniency.py:286-322` freezes the order/plan pair behavior; `IMPLEMENTATION_PLAN.md:106` and the dated D7 addendum explicitly correct the earlier false completion.
+
+**Original evidence (`04e7fc0`)**
 
 - `agent/app/tools/contracts.py:59-66` retains medication `intent` and says it is used for de-duplication.
 - `agent/app/tools/fhir_tools.py:87-100` maps each `order` or `plan` as a separate `MedicationRecord`.
@@ -99,8 +132,9 @@ The same nine drugs can reach the LLM and fallback renderer as eighteen medicati
 
 Define the deterministic drug identity and precedence rules, consolidate order/plan pairs before the LLM/verifier boundary, preserve source provenance, and freeze the canonical 18-to-9 case as an F-D.2 regression.
 
-### CXR-04 — `user/*` token breadth conflicts with the patient-compartment trust claim
+### CXR-04 — `user/*` token breadth conflicts with the patient-compartment trust claim — STILL-OPEN
 
+- **Status:** **STILL-OPEN** at `6ca8d4f`. `agent/app/auth/scopes.py:23-35` still requests `user/*`, while `ARCHITECTURE.md:86` still describes patient-scoped token containment; no 2026-07-10 addendum reconciles the two.
 - **Severity:** High
 - **Gate:** **Early blocker** requiring an architecture reconciliation
 - **Touches:** D2, D9, D12, D14; F-S.1, F-S.2, F-S.6, F-C.5; `ARCHITECTURE.md` §4, §5a, §6a; all UCs.
@@ -122,8 +156,9 @@ The agent-side pin constrains the current tool code, but the OAuth token itself 
 
 The owner must explicitly choose and document the real model: clinician `user/*` scopes plus an agent-enforced patient pin, or a genuinely patient-scoped grant. Record the residual token-breadth risk and route the binding text change through `/arch-finalize`; do not silently edit `ARCHITECTURE.md` in implementation work.
 
-### CXR-05 — Langfuse tracing starts after the six baseline FHIR reads
+### CXR-05 — Langfuse tracing starts after the six baseline FHIR reads — STILL-OPEN
 
+- **Status:** **STILL-OPEN** at `6ca8d4f`. `agent/app/service.py:121-139` still completes fan-out before entering the traced orchestrator, and `agent/app/tools/fhir_client.py:43-62` still emits only the correlation header.
 - **Severity:** High
 - **Gate:** **Early blocker**
 - **Touches:** D5, D10; F-C.1, F-C.2; UC1 and the all-UC traceability row; `ARCHITECTURE.md` §3.1 and §7; E7.1.
@@ -148,8 +183,9 @@ The trace captures LLM and verification work but omits the six PHI reads, their 
 
 Start the accountable trace before the first FHIR read and emit a span/record for every real outbound FHIR call, including failures and requests that never reach the orchestrator. Preserve PHI minimization and the D10 no-hard-join limitation.
 
-### CXR-06 — The granted-scope guard is not wired into token exchange
+### CXR-06 — The granted-scope guard is not wired into token exchange — STILL-OPEN
 
+- **Status:** **STILL-OPEN** at `6ca8d4f`. The guard remains defined at `agent/app/auth/scopes.py:51-58`, but `agent/app/service.py:20` imports only `requested_scope_string` and `agent/app/service.py:91-101` creates the session without enforcing granted-scope coverage.
 - **Severity:** High
 - **Gate:** **Early blocker**
 - **Touches:** D9; F-C.5; `ARCHITECTURE.md` §4 and §5a; E3 scope gate.
@@ -171,8 +207,9 @@ If OpenEMR grants fewer scopes than requested, launch succeeds and the missing r
 
 Fail the callback before session creation when any required scope is absent, with a non-secret error naming the missing scopes and a test through the actual callback/service path.
 
-### CXR-07 — In-memory serving state conflicts with Postgres readiness and fail-closed claims
+### CXR-07 — In-memory serving state conflicts with Postgres readiness and fail-closed claims — STILL-OPEN
 
+- **Status:** **STILL-OPEN** at `6ca8d4f`. `agent/app/service.py:58-61` still composes in-memory session/token state while `agent/app/health.py:71-86` probes the unused Postgres endpoint as a hard dependency; `docs/DEVLOG.md:297` still records this as outstanding.
 - **Severity:** High
 - **Gate:** **Early blocker**
 - **Touches:** D8, D12, O2; F-S.2; `ARCHITECTURE.md` §3a, §6, §6a, §7; E2.2, E9.1.
@@ -193,8 +230,10 @@ The process can serve from memory while `/ready` reports not ready because an un
 
 Align composition and readiness around the same store. Either wire the binding Postgres path and prove fail-closed behavior live, or explicitly reclassify the demo posture through the planning process and stop probing an unused hard dependency.
 
-### CXR-08 — `/chat` does not implement the cited SSE contract
+### CXR-08 — `/chat` does not implement the cited SSE contract — STILL-OPEN
 
+- **Status:** **STILL-OPEN** at committed `main` (`6ca8d4f`). `agent/app/routes/chat.py:37-42` and `agent/app/routes/chat.py:50-78` remain buffered JSON without surfaced citations; `agent/app/llm/provider.py:164-181` remains non-streaming; E9.2 remains unchecked.
+- **Partial closure:** hotfix `65f97f5` fixes the model-to-packet citation-ID resolution and 2,048-token truncation discovered live. It does not add route-level citation objects, SSE claim blocks, completion events, or interrupted-stream semantics.
 - **Severity:** High
 - **Gate:** **Early blocker** already represented by unchecked E9.2
 - **Touches:** D7, D10; UC1, UC3; `ARCHITECTURE.md` §3, §5, §5a, §6; E9.2.
@@ -217,8 +256,9 @@ The buffered response is safe from partial unverified-token leakage, but it does
 
 Emit only complete verified claim blocks with resolved citation IDs, terminate with an explicit completion event, and mark interrupted streams incomplete. Preserve the invariant that raw model tokens never reach the client.
 
-### CXR-09 — Session lifetime ignores the token's actual expiry
+### CXR-09 — Session lifetime ignores the token's actual expiry — STILL-OPEN
 
+- **Status:** **STILL-OPEN** at `6ca8d4f`. `agent/app/auth/smart_client.py:91` models `expires_in`, but `agent/app/service.py:104-106` still computes the deadline from configured `token_lifetime_seconds`; a FHIR 401 remains a generic non-200 failure.
 - **Severity:** Medium
 - **Gate:** Final
 - **Touches:** D9, D12; F-P.5; `ARCHITECTURE.md` §3a and §6.
@@ -240,8 +280,9 @@ A session can outlive the delegated token and misreport six authorization failur
 
 Bound the session to the actual token expiry, distinguish FHIR 401 from data/tool failure, and return the canonical re-launch outcome. Reconcile the stale architecture row through `/arch-finalize`.
 
-### CXR-10 — Mapper exceptions can abort the whole fan-out
+### CXR-10 — Mapper exceptions can abort the whole fan-out — STILL-OPEN
 
+- **Status:** **STILL-OPEN** at `6ca8d4f`. Mapping still occurs outside the protected network-read block at `agent/app/tools/fhir_tools.py:146-154`, the bounded wrapper catches only timeout at `agent/app/tools/fhir_tools.py:209-214`, and `task.result()` can still re-raise at `agent/app/tools/fhir_tools.py:219-221`.
 - **Severity:** High
 - **Gate:** Final
 - **Touches:** D10; F3; `ARCHITECTURE.md` §6; UC1.
@@ -262,8 +303,9 @@ One unexpected or malformed resource shape can escape the tool envelope and abor
 
 Normalize mapping/validation failures at the individual tool boundary, preserve the other five results, name the missing category without leaking raw payloads, and freeze an arbitrary malformed-resource regression.
 
-### CXR-11 — Pagination and recency semantics can silently omit relevant data
+### CXR-11 — Pagination and recency semantics can silently omit relevant data — STILL-OPEN
 
+- **Status:** **STILL-OPEN** at `6ca8d4f`. `agent/app/tools/fhir_client.py:43-68` still returns one Bundle, `agent/app/tools/fhir_tools.py:162-188` still uses fixed counts without ordering/lookback, and `agent/app/evidence/packet.py:187-196` still applies first-N trimming after medication de-duplication.
 - **Severity:** Medium
 - **Gate:** Final
 - **Touches:** D7, D9, D10; F-D.6, F-P.3; UC1, UC3, UC4; `ARCHITECTURE.md` §5a and §6.
@@ -284,8 +326,9 @@ Large charts can omit later pages without a notice, and an unsorted first-N trim
 
 Define and test pagination bounds, deterministic sort/selection rules, and explicit truncation notices. Make “recent” a real date policy and preserve stale-date warnings rather than silently filtering history.
 
-### CXR-12 — The D13 fallback bypasses the formal verifier
+### CXR-12 — The D13 fallback bypasses the formal verifier — STILL-OPEN
 
+- **Status:** **STILL-OPEN**, narrowed at `6ca8d4f`. The all-blocked path now verifies first and honestly degrades (CXR-01 fixed), but generic D13 branches at `agent/app/orchestrator/loop.py:318-337` and `agent/app/orchestrator/loop.py:423-457` still call the packet renderer directly; `agent/app/verify/templater.py:135-159` contains no `Verifier` execution.
 - **Severity:** Medium
 - **Gate:** Final
 - **Touches:** D7, D13; F-D.1/F-D.2/F-D.4/F-D.5/F-D.6; `ARCHITECTURE.md` §5 and §6.
@@ -304,8 +347,9 @@ The fallback is evidence-only and therefore safer than model prose, but it is no
 
 Define what “verifier still runs” means for a no-LLM path, produce explicit verdicts/trace data, and freeze parity tests for every rule that applies to both normal and fallback output.
 
-### CXR-13 — Langfuse export is synchronous on the serving path
+### CXR-13 — Langfuse export is synchronous on the serving path — STILL-OPEN
 
+- **Status:** **STILL-OPEN** at `6ca8d4f`. `agent/app/observability/langfuse.py:75-112` still emits the span tree and calls `client.flush()` synchronously; trace finalization reaches that sink at `agent/app/observability/langfuse.py:140-180`.
 - **Severity:** Medium
 - **Gate:** Final
 - **Touches:** D5, D10; `ARCHITECTURE.md` §6 and §7; F-P.5/R12 latency posture.
@@ -328,13 +372,13 @@ Bound or decouple export latency, retain a dropped/buffered counter, and add a s
 ## Tracker implications
 
 - E7.1 should not be treated as fully closed until CXR-05 is resolved and E7.0 provisions a live sink.
-- E6.2 should not be treated as fully closed until CXR-03 is covered by a semantic de-duplication invariant.
+- E6.2's previously missing F-D.2 semantic de-duplication is now closed by PR #5; the false completion is documented in `IMPLEMENTATION_PLAN.md:106`.
 - E9.1 is deployed, but its stated Postgres/readiness acceptance is not met while CXR-07 remains.
-- E9.2 is correctly unchecked; CXR-01, CXR-05, CXR-08, and live Langfuse provisioning remain on its boundary.
+- E9.2 is correctly unchecked; CXR-05, CXR-08, live Langfuse provisioning, and integration/redeployment of `65f97f5` remain on its boundary. CXR-01 is closed.
 - Any change to the token authorization model or the refresh posture must go through `/arch-finalize`, not an implementation-only edit.
 
 ## Explicit non-findings
 
-- No path was found that renders a contradicted or unresolvable model claim as verified clinical content. CXR-01 is a blank-response failure after safe blocking, not a hallucination leak.
+- No path was found that renders a contradicted or unresolvable model claim as verified clinical content. The former post-block blank-response failure, CXR-01, is now fixed by honest D13 degradation.
 - The six serving tools are read-only FHIR GETs and the current service supplies the session's patient ID to them. CXR-04 is a token-containment/contract mismatch, not evidence of a current cross-patient request path.
 - Langfuse sink exceptions are caught and counted. CXR-13 concerns synchronous latency, not exception propagation.

@@ -9,6 +9,7 @@ plus the correlation id. The route depends on an injected `services` object (set
 
 from __future__ import annotations
 
+import re
 from typing import Protocol
 
 from fastapi import APIRouter, HTTPException, Request
@@ -39,7 +40,23 @@ class ChatResponse(BaseModel):
     source: str                # "llm" | "deterministic_fallback" | "deterministic_refusal"
     degraded: bool
     verdicts: list[str]        # per-claim verification verdicts (§5)
+    citations: list[str]       # evidence ids backing the served lines (presentation-only, T-E9 UI)
     correlation_id: str
+
+
+# The deterministic fallback render carries inline [ResourceType:id:hash8] tokens; extract them
+# so the UI can show citation chips on that path too (the verified path plumbs them explicitly).
+_INLINE_CITATION = re.compile(r"\[([A-Za-z]+:[^\]\[]+:[0-9a-f]{8})\]")
+
+
+def _citations_for(result: BriefResult) -> list[str]:
+    if result.citations:
+        return list(result.citations)
+    seen: list[str] = []
+    for eid in _INLINE_CITATION.findall(result.text):
+        if eid not in seen:
+            seen.append(eid)
+    return seen
 
 
 class ChatService(Protocol):
@@ -74,5 +91,6 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse:
         source=result.source,
         degraded=result.degraded,
         verdicts=list(result.verdicts),
+        citations=_citations_for(result),
         correlation_id=correlation_id_var.get(),
     )

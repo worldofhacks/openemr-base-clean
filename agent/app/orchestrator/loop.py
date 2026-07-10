@@ -40,7 +40,7 @@ from app.llm.provider import (
     ToolUseBlock,
     Usage,
 )
-from app.verify.claims import RefusalKind, TextClaim, parse_claims
+from app.verify.claims import RefusalKind, TextClaim, Verdict, parse_claims
 from app.verify.templater import render_from_verified, render_packet_fallback
 from app.verify.verifier import VerificationResult, Verifier
 
@@ -207,6 +207,11 @@ class BriefResult:
     # Per-claim §5 verdicts for the served answer (D7). Empty on the fallback/refusal paths
     # that never ran the verifier per claim (the refusal carries its own "refused:<kind>").
     verdicts: list[str] = field(default_factory=list)
+    # Additive presentation-only provenance (T-E9 UI): the evidence ids the verifier matched
+    # for the PASS/FLAGGED lines actually served. Does NOT affect verification, verdicts, or the
+    # rendered brief text — it only lets the UI show citation chips. Empty on paths whose text
+    # already carries inline [evidence_id] tokens (the deterministic fallback render).
+    citations: list[str] = field(default_factory=list)
 
 
 def _refusal_result(kind: RefusalKind) -> BriefResult:
@@ -228,6 +233,19 @@ def _has_verified_content(results: list[VerificationResult]) -> bool:
     fields). Decided on verified content ALONE — packet notices are excluded, so a trim/gap
     notice never counts as a verified answer (T-E6b (2))."""
     return render_from_verified(results, packet=None).strip() != ""
+
+
+def _verified_citations(results: list[VerificationResult]) -> list[str]:
+    """Flatten the matched evidence ids of the PASS/FLAGGED results (deduped, order-preserving).
+    Presentation-only (T-E9 UI): the served brief text and verdicts are unaffected."""
+    seen: list[str] = []
+    for r in results:
+        if r.verdict not in (Verdict.PASS, Verdict.FLAGGED):
+            continue
+        for eid in r.matched_evidence_ids:
+            if eid not in seen:
+                seen.append(eid)
+    return seen
 
 
 def _assistant_content(resp: LLMResponse) -> list[dict]:
@@ -366,7 +384,7 @@ class Orchestrator:
                 served = render_from_verified([result], packet=packet)
                 return BriefResult(text=served, source="llm", degraded=False,
                                    usage=total, iterations=iteration, tool_calls=tool_calls,
-                                   verdicts=verdicts)
+                                   verdicts=verdicts, citations=_verified_citations([result]))
 
             # submit_claims is the terminal typed answer (§5 verify-then-flush) — intercept it
             # BEFORE the generic tool dispatch. It is not a dispatched tool; verifying its
@@ -399,7 +417,7 @@ class Orchestrator:
                     served = render_from_verified(results_v, packet=packet)
                     return BriefResult(text=served, source="llm", degraded=False,
                                        usage=total, iterations=iteration, tool_calls=tool_calls,
-                                       verdicts=verdicts)
+                                       verdicts=verdicts, citations=_verified_citations(results_v))
                 except Exception:
                     # Unexpected failure in parse/verify/render: fall back to the deterministic
                     # packet render (D13 _fallback) rather than surfacing an exception. The

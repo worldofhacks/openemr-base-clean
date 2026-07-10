@@ -9,6 +9,8 @@ The token never leaves the server; only the opaque session id is handed back.
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -30,9 +32,9 @@ async def launch(request: Request, launch: str | None = None, iss: str | None = 
     return RedirectResponse(url=authorize_url, status_code=302)
 
 
-@router.get("/callback", response_model=SessionCreated)
+@router.get("/callback")
 async def callback(request: Request, code: str | None = None, state: str | None = None,
-                   error: str | None = None) -> SessionCreated:
+                   error: str | None = None) -> RedirectResponse:
     if error:
         raise HTTPException(status_code=400, detail=f"authorization failed: {error}")
     if not code or not state:
@@ -45,4 +47,7 @@ async def callback(request: Request, code: str | None = None, state: str | None 
         raise HTTPException(status_code=403, detail="co-pilot OAuth client is not enabled")
     except (SmartAuthError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f"could not complete the launch: {exc}")
-    return SessionCreated(session_id=session.session_id, patient_id=session.patient_id)
+    # Hand the browser to the chat UI, carrying the pinned session id (T-E9 demo UI). The token
+    # stays server-side; only the opaque session id rides the redirect. `SessionCreated` is kept
+    # as the JSON contract that other API clients can still build a launch against.
+    return RedirectResponse(url=f"/app?sid={quote(session.session_id)}", status_code=302)

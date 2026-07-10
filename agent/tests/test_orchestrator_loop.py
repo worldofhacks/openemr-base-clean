@@ -137,10 +137,15 @@ def test_patient_prefix_is_byte_stable_across_questions():
 # --- loop control + tool dispatch ------------------------------------------
 
 async def test_loop_dispatches_tool_then_returns_on_end_turn():
+    # RECONCILED (T-E6b change 2): the terminal turn is UNCITED prose → wrapped as a TextClaim,
+    # BLOCKED by the verifier, so NOTHING verifies → the served answer is the honest D13
+    # grounded render (source="deterministic_fallback"), never an empty source="llm". The
+    # load-bearing invariant here is loop control + tool dispatch, which is unchanged.
     reg, stub = _registry()
     prov = FakeProvider([_tool_resp("toolu_1", "get_conditions", {}), _text_resp("final brief")])
     res = await Orchestrator(prov).run_previsit_brief(_packet(), "Summarize.", tools=reg)
-    assert res.source == "llm" and not res.degraded
+    assert res.source == "deterministic_fallback"   # all-blocked empty render → grounded D13
+    assert "Type 2 diabetes" in res.text            # grounded in the real record, not empty
     assert stub.invoked_with == [{}]           # tool actually dispatched
     assert res.tool_calls == ["get_conditions"]
     assert len(prov.calls) == 2                 # tool round-trip then final answer
@@ -195,10 +200,13 @@ async def test_client_error_is_flagged_distinctly_from_transient():
 
 async def test_413_triggers_trim_retry_then_succeeds():
     # First (full) call 413s; the loop shrinks the packet and the retry succeeds — not a
-    # blanket fallback (the user's 413-routes-to-trim requirement).
+    # blanket fallback (the user's 413-routes-to-trim requirement). The load-bearing invariant
+    # is that the SECOND call used a smaller (trimmed) prefix.
+    # RECONCILED (T-E6b change 2): the successful retry answers with UNCITED prose → BLOCKED →
+    # nothing verifies → the served answer is the D13 grounded render, not an empty source="llm".
     prov = FakeProvider([LLMRequestTooLarge("payload too large", status=413), _text_resp("brief after trim")])
     res = await Orchestrator(prov).run_previsit_brief(_big_packet(70), "Summarize.", tools=_empty_registry())
-    assert res.source == "llm" and not res.degraded
+    assert res.source == "deterministic_fallback"  # all-blocked empty render → grounded D13
     assert len(prov.calls) == 2
     first_prefix = prov.calls[0]["messages"][0]["content"][0]["text"]
     second_prefix = prov.calls[1]["messages"][0]["content"][0]["text"]
@@ -262,9 +270,14 @@ async def test_successful_turn_accumulates_usage_and_records_cost():
 
 async def test_unknown_tool_returns_error_result_and_loop_continues():
     reg, _ = _registry(tool_name="get_conditions")
-    # model asks for a tool that isn't registered → error result fed back, loop still ends
+    # model asks for a tool that isn't registered → error result fed back, loop still ends.
+    # The load-bearing invariant is that the unknown tool becomes an is_error tool_result and
+    # the loop CONTINUES to a terminal turn (no crash).
+    # RECONCILED (T-E6b change 2): the terminal turn is UNCITED prose → BLOCKED → nothing
+    # verifies → the served answer is the D13 grounded render, not an empty source="llm".
     prov = FakeProvider([_tool_resp("toolu_1", "not_a_tool", {}), _text_resp("recovered")])
     res = await Orchestrator(prov).run_previsit_brief(_packet(), "Summarize.", tools=reg)
-    assert res.source == "llm"
+    assert res.source == "deterministic_fallback"        # all-blocked empty render → grounded D13
+    assert "Type 2 diabetes" in res.text                 # grounded, not empty
     tr = prov.calls[1]["messages"][-1]["content"][0]
     assert tr["type"] == "tool_result" and tr["is_error"] is True

@@ -61,7 +61,8 @@ class AgentServices:
         self._pkce: dict[str, str] = {}               # oauth state → PKCE code_verifier
         self.provider = AnthropicLLMProvider(
             api_key=settings.anthropic_api_key.get_secret_value(),
-            model=settings.llm_model, max_tokens=settings.llm_max_tokens)
+            model=settings.llm_model, max_tokens=settings.llm_max_tokens,
+            timeout=settings.llm_timeout_seconds)
         self.cost_cap = DailyCostCap(cap_usd=settings.daily_cost_cap_usd)
         self.tracer = _build_tracer(settings)
         self.orchestrator = Orchestrator(self.provider, cost_cap=self.cost_cap,

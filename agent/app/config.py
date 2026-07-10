@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr = Field(...)
     llm_model: str = Field(default="claude-sonnet-4-6", min_length=1)  # primary (D4); swap = config
     llm_max_tokens: int = Field(default=2048, gt=0)
+    # A large-packet UC1 brief (many structured claims) can take >30s to generate; the default
+    # SDK timeout is too short and times out into the D13 fallback. Give it real headroom.
+    llm_timeout_seconds: float = Field(default=90.0, gt=0)
     llm_max_tool_iterations: int = Field(default=6, gt=0)  # tool loop cap → D13 if not converged
     # Small daily USD cap — first real LLM spend (E5). A trip degrades to the D13 fallback,
     # never an uncapped bill. In-process for the demo; prod needs a shared counter.

@@ -70,6 +70,74 @@ def _norm(value: str | None) -> str:
     return (value or "").strip().lower()
 
 
+# Minimum length for a token/label to be treated as a significant identity signal. Guards the
+# short-substring false positive ("in", 2 chars, must never match "insulin") while still
+# admitting genuine short clinical labels like "a1c" (3 chars) — the boundary sits at 3 (T-E6b (1)).
+_MIN_SIGNIFICANT_LEN = 3
+
+# Tokens too generic to distinguish one entity from another — never a shared-token match on
+# these alone (e.g. two records both "… tablet" are not thereby the same drug).
+_STOPWORD_TOKENS: frozenset[str] = frozenset({
+    "mg", "ml", "oral", "tablet", "capsule", "solution", "injection", "unit", "units",
+    "finding", "disorder", "the", "and", "for", "with",
+})
+
+
+def _significant_tokens(label: str) -> set[str]:
+    """Word tokens of a normalized label worth treating as identity signals — long enough and
+    not a generic stopword."""
+    tokens = set()
+    for tok in label.replace("-", " ").replace("/", " ").split():
+        cleaned = "".join(ch for ch in tok if ch.isalnum())
+        if len(cleaned) >= _MIN_SIGNIFICANT_LEN and cleaned not in _STOPWORD_TOKENS:
+            tokens.add(cleaned)
+    return tokens
+
+
+def _labels_match(claim_label: str, record_label: str) -> bool:
+    """LENIENT entity-identity check (T-E6b (1)): the claim and record name the SAME clinical
+    entity when they are exact-equal, when one normalized label CONTAINS the other, or when
+    they share at least one significant token.
+
+    Guards short-substring false positives ("in" must NOT match "insulin"): a containment
+    match requires the shorter label be long enough to be significant, and a token match only
+    counts long, non-generic tokens (see `_significant_tokens`). A genuinely different entity
+    (warfarin vs metformin) shares no significant token and neither contains the other → no
+    match → the caller still BLOCKS.
+    """
+    a, b = _norm(claim_label), _norm(record_label)
+    if not a or not b:
+        # An absent label is not a contradiction (reject on contradiction, not absence).
+        return True
+    if a == b:
+        return True
+
+    # Containment: one label is a token-boundary substring of the other, and the shorter side
+    # is long enough to be a significant signal (rejects "in" ⊂ "insulin").
+    shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+    if len(shorter) >= _MIN_SIGNIFICANT_LEN and _contains_at_boundary(longer, shorter):
+        return True
+
+    # Shared significant token (rejects generic stopwords and short fragments).
+    return bool(_significant_tokens(a) & _significant_tokens(b))
+
+
+def _contains_at_boundary(haystack: str, needle: str) -> bool:
+    """True if `needle` appears in `haystack` on word boundaries — not mid-word. Prevents a
+    short fragment from matching inside an unrelated longer word."""
+    start = 0
+    while True:
+        idx = haystack.find(needle, start)
+        if idx == -1:
+            return False
+        before_ok = idx == 0 or not haystack[idx - 1].isalnum()
+        end = idx + len(needle)
+        after_ok = end == len(haystack) or not haystack[end].isalnum()
+        if before_ok and after_ok:
+            return True
+        start = idx + 1
+
+
 class Verifier:
     """Deterministic §5 verifier — field-level match against the cited record (D7)."""
 
@@ -137,13 +205,16 @@ class Verifier:
     def _verify_medication(
         self, claim: MedicationClaim, record: EvidenceRecord, matched_ids: list[str]
     ) -> VerificationResult:
-        record_name = _norm(record.fields.get("name"))
-        if record_name and _norm(claim.name) != record_name:
+        record_name = record.fields.get("name")
+        # LENIENT label identity (T-E6b (1)): a paraphrasing LLM ("metformin" for a record
+        # "Metformin 500 MG Oral Tablet") names the same drug. Only a genuinely different
+        # entity (no shared significant token, neither contains the other) BLOCKS.
+        if record_name and not _labels_match(claim.name, record_name):
             return VerificationResult(
                 verdict=Verdict.BLOCKED,
                 reason=(
                     f"medication name contradicts cited record: "
-                    f"claim '{claim.name}' vs record '{record.fields.get('name')}'"
+                    f"claim '{claim.name}' vs record '{record_name}'"
                 ),
                 matched_evidence_ids=matched_ids,
             )
@@ -173,13 +244,15 @@ class Verifier:
     def _verify_lab(
         self, claim: LabValueClaim, record: EvidenceRecord, matched_ids: list[str]
     ) -> VerificationResult:
-        record_display = _norm(record.fields.get("display"))
-        if record_display and _norm(claim.display) != record_display:
+        record_display = record.fields.get("display")
+        # LENIENT label identity (T-E6b (1)): "A1c" cites "Hemoglobin A1c" — same analyte. The
+        # VALUE check below stays STRICT so a wrong number still BLOCKS.
+        if record_display and not _labels_match(claim.display, record_display):
             return VerificationResult(
                 verdict=Verdict.BLOCKED,
                 reason=(
                     f"lab display contradicts cited record: "
-                    f"claim '{claim.display}' vs record '{record.fields.get('display')}'"
+                    f"claim '{claim.display}' vs record '{record_display}'"
                 ),
                 matched_evidence_ids=matched_ids,
             )
@@ -220,13 +293,16 @@ class Verifier:
     def _verify_condition(
         self, claim: ConditionClaim, record: EvidenceRecord, matched_ids: list[str]
     ) -> VerificationResult:
-        record_display = _norm(record.fields.get("display"))
-        if record_display and _norm(claim.display) != record_display:
+        record_display = record.fields.get("display")
+        # LENIENT label identity (T-E6b (1)): "Obesity" cites "Body mass index 30+ - obesity
+        # (finding)" — same problem (shared significant token). A different condition still
+        # BLOCKS (no shared significant token, neither contains the other).
+        if record_display and not _labels_match(claim.display, record_display):
             return VerificationResult(
                 verdict=Verdict.BLOCKED,
                 reason=(
                     f"condition contradicts cited record: "
-                    f"claim '{claim.display}' vs record '{record.fields.get('display')}'"
+                    f"claim '{claim.display}' vs record '{record_display}'"
                 ),
                 matched_evidence_ids=matched_ids,
             )

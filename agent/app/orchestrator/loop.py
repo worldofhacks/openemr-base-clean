@@ -223,6 +223,13 @@ def _refusal_result(kind: RefusalKind) -> BriefResult:
     )
 
 
+def _has_verified_content(results: list[VerificationResult]) -> bool:
+    """True iff at least one result re-renders a VERIFIED line (PASS/FLAGGED with renderable
+    fields). Decided on verified content ALONE — packet notices are excluded, so a trim/gap
+    notice never counts as a verified answer (T-E6b (2))."""
+    return render_from_verified(results, packet=None).strip() != ""
+
+
 def _assistant_content(resp: LLMResponse) -> list[dict]:
     """Reconstruct the assistant turn (text + tool_use) to continue the conversation."""
     out: list[dict] = []
@@ -348,10 +355,18 @@ class Orchestrator:
                 result = self._verifier.verify(claim, packet)
                 if builder is not None:
                     builder.record_verdict(str(result.verdict.value))
+                verdicts = [str(result.verdict.value)]
+                # T-E6b (2): when NOTHING verified (every claim BLOCKED/REFUSED → no verified
+                # line renders), serve the honest D13 grounded render — never an empty (or
+                # notice-only) source="llm". "Nothing verified" is decided on VERIFIED content
+                # alone (packet notices don't count), so a trimmed packet's trim notice can't
+                # masquerade as a verified answer.
+                if not _has_verified_content([result]):
+                    return self._grounded_supersede(packet, total, iteration, tool_calls, verdicts)
                 served = render_from_verified([result], packet=packet)
                 return BriefResult(text=served, source="llm", degraded=False,
                                    usage=total, iterations=iteration, tool_calls=tool_calls,
-                                   verdicts=[str(result.verdict.value)])
+                                   verdicts=verdicts)
 
             # submit_claims is the terminal typed answer (§5 verify-then-flush) — intercept it
             # BEFORE the generic tool dispatch. It is not a dispatched tool; verifying its
@@ -375,10 +390,16 @@ class Orchestrator:
                     if builder is not None:
                         builder.step("verify", latency_ms=(time.monotonic() - t_verify) * 1000,
                                      claims=len(claims))
+                    verdicts = [str(r.verdict.value) for r in results_v]
+                    # T-E6b (2): all claims BLOCKED/REFUSED → nothing verified → serve the honest
+                    # D13 grounded render (real records, "confirm manually"), NOT an empty (or
+                    # notice-only) source="llm". Per-claim verdicts carry through unchanged.
+                    if not _has_verified_content(results_v):
+                        return self._grounded_supersede(packet, total, iteration, tool_calls, verdicts)
                     served = render_from_verified(results_v, packet=packet)
                     return BriefResult(text=served, source="llm", degraded=False,
                                        usage=total, iterations=iteration, tool_calls=tool_calls,
-                                       verdicts=[str(r.verdict.value) for r in results_v])
+                                       verdicts=verdicts)
                 except Exception:
                     # Unexpected failure in parse/verify/render: fall back to the deterministic
                     # packet render (D13 _fallback) rather than surfacing an exception. The
@@ -402,6 +423,25 @@ class Orchestrator:
         # Tool loop did not converge within the cap → deterministic partial answer (D13).
         return self._fallback(packet, total, self.max_tool_iterations, tool_calls,
                               "no_convergence", "tool-use iteration cap reached before a final answer")
+
+    def _grounded_supersede(self, packet: EvidencePacket, usage: Usage, iterations: int,
+                            tool_calls: list[str], verdicts: list[str]) -> BriefResult:
+        """T-E6b (2): every claim BLOCKED/REFUSED → the verified render is EMPTY. Instead of an
+        empty source="llm" answer, serve the honest D13 grounded render — the real records under
+        a "couldn't verify — confirm manually" framing. This is NOT the error/defect fallback:
+        it is grounded degradation, so it carries the accumulated usage and the per-claim
+        verdicts through (the trace already recorded each verdict via builder.record_verdict)."""
+        return BriefResult(
+            text=render_packet_fallback(packet),
+            source="deterministic_fallback",
+            degraded=True,
+            usage=usage,
+            iterations=iterations,
+            tool_calls=tool_calls,
+            fallback_reason="all claims blocked/refused — nothing verified; serving grounded records",
+            fallback_kind="all_blocked",
+            verdicts=verdicts,
+        )
 
     def _fallback(self, packet: EvidencePacket, usage: Usage, iterations: int,
                   tool_calls: list[str], kind: str, reason: str) -> BriefResult:

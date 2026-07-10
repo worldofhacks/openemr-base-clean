@@ -54,6 +54,52 @@ def _content_hash(rec: _Record) -> str:
     return _hash8(json.dumps(rec.model_dump(), sort_keys=True, default=str))
 
 
+def _med_dedup_key(rec: MedicationRecord) -> str:
+    """F-D.2 de-dup key for a medication: its rxnorm when present, else its normalized name.
+    Two records with the same key are the same drug (an order and a plan for it)."""
+    rxnorm = (rec.rxnorm or "").strip()
+    if rxnorm:
+        return f"rxnorm:{rxnorm}"
+    return f"name:{(rec.name or '').strip().lower()}"
+
+
+def _dedup_medications(records: list[_Record]) -> list[_Record]:
+    """F-D.2: collapse an order+plan for the SAME drug to ONE MedicationRecord, preferring
+    intent="order" over "plan". Keys on rxnorm else normalized name. Distinct drugs are NOT
+    collapsed; a record with no de-dup key (blank name and rxnorm) is passed through untouched.
+    First-occurrence order is preserved.
+
+    Two passes keep it simple: pick the winner per key (order beats plan), then emit records in
+    original order, dropping every de-dupable record except the chosen winner for its key.
+    """
+    winners: dict[str, MedicationRecord] = {}
+    for rec in records:
+        if not isinstance(rec, MedicationRecord):
+            continue
+        key = _med_dedup_key(rec)
+        if key in ("rxnorm:", "name:"):  # no usable identity → cannot de-dup
+            continue
+        current = winners.get(key)
+        if current is None or (current.intent != "order" and rec.intent == "order"):
+            winners[key] = rec
+
+    out: list[_Record] = []
+    emitted: set[str] = set()
+    for rec in records:
+        if not isinstance(rec, MedicationRecord):
+            out.append(rec)
+            continue
+        key = _med_dedup_key(rec)
+        if key in ("rxnorm:", "name:"):
+            out.append(rec)  # no identity → not de-duped
+            continue
+        if key in emitted:
+            continue  # already emitted the winner for this drug
+        emitted.add(key)
+        out.append(winners[key])  # emit the chosen winner in first-occurrence position
+    return out
+
+
 def _synthetic_key(rec: _Record, patient_id: str) -> str:
     rt, date_attr, disp_attr = _RECORD_META[type(rec)]
     date = str(getattr(rec, date_attr, None) or "") if date_attr else ""
@@ -138,12 +184,15 @@ def build_evidence_packet(
                                   detail=f"{tool} returned no records"))
             continue
 
-        kept = result.records
+        # F-D.2: an order and a plan for the same drug are ONE evidence record (order preferred).
+        # De-dup BEFORE trim/count so the trim caps operate on distinct drugs.
+        kept = _dedup_medications(result.records)
         if max_records_per_type is not None and len(kept) > max_records_per_type:
-            dropped = len(kept) - max_records_per_type
+            available = len(kept)
+            dropped = available - max_records_per_type
             kept = kept[:max_records_per_type]
             notices.append(Notice(kind="trimmed", tool=tool,
-                                  detail=f"showing {max_records_per_type} of {len(result.records)}; "
+                                  detail=f"showing {max_records_per_type} of {available}; "
                                          f"{dropped} not shown (large chart)"))
         for rec in kept:
             evidence_id, raw_id = _make_evidence_id(rec, patient_id, seen)

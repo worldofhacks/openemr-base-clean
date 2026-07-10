@@ -9,7 +9,7 @@
 
 Three of the original thirteen findings are now fixed in merged PR #5: all-blocked output now becomes honest D13 degradation, clinician identity comes from the freshly exchanged `id_token`, and F-D.2 medication order/plan pairs are de-duplicated. Ten findings remain open. A separate live-E2E hotfix fixes short-form citation resolution and `max_tokens` truncation in commit `65f97f5`; that commit is pushed but was not merged into `main` at this reconciliation snapshot.
 
-The original evidence is retained below as the audit trail for what was observed at `04e7fc0`. Each finding's **Status** and **Closure/Revalidation** note is authoritative for current triage; current line references use `6ca8d4f` unless a different commit is named.
+The original evidence is retained below as the audit trail for what was observed at `04e7fc0`. Each finding's **Status** and **Closure/Revalidation** note is authoritative for current triage and uses `6ca8d4f` unless a different commit is named. Sections explicitly labeled **Original evidence** retain their original snapshot line references.
 
 | ID | Status | Severity | Gate | Current disposition |
 |---|---|---|---|---|
@@ -62,11 +62,11 @@ The original evidence is retained below as the audit trail for what was observed
 - `docs/DEVLOG.md:294-297` records that this is reachable with live data: Sonnet paraphrases labels, the strict verifier blocks the claims, and verified narration remains a follow-up.
 - `agent/tests/test_templater_verified.py:146-155` checks that a contradicted value is absent, but does not require a non-empty refusal or fallback.
 
-**Impact**
+**Original impact (closed)**
 
 Unsupported content still does not leak, which is the correct safety default. However, the physician can receive a blank response labeled as a successful LLM answer. That violates the refusal-as-feature posture and makes the live UC1 path appear healthy when it delivered nothing.
 
-**Triage acceptance**
+**Original acceptance criterion (satisfied)**
 
 When zero clinical lines survive verification, the response must be explicit and machine-readable: an honest verification failure/refusal or the documented deterministic fallback, with non-healthy status metadata and a traced/metered verdict. A packet notice may accompany it but must not be the only protection.
 
@@ -92,11 +92,11 @@ When zero clinical lines survive verification, the response must be explicit and
 - `agent/app/service.py:124-130` uses the hardcoded session identity as the Langfuse accountability user, collapsing every clinician to one hash.
 - `ARCHITECTURE.md:63` requires session creation pinned to the launching clinician and patient; `IMPLEMENTATION_PLAN.md:58-62` marks that task complete.
 
-**Impact**
+**Original impact (closed)**
 
 The delegated token still reaches OpenEMR as the real user, but the agent's own enforcement and audit record are not clinician-specific. Sessions are patient-pinned only, and the D5/F-C.1 trace cannot answer which clinician used the agent.
 
-**Triage acceptance**
+**Original acceptance criterion (satisfied)**
 
 Derive and validate the clinician identity from the delegated OIDC result, seed the session once from that identity, and carry the same identity into the PHI-minimized accountability trace. Add a multi-clinician test that proves identities do not collapse.
 
@@ -124,11 +124,11 @@ Derive and validate the clinician identity from the delegated OIDC result, seed 
 - `docs/DEVLOG.md:251-254` records the live canonical result as 18 medication records—the audited 9 order + 9 plan representation.
 - `agent/tests/test_verifier.py:263-278` has a de-duplication heading but tests only absent-dose behavior; `agent/tests/test_evidence_packet.py:73-98` tests ID collision handling, not semantic drug de-duplication.
 
-**Impact**
+**Original impact (closed)**
 
 The same nine drugs can reach the LLM and fallback renderer as eighteen medication lines. That adds noise in the physician's 90-second reading window and contradicts a checkmarked Early acceptance criterion.
 
-**Triage acceptance**
+**Original acceptance criterion (satisfied)**
 
 Define the deterministic drug identity and precedence rules, consolidate order/plan pairs before the LLM/verifier boundary, preserve source provenance, and freeze the canonical 18-to-9 case as an F-D.2 regression.
 
@@ -139,7 +139,7 @@ Define the deterministic drug identity and precedence rules, consolidate order/p
 - **Gate:** **Early blocker** requiring an architecture reconciliation
 - **Touches:** D2, D9, D12, D14; F-S.1, F-S.2, F-S.6, F-C.5; `ARCHITECTURE.md` §4, §5a, §6a; all UCs.
 
-**Evidence**
+**Original evidence (`04e7fc0`)**
 
 - `agent/app/auth/scopes.py:23-35` requests six `user/*.read` scopes, not `patient/*.read` scopes.
 - `ARCHITECTURE.md:86` describes the agent's tokens as patient-scoped and relies on server-side single-patient compartment binding.
@@ -163,7 +163,7 @@ The owner must explicitly choose and document the real model: clinician `user/*`
 - **Gate:** **Early blocker**
 - **Touches:** D5, D10; F-C.1, F-C.2; UC1 and the all-UC traceability row; `ARCHITECTURE.md` §3.1 and §7; E7.1.
 
-**Evidence**
+**Original evidence (`04e7fc0`)**
 
 - `agent/app/service.py:119-123` completes the six-read fan-out and builds the EvidencePacket before constructing accountability context.
 - `agent/app/service.py:124-137` only then enters the orchestrator with the tracer.
@@ -190,7 +190,7 @@ Start the accountable trace before the first FHIR read and emit a span/record fo
 - **Gate:** **Early blocker**
 - **Touches:** D9; F-C.5; `ARCHITECTURE.md` §4 and §5a; E3 scope gate.
 
-**Evidence**
+**Original evidence (`04e7fc0`)**
 
 - `agent/app/auth/scopes.py:16-18` claims the runtime guard fails early at token exchange.
 - `agent/app/auth/scopes.py:51-58` implements `assert_required_scopes_granted`.
@@ -214,7 +214,7 @@ Fail the callback before session creation when any required scope is absent, wit
 - **Gate:** **Early blocker**
 - **Touches:** D8, D12, O2; F-S.2; `ARCHITECTURE.md` §3a, §6, §6a, §7; E2.2, E9.1.
 
-**Evidence**
+**Original evidence (`04e7fc0`)**
 
 - `agent/app/service.py:9-12` describes Postgres as the production path, but `agent/app/service.py:58-61` always constructs `InMemorySessionStore` plus in-memory token and PKCE dictionaries.
 - `agent/app/health.py:71-86` declares the configured Postgres endpoint a hard readiness dependency and checks only TCP reachability.
@@ -238,7 +238,7 @@ Align composition and readiness around the same store. Either wire the binding P
 - **Gate:** **Early blocker** already represented by unchecked E9.2
 - **Touches:** D7, D10; UC1, UC3; `ARCHITECTURE.md` §3, §5, §5a, §6; E9.2.
 
-**Evidence**
+**Original evidence (`04e7fc0`)**
 
 - `agent/app/routes/chat.py:37-42` defines one buffered JSON `ChatResponse` with no citations field.
 - `agent/app/routes/chat.py:50-77` awaits the complete brief and returns one response; there is no event generator or `StreamingResponse`.
@@ -263,7 +263,7 @@ Emit only complete verified claim blocks with resolved citation IDs, terminate w
 - **Gate:** Final
 - **Touches:** D9, D12; F-P.5; `ARCHITECTURE.md` §3a and §6.
 
-**Evidence**
+**Original evidence (`04e7fc0`)**
 
 - `agent/app/auth/smart_client.py:57-62` parses `expires_in` from the token response.
 - `agent/app/service.py:95-104` ignores it and derives `token_expires_at` from configured `token_lifetime_seconds`.
@@ -287,7 +287,7 @@ Bound the session to the actual token expiry, distinguish FHIR 401 from data/too
 - **Gate:** Final
 - **Touches:** D10; F3; `ARCHITECTURE.md` §6; UC1.
 
-**Evidence**
+**Original evidence (`04e7fc0`)**
 
 - `agent/app/tools/fhir_tools.py:148-152` catches exceptions only around the network search.
 - `agent/app/tools/fhir_tools.py:153-154` performs resource mapping outside that `try` block.
@@ -310,7 +310,7 @@ Normalize mapping/validation failures at the individual tool boundary, preserve 
 - **Gate:** Final
 - **Touches:** D7, D9, D10; F-D.6, F-P.3; UC1, UC3, UC4; `ARCHITECTURE.md` §5a and §6.
 
-**Evidence**
+**Original evidence (`04e7fc0`)**
 
 - `agent/app/tools/fhir_client.py:43-62` returns one Bundle and does not follow FHIR `next` links.
 - `agent/app/tools/fhir_tools.py:162-188` relies on fixed `_count` limits without explicit ordering.
@@ -333,7 +333,7 @@ Define and test pagination bounds, deterministic sort/selection rules, and expli
 - **Gate:** Final
 - **Touches:** D7, D13; F-D.1/F-D.2/F-D.4/F-D.5/F-D.6; `ARCHITECTURE.md` §5 and §6.
 
-**Evidence**
+**Original evidence (`04e7fc0`)**
 
 - `agent/app/orchestrator/loop.py:406-417` sends the EvidencePacket directly to `render_packet_fallback`.
 - `agent/app/verify/templater.py:135-159` renders packet fields directly and appends evidence IDs; no `Verifier` call occurs on this branch.
@@ -354,7 +354,7 @@ Define what “verifier still runs” means for a no-LLM path, produce explicit 
 - **Gate:** Final
 - **Touches:** D5, D10; `ARCHITECTURE.md` §6 and §7; F-P.5/R12 latency posture.
 
-**Evidence**
+**Original evidence (`04e7fc0`)**
 
 - `agent/app/observability/langfuse.py:75-112` creates the remote span hierarchy and calls `client.flush()` synchronously.
 - `agent/app/observability/langfuse.py:140-166` emits during trace finalization.

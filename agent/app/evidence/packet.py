@@ -137,6 +137,31 @@ class EvidencePacket(BaseModel):
                 return r
         return None
 
+    def resolve_citation(self, cited: str) -> EvidenceRecord | None:
+        """Resolve a model-emitted citation to its record, tolerant of id-FORMAT variation
+        (T-E6b live finding, §5a). The evidence_id is `ResourceType:source_id:hash8`, but a
+        narrating model routinely cites a SHORTER form — the bare `hash8` suffix, the bare
+        `source_id`, or `ResourceType:source_id` without the hash. Each of those alternatives is
+        UNIQUE within a packet (hash8 is a content hash; collisions are disambiguated at build),
+        so matching on them resolves to exactly one record — never a looser identity than the
+        exact id would give. An exact match is always tried first; normalization only fills the
+        gap when the exact id is absent. Returns None if nothing matches (→ caller BLOCKS)."""
+        exact = self.by_id(cited)
+        if exact is not None:
+            return exact
+        needle = cited.strip().lstrip("[").rstrip("]").strip()
+        if not needle:
+            return None
+        for r in self.records:
+            parts = r.evidence_id.split(":")
+            hash8 = parts[-1]
+            type_and_id = ":".join(parts[:-1]) if len(parts) > 1 else r.evidence_id
+            if needle in (r.evidence_id, hash8, r.source_resource_id, type_and_id):
+                return r
+            if r.evidence_id.endswith(":" + needle):
+                return r
+        return None
+
     def by_type(self, resource_type: str) -> list[EvidenceRecord]:
         return [r for r in self.records if r.resource_type == resource_type]
 

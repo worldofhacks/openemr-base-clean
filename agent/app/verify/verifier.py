@@ -202,7 +202,7 @@ class Verifier:
         expected_type = _CLAIM_RESOURCE_TYPE.get(type(claim))
         resolved: list[EvidenceRecord] = []
         for eid in claim.evidence_ids:
-            record = packet.by_id(eid)
+            record = packet.resolve_citation(eid)
             if record is None:
                 continue
             if expected_type is not None and record.resource_type != expected_type:
@@ -414,7 +414,7 @@ class Verifier:
         # D7 fail-closed citation resolution: if evidence_ids are provided but NONE resolve
         # in the packet, the citation is fabricated provenance — BLOCKED, not merely FLAGGED.
         if packet is not None:
-            resolved_ids = [eid for eid in claim.evidence_ids if packet.by_id(eid) is not None]
+            resolved_ids = [eid for eid in claim.evidence_ids if packet.resolve_citation(eid) is not None]
             if not resolved_ids:
                 unresolvable = claim.evidence_ids[0]
                 return VerificationResult(

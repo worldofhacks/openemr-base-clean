@@ -36,7 +36,10 @@ class Settings(BaseSettings):
     # --- LLM provider (Zone C, D4) ---
     anthropic_api_key: SecretStr = Field(...)
     llm_model: str = Field(default="claude-sonnet-4-6", min_length=1)  # primary (D4); swap = config
-    llm_max_tokens: int = Field(default=2048, gt=0)
+    # A rich patient (many conditions/meds/labs) needs a large forced submit_claims payload —
+    # one cited claim per fact. At 2048 the tool call truncates (stop_reason=max_tokens) and the
+    # claims are lost, degrading every brief to the D13 fallback. 8192 holds the full typed brief.
+    llm_max_tokens: int = Field(default=8192, gt=0)
     # A large-packet UC1 brief (many structured claims) can take >30s to generate; the default
     # SDK timeout is too short and times out into the D13 fallback. Give it real headroom.
     llm_timeout_seconds: float = Field(default=90.0, gt=0)

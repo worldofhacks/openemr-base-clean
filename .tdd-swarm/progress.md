@@ -85,3 +85,12 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
 #   (3) clinician_sub from the token id_token fhirUser/sub (currently hardcoded in service.py) — D9/D5;
 #   (4) implement F-D.2 order/plan medication de-dup (NOT implemented; E6.2 checkbox is wrong → correct + add).
 # Orchestrated as a Workflow (ultracode): Test-freeze → RED → Impl → adversarial Review panel.
+
+## T-E6b workflow (Test→RED→Impl→adversarial Review) — 212 passed
+- Test froze 9e8326c (14 new invariants + 7 reconciled all-blocked→D13 tests). Impl d44df40 (app-only,
+  frozen tests untouched): lenient label match, all-blocked→D13 grounded, clinician_sub from id_token
+  fhirUser/sub, F-D.2 order/plan dedup. Both reviewers APPROVE.
+- Adversarial reviewer IMPORTANT finding: the "share one significant token" leniency over-collapses
+  distinct token-adjacent entities (insulin glargine≈insulin lispro, metoprolol tartrate≈succinate).
+  NOT a served-falsehood (strict dose/value + render uses the record's true identity), but the entity
+  gate is weaker than intended → micro-cycle to tighten (token-SUBSET, not shared-one-token).

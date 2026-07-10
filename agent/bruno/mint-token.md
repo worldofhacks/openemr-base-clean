@@ -10,12 +10,16 @@ cache, or session store, so `/chat` could not use it (§4, §7, D12, D14).
 `dev_mint.py` automates the same synthetic-demo flow as the opt-in live E9 test:
 
 1. Open the deployed agent's `/launch` endpoint in the repository Selenium grid.
-2. Authenticate to OpenEMR and select a synthetic Synthea patient.
+2. Verify the redirect reached the configured OpenEMR HTTPS origin, then authenticate
+   and select a synthetic Synthea patient.
 3. Approve the enabled D14 SMART client.
 4. Let the agent exchange the authorization code and create a patient-pinned session.
 5. Parse the callback's `{session_id, patient_id}` envelope.
 6. Write only `agent_base_url` and `session_id` to `environments/Runtime.bru` with mode
    `0600`. That generated file is gitignored; the helper does not print the session ID.
+
+The helper also verifies the callback returns to the configured agent origin. Remote
+WebDriver endpoints must use HTTPS; HTTP is permitted only for a loopback grid.
 
 ## Run it
 
@@ -47,14 +51,15 @@ non-secret overrides are:
 
 ```text
 AGENT_BASE_URL   deployed agent root; defaults to the current Railway demo
+OPENEMR_BASE_URL expected browser origin; defaults to the current synthetic demo
 SELENIUM_URL     Remote WebDriver; defaults to http://localhost:4444/wd/hub
 OE_USERNAME      synthetic-demo username; defaults to admin
 ```
 
 Equivalent command flags are available via `python bruno/dev_mint.py --help`, including
-`--patient-index` and `--timeout`. Remote agent URLs must use HTTPS; HTTP is accepted only
-for loopback development. The output path is intentionally fixed to the gitignored
-`environments/Runtime.bru`.
+`--openemr-base-url`, `--patient-index`, and `--timeout`. Remote agent, OpenEMR, and
+WebDriver URLs must use HTTPS; HTTP is accepted only for loopback development. The output
+path is intentionally fixed to the gitignored `environments/Runtime.bru`.
 
 Then run the collection:
 

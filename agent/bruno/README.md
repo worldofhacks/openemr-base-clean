@@ -30,7 +30,9 @@ npx --yes @usebruno/cli@3.5.1 run --env Runtime --bail
 `dev_mint.py` prompts without echo for the synthetic-demo OpenEMR password, drives the
 browser-only SMART launch, and writes a short-lived opaque agent session to the
 gitignored `environments/Runtime.bru`. The OAuth bearer token never leaves the agent.
-See [mint-token.md](mint-token.md) for options and troubleshooting.
+Before entering credentials it verifies the browser reached the expected HTTPS OpenEMR
+origin, and it accepts plaintext WebDriver transport only on loopback. See
+[mint-token.md](mint-token.md) for options and troubleshooting.
 
 The collection runs sequentially:
 
@@ -38,7 +40,8 @@ The collection runs sequentially:
 2. `GET /ready` validates the real dependency report. A 503 is a valid, tested result
    only when a hard dependency is reported down; otherwise the request must return 200.
 3. `POST /chat` uses the minted, patient-pinned session and validates the current JSON
-   serving envelope plus correlation ID. The model call can take up to three minutes.
+   serving envelope, a non-empty brief, and the correlation ID. The model call can take
+   up to three minutes.
 
 To exercise only the unauthenticated checks:
 
@@ -49,6 +52,14 @@ npx --yes @usebruno/cli@3.5.1 run health.bru ready.bru --env Deployed --bail
 To target another deployment, set `AGENT_BASE_URL` before running the mint helper. Delete
 `environments/Runtime.bru` when finished; an agent restart or session expiry also requires
 a fresh launch.
+
+The helper's isolated unit checks live with the collection (the agent's canonical pytest
+configuration intentionally discovers only `agent/tests/`). From the repository root:
+
+```bash
+cd agent
+python -m unittest discover -s bruno/tests -v
+```
 
 ## Contract note
 

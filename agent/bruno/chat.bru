@@ -43,6 +43,10 @@ tests {
     expect(body.correlation_id).to.be.a("string").and.not.be.empty;
   });
 
+  test("chat never presents an empty brief", function () {
+    expect(res.getBody().brief.trim()).to.not.equal("");
+  });
+
   test("body and response header carry the same correlation id", function () {
     expect(res.getBody().correlation_id).to.equal(
       res.getHeader("x-copilot-request-id")

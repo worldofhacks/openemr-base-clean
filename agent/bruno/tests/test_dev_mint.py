@@ -92,5 +92,38 @@ class RuntimeEnvironmentTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
 
 
+class TrustBoundaryTests(unittest.TestCase):
+    def test_rejects_plaintext_remote_webdriver(self) -> None:
+        with self.assertRaisesRegex(dev_mint.MintError, "HTTPS"):
+            dev_mint.validate_selenium_url("http://selenium.example.test:4444/wd/hub")
+
+    def test_allows_plaintext_loopback_webdriver(self) -> None:
+        self.assertEqual(
+            dev_mint.validate_selenium_url("http://127.0.0.1:4444/wd/hub"),
+            "http://127.0.0.1:4444/wd/hub",
+        )
+
+    def test_allows_https_remote_webdriver(self) -> None:
+        self.assertEqual(
+            dev_mint.validate_selenium_url("https://selenium.example.test/wd/hub"),
+            "https://selenium.example.test/wd/hub",
+        )
+
+    def test_accepts_the_expected_origin_with_an_explicit_default_port(self) -> None:
+        dev_mint.require_expected_origin(
+            "https://openemr.example.test:443/oauth2/default/authorize",
+            "https://openemr.example.test",
+            "OpenEMR login",
+        )
+
+    def test_rejects_a_credential_page_on_an_unexpected_origin(self) -> None:
+        with self.assertRaisesRegex(dev_mint.MintError, "unexpected origin"):
+            dev_mint.require_expected_origin(
+                "https://lookalike.example.test/login",
+                "https://openemr.example.test",
+                "OpenEMR login",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

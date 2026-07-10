@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # --- SMART client (D2/D9): the agent's registered, enabled OAuth client ---
     smart_client_id: str = Field(..., min_length=1)
     smart_client_secret: SecretStr = Field(...)
+    # The agent's own public callback (the OAuth redirect_uri the client is registered with).
+    agent_callback_url: str = Field(default="http://localhost:8000/callback", min_length=1)
+    token_lifetime_seconds: int = Field(default=3600, gt=0)  # delegated-token session lifetime bound
 
     # --- LLM provider (Zone C, D4) ---
     anthropic_api_key: SecretStr = Field(...)

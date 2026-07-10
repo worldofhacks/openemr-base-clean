@@ -1,0 +1,45 @@
+# Clinical Co-Pilot agent — deploy to Railway ONLY behind the eval-gate (E8.4/E9).
+#
+# The `deploy` job `needs: evals`, so a red eval suite blocks the deploy — "deploy only on
+# green." Requires a RAILWAY_TOKEN repository secret (a Railway project/account token) and an
+# `agent` service in the linked Railway project. Runs on pushes to main that touch agent/**.
+name: agent-deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agent/**'
+      - '.github/workflows/agent-deploy.yml'
+
+jobs:
+  evals:
+    name: eval gate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e .
+      - name: Eval gate (non-zero exit blocks the deploy)
+        run: python -m evals.runner
+
+  deploy:
+    name: deploy (gated on evals)
+    needs: evals            # deploy runs ONLY if the eval gate passed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Railway CLI
+        run: npm i -g @railway/cli
+      - name: Deploy agent service
+        working-directory: agent
+        env:
+          # Add a RAILWAY_TOKEN repo secret to enable deploys; without it railway up exits
+          # non-zero and the job fails (intended — no silent no-op deploy).
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service agent --ci --detach

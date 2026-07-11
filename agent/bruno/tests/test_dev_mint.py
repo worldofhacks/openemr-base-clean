@@ -16,27 +16,71 @@ dev_mint = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(dev_mint)
 
 
-class ParseCallbackPayloadTests(unittest.TestCase):
-    def test_accepts_the_agents_callback_envelope(self) -> None:
-        payload = dev_mint.parse_callback_payload(
-            '{"session_id":"session_abc-123","patient_id":"synthetic-patient"}'
+class ParseAppRedirectTests(unittest.TestCase):
+    def test_accepts_the_agents_app_redirect(self) -> None:
+        payload = dev_mint.parse_app_redirect(
+            "https://agent.example.test/app?sid=session_abc-123",
+            "https://agent.example.test",
         )
 
         self.assertEqual(payload.session_id, "session_abc-123")
-        self.assertEqual(payload.patient_id, "synthetic-patient")
 
-    def test_rejects_a_callback_without_a_session_id(self) -> None:
-        with self.assertRaisesRegex(dev_mint.MintError, "session_id"):
-            dev_mint.parse_callback_payload('{"patient_id":"synthetic-patient"}')
+    def test_rejects_an_app_redirect_without_a_session_id(self) -> None:
+        with self.assertRaisesRegex(dev_mint.MintError, "session id"):
+            dev_mint.parse_app_redirect(
+                "https://agent.example.test/app",
+                "https://agent.example.test",
+            )
 
-    def test_rejects_non_json_callback_content_without_echoing_it(self) -> None:
-        secretish_body = "oauth-code=must-not-be-echoed"
+    def test_rejects_duplicate_session_ids_without_echoing_them(self) -> None:
+        secretish_url = (
+            "https://agent.example.test/app?sid=must-not-be-echoed&sid=also-secret"
+        )
 
         with self.assertRaises(dev_mint.MintError) as raised:
-            dev_mint.parse_callback_payload(secretish_body)
+            dev_mint.parse_app_redirect(secretish_url, "https://agent.example.test")
 
-        self.assertNotIn(secretish_body, str(raised.exception))
-        self.assertIsNone(raised.exception.__cause__)
+        self.assertNotIn("must-not-be-echoed", str(raised.exception))
+        self.assertNotIn("also-secret", str(raised.exception))
+
+    def test_rejects_an_app_redirect_on_an_unexpected_origin(self) -> None:
+        with self.assertRaisesRegex(dev_mint.MintError, "unexpected origin"):
+            dev_mint.parse_app_redirect(
+                "https://lookalike.example.test/app?sid=session_abc-123",
+                "https://agent.example.test",
+            )
+
+    def test_rejects_a_non_app_path(self) -> None:
+        with self.assertRaisesRegex(dev_mint.MintError, "app redirect"):
+            dev_mint.parse_app_redirect(
+                "https://agent.example.test/callback?sid=session_abc-123",
+                "https://agent.example.test",
+            )
+
+
+class BrowserInterceptionTests(unittest.TestCase):
+    def test_blocks_only_chat_on_the_expected_agent_origin(self) -> None:
+        class RecordingDriver:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, object]]] = []
+
+            def execute_cdp_cmd(self, command: str, params: dict[str, object]) -> None:
+                self.calls.append((command, params))
+
+        driver = RecordingDriver()
+
+        dev_mint.configure_chat_interception(driver, "https://agent.example.test/")
+
+        self.assertEqual(
+            driver.calls,
+            [
+                ("Network.enable", {}),
+                (
+                    "Network.setBlockedURLs",
+                    {"urls": ["https://agent.example.test/chat*"]},
+                ),
+            ],
+        )
 
 
 class RuntimeEnvironmentTests(unittest.TestCase):

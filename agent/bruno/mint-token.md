@@ -14,12 +14,15 @@ cache, or session store, so `/chat` could not use it (§4, §7, D12, D14).
    and select a synthetic Synthea patient.
 3. Approve the enabled D14 SMART client.
 4. Let the agent exchange the authorization code and create a patient-pinned session.
-5. Parse the callback's `{session_id, patient_id}` envelope.
+5. Capture and validate the callback's trusted `/app?sid=...` redirect. The helper allows
+   that page to commit but blocks its automatic `/chat` network request, so the UI cannot
+   consume one of the session's bounded turns.
 6. Write only `agent_base_url` and `session_id` to `environments/Runtime.bru` with mode
    `0600`. That generated file is gitignored; the helper does not print the session ID.
 
-The helper also verifies the callback returns to the configured agent origin. Remote
-WebDriver endpoints must use HTTPS; HTTP is permitted only for a loopback grid.
+The helper verifies the final redirect returns to the configured agent origin, uses the
+exact `/app` path, and carries exactly one opaque session ID. Remote WebDriver endpoints
+must use HTTPS; HTTP is permitted only for a loopback grid.
 
 ## Run it
 

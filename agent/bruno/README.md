@@ -31,8 +31,10 @@ npx --yes @usebruno/cli@3.5.1 run --env Runtime --bail
 browser-only SMART launch, and writes a short-lived opaque agent session to the
 gitignored `environments/Runtime.bru`. The OAuth bearer token never leaves the agent.
 Before entering credentials it verifies the browser reached the expected HTTPS OpenEMR
-origin, and it accepts plaintext WebDriver transport only on loopback. See
-[mint-token.md](mint-token.md) for options and troubleshooting.
+origin, and it accepts plaintext WebDriver transport only on loopback. At the final
+callback it validates and captures `/app?sid=...` while blocking the page's automatic
+`/chat` network request; Bruno remains the only chat caller. See [mint-token.md](mint-token.md)
+for options and troubleshooting.
 
 The collection runs sequentially:
 
@@ -63,7 +65,8 @@ python -m unittest discover -s bruno/tests -v
 
 ## Contract note
 
-The collection follows the deployed E9 contract: browser `/launch` → `/callback`, then a
-JSON `POST /chat`. `ARCHITECTURE.md` §5a still describes the planned SSE `/chat` and
-`POST /sessions` surface. Reconciling that binding contract is a planning-pass decision,
-not part of F5; this collection does not alter or bypass the serving routes.
+The collection follows the deployed E9 contract: browser `/launch` → `/callback` →
+captured `/app?sid=...`, then a JSON `POST /chat`. `ARCHITECTURE.md` §5a still describes
+the planned SSE `/chat` and `POST /sessions` surface. Reconciling that binding contract
+is a planning-pass decision, not part of F5; this collection does not alter or bypass the
+serving routes.

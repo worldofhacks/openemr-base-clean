@@ -10,14 +10,13 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import json
 import os
 import re
 import sys
 import tempfile
 from pathlib import Path
-from typing import NamedTuple
-from urllib.parse import urlsplit
+from typing import NamedTuple, Protocol
+from urllib.parse import parse_qs, urlsplit
 
 
 DEFAULT_AGENT_BASE_URL = "https://agent-production-9f62.up.railway.app"
@@ -34,27 +33,10 @@ class MintError(RuntimeError):
 
 class SessionPayload(NamedTuple):
     session_id: str
-    patient_id: str
 
 
-def parse_callback_payload(raw_body: str) -> SessionPayload:
-    """Parse the agent callback without reflecting OAuth-bearing content in errors."""
-    try:
-        payload = json.loads(raw_body)
-    except (json.JSONDecodeError, TypeError):
-        raise MintError("the agent callback did not return its JSON session envelope") from None
-
-    if not isinstance(payload, dict):
-        raise MintError("the agent callback JSON was not an object")
-    session_id = payload.get("session_id")
-    patient_id = payload.get("patient_id")
-    if not isinstance(session_id, str) or not session_id:
-        raise MintError("the agent callback did not include a session_id")
-    if not isinstance(patient_id, str) or not patient_id:
-        raise MintError("the agent callback did not include a patient_id")
-    if _OPAQUE_SESSION_RE.fullmatch(session_id) is None:
-        raise MintError("the callback session_id was not in the expected opaque format")
-    return SessionPayload(session_id=session_id, patient_id=patient_id)
+class CdpDriver(Protocol):
+    def execute_cdp_cmd(self, command: str, params: dict[str, object]) -> object: ...
 
 
 def _normalize_service_url(value: str, label: str) -> str:
@@ -111,6 +93,36 @@ def require_expected_origin(actual_url: str, expected_base_url: str, stage: str)
     expected = _normalize_service_url(expected_base_url, f"expected {stage} URL")
     if _origin(actual_url) != _origin(expected):
         raise MintError(f"{stage} reached an unexpected origin; refusing to continue")
+
+
+def _expected_app_path(agent_base_url: str) -> str:
+    base_path = urlsplit(_normalize_agent_base_url(agent_base_url)).path.rstrip("/")
+    return f"{base_path}/app"
+
+
+def parse_app_redirect(actual_url: str, expected_base_url: str) -> SessionPayload:
+    """Extract the opaque session from the callback's trusted ``/app?sid=`` redirect."""
+    base_url = _normalize_agent_base_url(expected_base_url)
+    require_expected_origin(actual_url, base_url, "agent app redirect")
+    parts = urlsplit(actual_url)
+    if parts.path != _expected_app_path(base_url) or parts.fragment:
+        raise MintError("the agent callback did not produce the expected app redirect")
+
+    query = parse_qs(parts.query, keep_blank_values=True)
+    session_ids = query.get("sid", [])
+    if set(query) != {"sid"} or len(session_ids) != 1 or not session_ids[0]:
+        raise MintError("the agent app redirect did not include exactly one session id")
+    session_id = session_ids[0]
+    if _OPAQUE_SESSION_RE.fullmatch(session_id) is None:
+        raise MintError("the app redirect session id was not in the expected opaque format")
+    return SessionPayload(session_id=session_id)
+
+
+def configure_chat_interception(driver: CdpDriver, agent_base_url: str) -> None:
+    """Allow the app redirect to commit while blocking its automatic chat request."""
+    base_url = _normalize_agent_base_url(agent_base_url)
+    driver.execute_cdp_cmd("Network.enable", {})
+    driver.execute_cdp_cmd("Network.setBlockedURLs", {"urls": [f"{base_url}/chat*"]})
 
 
 def render_runtime_environment(agent_base_url: str, session_id: str) -> str:
@@ -178,6 +190,9 @@ def mint_session(
     try:
         driver = webdriver.Remote(command_executor=webdriver_url, options=Options())
         driver.set_page_load_timeout(timeout_seconds)
+        # The callback now redirects to a UI that auto-submits /chat. Let /app commit so
+        # current_url is reliable, but block its /chat request so Bruno is the sole caller.
+        configure_chat_interception(driver, base_url)
         driver.get(f"{base_url}/launch")
         require_expected_origin(driver.current_url, openemr_url, "OpenEMR login")
         wait = WebDriverWait(driver, timeout_seconds)
@@ -210,14 +225,21 @@ def mint_session(
         except TimeoutException:
             pass
 
-        if "/callback" not in urlsplit(driver.current_url).path:
-            authorize_button = wait.until(EC.element_to_be_clickable((By.ID, "authorize-btn")))
-            require_expected_origin(driver.current_url, openemr_url, "OpenEMR authorization")
-            authorize_button.click()
-        wait.until(lambda current: "/callback" in urlsplit(current.current_url).path)
-        require_expected_origin(driver.current_url, base_url, "agent callback")
-        callback_body = driver.find_element(By.TAG_NAME, "body").text
-        return parse_callback_payload(callback_body)
+        def captured_session(current):
+            current_url = current.current_url
+            if urlsplit(current_url).path != _expected_app_path(base_url):
+                return False
+            return parse_app_redirect(current_url, base_url)
+
+        next_step = wait.until(
+            lambda current: captured_session(current)
+            or EC.element_to_be_clickable((By.ID, "authorize-btn"))(current)
+        )
+        if isinstance(next_step, SessionPayload):
+            return next_step
+        require_expected_origin(driver.current_url, openemr_url, "OpenEMR authorization")
+        next_step.click()
+        return wait.until(captured_session)
     except MintError:
         raise
     except Exception as exc:  # noqa: BLE001 - sanitize browser/OAuth details before display

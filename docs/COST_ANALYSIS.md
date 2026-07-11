@@ -1,9 +1,10 @@
 # Clinical Co-Pilot AI Cost Analysis
 
-> **Status:** Draft methodology complete; actual development spend is pending live Langfuse and Railway exports.
+> **Status:** Methodology complete; Railway actuals partially populated. F7 completion remains blocked on Anthropic billing and live trace evidence.
 > **Scope anchors:** F7, `ARCHITECTURE.md` §9, D4, R1, R4.
 > **Price basis:** repository price card dated 2026-07-06. Re-verify provider prices and discount rules before replacing placeholders.
 > **Data posture:** synthetic Synthea data only. Publish aggregate usage and cost; do not export prompts, responses, patient identifiers, or other PHI-bearing trace content.
+> **Live evidence (2026-07-11):** deployed `/ready` reports Langfuse `detail="disabled"`; the current deployed configuration cannot emit live traces, and no live trace/cost series is available or evidenced for this project. Placeholders that require traces remain intentionally unfilled.
 
 ## Executive conclusion
 
@@ -13,7 +14,7 @@ Near the demo tier, the main AI lever is the stable patient-context prompt prefi
 
 At larger tiers, those token optimizations remain useful but stop defining the system's total cost. Agent replicas and a durable Redis session/cost-control layer appear around 1K users; queues, read replicas, and a likely managed-PaaS exit appear around 10K; multi-region capacity, off-peak pre-computation, and potentially self-hosted open-weight inference dominate at 100K. Each tier must be sized as a new topology with fixed and step-change costs, as required by §9, D4, and R4.
 
-No defensible **recorded** actual-development-spend total exists in the repository yet. Project-to-date Anthropic and Railway invoices can supply the actual dollars, including spend incurred before tracing. E7.0 Langfuse provisioning is still pending and the deployed agent uses `NullTraceSink`, so per-brief attribution must come from a later representative window and cannot retroactively explain earlier spend. The placeholders below are deliberate completion gates, not zero-dollar assumptions.
+No defensible **complete** actual-development-spend total exists yet. Railway reports $1.0835677277 of gross accrued project usage through the 2026-07-11 cutoff, but Anthropic billing data is unavailable. E7.0 Langfuse provisioning is still pending and the deployed agent uses `NullTraceSink`, so per-brief attribution must come from a later representative window and cannot retroactively explain earlier spend. The remaining placeholders are deliberate completion gates, not zero-dollar assumptions.
 
 ## 1. Scope, unit economics, and definitions
 
@@ -50,8 +51,8 @@ In this document, a **user** means one active clinician, consistent with D1's PC
 ### Why the totals are placeholders
 
 - `docs/DEVLOG.md` records E7.0 as an owner console step that is still pending.
-- The deployed service currently selects `NullTraceSink`, so no live Langfuse cost series exists.
-- No Railway billing export or per-service allocation is committed.
+- Live `/ready` on 2026-07-11 reports the Langfuse dependency as healthy-but-`disabled`; local and Railway configuration have no Langfuse public/secret keys. The current deployed service therefore selects `NullTraceSink`, and no live trace/cost series is available or evidenced for this project.
+- Railway provides a provisional current-period accrued-usage snapshot and per-service allocation, recorded below. It is not a closed invoice and does not include Anthropic.
 - The in-process daily cost cap is a guard, not a durable meter; it resets by process/day and must not be presented as an invoice.
 - A future traced window measures unit economics; it does not replace project-to-date provider invoices or recreate pre-observability usage.
 
@@ -61,15 +62,30 @@ Use provider invoices from the project's first paid usage through a named cutoff
 
 | Field / cost bucket | Actual | Source / owner | Status |
 |---|---:|---|---|
-| Project spend start (UTC) | **[TODO F7-P2D-01]** | Owner/provider consoles | Establish first paid usage |
-| Project-to-date cutoff (UTC) | **[TODO F7-P2D-02]** | Owner | Common cutoff for all vendors |
+| Project spend start (UTC) | 2026-07-08T01:02:36Z | Railway billing period | Prior period reports $0/no services; verify Anthropic start separately |
+| Project-to-date cutoff (UTC) | 2026-07-11T04:11:03Z | Railway usage snapshot | Refresh at final invoice cutoff |
 | Anthropic gross usage | **[TODO F7-P2D-03]** | Anthropic billing export | Includes pre-Langfuse calls |
-| Railway gross usage | **[TODO F7-P2D-04]** | Railway invoices/usage export | Include all project services |
+| Railway gross usage | **$1.0835677277 accrued** | Railway project usage API | Provisional current-period project usage; service detail below |
 | Langfuse gross usage | **[TODO F7-P2D-05]** | Langfuse invoice | Likely zero/free-tier during demo; verify |
 | Other attributable vendor spend | **[TODO F7-P2D-06]** | Invoices | Name every included vendor |
 | Credits and adjustments | **[TODO F7-P2D-07]** | Provider invoices | Show separately from gross |
 | **Gross actual development spend** | **[TODO F7-P2D-08]** | Sum P2D-03:06 | Before credits |
 | **Net actual development spend** | **[TODO F7-P2D-09]** | Gross less P2D-07 | Not the steady-state baseline |
+
+#### Railway accrued-usage allocation
+
+Snapshot: `openemr` project, current billing period 2026-07-08T01:02:36Z–2026-08-08T01:02:36Z, observed at 2026-07-11T04:11:03Z. Workspace-wide usage was not used because it includes costs outside this project.
+
+| Railway service | Accrued gross usage | Share of project usage |
+|---|---:|---:|
+| MySQL | $0.8056546577 | 74.35% |
+| OpenEMR | $0.1992961228 | 18.39% |
+| Agent | $0.0300201036 | 2.77% |
+| Postgres | $0.0250064956 | 2.31% |
+| Postgres-aDU3 | $0.0235903480 | 2.18% |
+| **Project total** | **$1.0835677277** | **100.00%** |
+
+The two Postgres services account for $0.0485968436 even though live `/ready` reports the agent's session store down. They remain attributable project spend unless the owner identifies them as unrelated and documents the reallocation.
 
 ### B. Representative unit-economics window
 
@@ -82,6 +98,16 @@ After E7.0 is live, use a separate timestamped window to attribute cost per brie
 | Agent deployment SHA | **[TODO F7-LIVE-03]** | Git/Railway | Awaiting live run |
 | Pricing snapshot date | **[TODO F7-LIVE-04]** | Provider price card | Re-verify R1 |
 | Synthetic patients only confirmed | **[TODO F7-LIVE-05: yes/no]** | Owner | Must be `yes` |
+
+#### Supplemental retained edge evidence
+
+Railway edge logs provide operational context but not token economics or verified-body success:
+
+| Window | `/chat` attempts | HTTP 200 | HTTP 499 | Edge duration p50 | Edge duration p95 |
+|---|---:|---:|---:|---:|---:|
+| 2026-07-10T04:10:34.767Z–2026-07-11T02:23:55.254Z | 16 | 13 | 3 | 38,088 ms | 49,707 ms |
+
+An HTTP 200 does not prove that the body was non-empty and verified, and Railway edge request IDs are not Langfuse correlation IDs. These counts therefore do not fill F7-LF-02, fallback/refusal counts, token usage, or cost per successful brief.
 
 ### Current exporter limitation
 
@@ -107,7 +133,7 @@ This document does not silently treat missing cache-creation/model fields as zer
 | Sonnet cache-creation tokens | **[TODO F7-LF-07]** | Provider export or instrumented Langfuse sink | Current sink omits this field |
 | Sonnet cache-read tokens | **[TODO F7-LF-08]** | Langfuse usage export | Warm eligible prefix |
 | Sonnet output tokens | **[TODO F7-LF-09]** | Langfuse usage export | Use actual, not `max_tokens` |
-| Haiku calls and token classes | **[TODO F7-LF-10]** | Provider export or future per-call instrumentation | Do not assume D4 target routing is implemented |
+| Haiku calls and token classes | **0 by current routing design; token classes n/a** | Deployed config/code inspection | Current runtime has one Sonnet model and no Haiku routing; future mixed routing needs instrumentation |
 | Trace-estimated Anthropic spend | **[TODO F7-LF-11]** | Sum `cost_usd` | Recompute using the dated price card |
 | Provider-console billed spend | **[TODO F7-LF-12]** | Anthropic billing export | Invoice/control total |
 | Trace-to-provider variance | **[TODO F7-LF-13]** | Calculated | Explain retries, rounding, credits, or missing traces |
@@ -366,6 +392,7 @@ Then apply a non-financial hard gate: the candidate must meet or exceed the curr
 - The current five-minute cache window may be too short for schedule-level reuse; only live hit-rate data can settle this.
 - The current runtime exposes one configured model and is expected to be Sonnet-only. Haiku savings are a scenario until routing is implemented and traced.
 - The current Langfuse sink omits model and cache-creation metadata; mixed-model attribution and cache-write repricing require instrumentation or provider data.
+- The live agent has Langfuse disabled, so there are currently no trace-derived denominators or token distributions to export.
 - Actual output length may dominate a rich brief because Sonnet output is $15/M. Use actual usage, not configured ceilings.
 - FHIR query count and database pressure affect worker/replica sizing even though they are not model-token charges.
 - Langfuse's demo free tier must not stand in for the D5 production HIPAA plan (currently documented as $199/month plus a signed BAA before real PHI).
@@ -374,7 +401,8 @@ Then apply a non-financial hard gate: the candidate must meet or exceed the curr
 
 ## 10. Completion checklist
 
-- [ ] Export project-to-date provider invoices and fill F7-P2D actual-spend placeholders.
+- [x] Record a timestamped provisional Railway accrued-usage snapshot and service allocation.
+- [ ] Export Anthropic and final Railway/provider invoices and fill remaining F7-P2D placeholders.
 - [ ] Provision E7.0 and confirm the fields actually exported by the live sink.
 - [ ] Instrument model/cache-creation/per-call model attribution or obtain equivalent provider data.
 - [ ] Export a representative Langfuse window and fill F7-LF placeholders.
@@ -400,3 +428,5 @@ Then apply a non-financial hard gate: the candidate must meet or exceed the curr
 | `agent/app/llm/cost.py` | Implemented cache/read multipliers and per-model estimator; cost cap is a guard, not a meter |
 | `agent/app/observability/trace.py` + `langfuse.py` | The in-memory schema has model/cache-creation fields, but the current Langfuse sink omits them; completion requires exporter instrumentation or provider data |
 | `docs/DEVLOG.md` E7/E9 | Langfuse provisioning and live traces are still pending, justifying the explicit actual-spend placeholders |
+| Railway project usage snapshot, 2026-07-11T04:11:03Z | $1.0835677277 provisional accrued project usage and per-service allocation |
+| Deployed `/ready`, 2026-07-11 | Langfuse reports `disabled`; OpenEMR/Anthropic healthy; session store hard dependency down |

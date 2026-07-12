@@ -15,6 +15,7 @@ the verifier can apply its rules — mapping never drops or asserts them.
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any, Awaitable, Callable
 
 from app.tools.contracts import (
@@ -200,18 +201,29 @@ _PREVISIT_TOOLS: dict[str, Callable[[Any, str], Awaitable[ToolResult]]] = {
 
 async def run_previsit_fanout(
     client, patient_id: str, *, per_call_timeout: float = 8.0, turn_budget: float = 25.0,
+    on_call: Callable[[str, float, ToolResult], None] | None = None,
 ) -> dict[str, ToolResult]:
     """Run the six independent pre-visit reads concurrently (D10). Per-call timeout
     bounds each; the total turn budget bounds the whole turn. Anything unfinished is a
     FAILED result naming what's missing — the brief is always a partial answer, never
-    a silent omission (§6/F3)."""
+    a silent omission (§6/F3).
+
+    `on_call(name, latency_ms, result)` is invoked once per read (OK / NO_RECORDS / FAILED)
+    so the caller can emit a per-FHIR-call accountability span (CXR-05/§7): every PHI read is
+    traced with its latency and outcome, including timeouts and budget cancellations. Recording
+    is best-effort observability — an exception in the callback never affects the returned
+    results (soft dependency, §6)."""
+    timings: dict[str, float] = {}
 
     async def bounded(name: str, fn: Callable[[Any, str], Awaitable[ToolResult]]) -> ToolResult:
+        t0 = time.monotonic()
         try:
             return await asyncio.wait_for(fn(client, patient_id), per_call_timeout)
         except asyncio.TimeoutError:
             return ToolResult(tool=name, status=ToolStatus.FAILED,
                               missing_reason=f"{name} unavailable (per-call timeout {per_call_timeout}s)")
+        finally:
+            timings[name] = (time.monotonic() - t0) * 1000.0
 
     tasks = {name: asyncio.create_task(bounded(name, fn)) for name, fn in _PREVISIT_TOOLS.items()}
     done, _pending = await asyncio.wait(tasks.values(), timeout=turn_budget)
@@ -223,4 +235,11 @@ async def run_previsit_fanout(
             task.cancel()
             results[name] = ToolResult(tool=name, status=ToolStatus.FAILED,
                                        missing_reason=f"{name} unavailable (turn budget {turn_budget}s exceeded)")
+            timings.setdefault(name, turn_budget * 1000.0)
+    if on_call is not None:
+        for name, res in results.items():
+            try:
+                on_call(name, timings.get(name, 0.0), res)
+            except Exception:
+                pass  # observability is a soft dependency — never let it perturb the fan-out
     return results

@@ -118,11 +118,10 @@ class AgentServices:
             base_url=str(self.settings.openemr_fhir_base_url).rstrip("/"),
             access_token=token.access_token.get_secret_value(),
             per_call_timeout=self.settings.fhir_per_call_timeout_seconds)
-        fanout = await run_previsit_fanout(
-            client, session.patient_id,
-            per_call_timeout=self.settings.fhir_per_call_timeout_seconds,
-            turn_budget=self.settings.turn_total_budget_seconds)
-        packet = build_evidence_packet(session.patient_id, fanout)
+        # Begin the accountable trace BEFORE the FHIR fan-out (CXR-05/§7): all accountability is
+        # already known (client, exercised scopes, pinned clinician + patient), so the six PHI
+        # reads can each be captured as a span. Tracing is a soft dependency (§6) — begun always
+        # (a NullTraceSink discards when Langfuse is unconfigured), never affecting serving.
         accountability = AccountabilityContext(
             correlation_id=correlation_id_var.get(),
             client_id=self.settings.smart_client_id,
@@ -131,9 +130,25 @@ class AgentServices:
             user_id=session.clinician_sub,
             patient_id=session.patient_id,
             utc_timestamp=datetime.now(timezone.utc).isoformat())
+        builder = self.tracer.begin(accountability)
+
+        def _record_fhir(name: str, latency_ms: float, result) -> None:
+            # One accountability span per outbound FHIR read (CXR-05): resource, latency, and
+            # tri-state outcome — so the trace localizes FHIR work and every PHI read is logged,
+            # including timeouts/budget failures. No resource id is emitted (D5 PHI-minimization).
+            builder.step(f"fhir.{name}", latency_ms=latency_ms,
+                         status=result.status.value, records=len(result.records),
+                         missing_reason=result.missing_reason or "")
+
+        fanout = await run_previsit_fanout(
+            client, session.patient_id,
+            per_call_timeout=self.settings.fhir_per_call_timeout_seconds,
+            turn_budget=self.settings.turn_total_budget_seconds,
+            on_call=_record_fhir)
+        packet = build_evidence_packet(session.patient_id, fanout)
         await self.sessions.record_turn(session.session_id)
         # UC1: the packet is pre-built deterministically (D10); the LLM narrates it in typed
         # claims (empty tool registry → only submit_claims), which are verified and re-rendered.
+        # The trace begun above is threaded in so the LLM/verify spans join the FHIR spans.
         return await self.orchestrator.run_previsit_brief(
-            packet, message, tools=ToolRegistry([]),
-            tracer=self.tracer, accountability=accountability)
+            packet, message, tools=ToolRegistry([]), builder=builder)

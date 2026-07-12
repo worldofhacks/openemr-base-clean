@@ -109,7 +109,11 @@ class LangfuseSink:
             for st in trace.steps:
                 with span.start_as_current_observation(name=st.name) as child:
                     child.update(metadata={"latency_ms": st.latency_ms, **st.detail})
-        client.flush()
+        # No synchronous flush on the serving path (CXR-13, §6 latency isolation): the SDK
+        # batches spans and exports them on its own background thread, so a slow or unreachable
+        # Langfuse can never add user-visible latency. Delivery is guaranteed by the SDK's
+        # periodic flush and the shutdown flush() below — "soft dependency" means BOTH failure-
+        # isolated (the tracer swallows) AND latency-isolated (serving never waits on export).
 
     def flush(self) -> None:
         if self._client is not None:
@@ -126,6 +130,12 @@ class TraceBuilder:
         self._usage = Usage()
         self._verdicts: list[str] = []
         self._order = 0
+
+    @property
+    def tracer(self) -> "RequestTracer":
+        """The owning tracer — lets a caller that holds only the builder (service.py begins the
+        trace before fan-out, CXR-05) count a finish/build drop against the soft-dep counter."""
+        return self._tracer
 
     def step(self, name: str, *, latency_ms: float, **detail: Any) -> None:
         self._steps.append(TraceStep(order=self._order, name=name, latency_ms=latency_ms, detail=detail))

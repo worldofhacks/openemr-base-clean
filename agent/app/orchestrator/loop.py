@@ -272,10 +272,15 @@ class Orchestrator:
     async def run_previsit_brief(self, packet: EvidencePacket, question: str, *,
                                  tools: ToolRegistry,
                                  tracer: RequestTracer | None = None,
-                                 accountability: AccountabilityContext | None = None) -> BriefResult:
+                                 accountability: AccountabilityContext | None = None,
+                                 builder: TraceBuilder | None = None) -> BriefResult:
         # Optional observability (E7): one accountable trace per request. Tracing is a soft
-        # dependency — building/emitting it must never affect serving (§6).
-        builder = tracer.begin(accountability) if (tracer is not None and accountability is not None) else None
+        # dependency — building/emitting it must never affect serving (§6). The trace is normally
+        # BEGUN BY THE CALLER before the FHIR fan-out (service.py, CXR-05) and threaded in as
+        # `builder`, so the six PHI reads are captured as spans; the test/back-compat path passes
+        # tracer+accountability and we begin it here.
+        if builder is None and tracer is not None and accountability is not None:
+            builder = tracer.begin(accountability)
 
         # D12 deterministic pre-flight (§5/§6): a hard-stop refusal (deceased patient) refuses
         # BEFORE the LLM is ever consulted — the provider's complete() must never run here.
@@ -289,8 +294,7 @@ class Orchestrator:
                     builder.finish(model=self.provider.model, source=result.source,
                                    degraded=result.degraded, fallback_kind=result.fallback_kind)
                 except Exception:  # a trace must never break the (already-decided) refusal
-                    if tracer is not None:
-                        tracer.dropped += 1
+                    builder.tracer.dropped += 1
             return result
 
         result = await self._run_with_trim(packet, question, tools, builder)
@@ -299,8 +303,7 @@ class Orchestrator:
                 builder.finish(model=self.provider.model, source=result.source,
                                degraded=result.degraded, fallback_kind=result.fallback_kind)
             except Exception:  # a trace must never break the answer
-                if tracer is not None:
-                    tracer.dropped += 1
+                builder.tracer.dropped += 1
         return result
 
     async def _run_with_trim(self, packet: EvidencePacket, question: str,
@@ -370,9 +373,12 @@ class Orchestrator:
                 # (uncited → cannot phrase past §5), so the served answer is notice-only. This
                 # is the safety backstop: raw model prose never reaches the brief unverified.
                 claim = TextClaim(text=resp.text(), evidence_ids=[])
+                t_claim = time.monotonic()
                 result = self._verifier.verify(claim, packet)
                 if builder is not None:
                     builder.record_verdict(str(result.verdict.value))
+                    builder.step("verify", latency_ms=(time.monotonic() - t_claim) * 1000,
+                                 verdict=result.verdict.value, claim_type="TextClaim")
                 verdicts = [str(result.verdict.value)]
                 # T-E6b (2): when NOTHING verified (every claim BLOCKED/REFUSED → no verified
                 # line renders), serve the honest D13 grounded render — never an empty (or
@@ -399,15 +405,16 @@ class Orchestrator:
                 try:
                     claims = parse_claims(submit.input.get("claims", []))
                     results_v: list[VerificationResult] = []
-                    t_verify = time.monotonic()
                     for claim in claims:
+                        t_claim = time.monotonic()
                         r = self._verifier.verify(claim, packet)
                         results_v.append(r)
                         if builder is not None:
                             builder.record_verdict(str(r.verdict.value))
-                    if builder is not None:
-                        builder.step("verify", latency_ms=(time.monotonic() - t_verify) * 1000,
-                                     claims=len(claims))
+                            # One span per verification verdict (§7): the trace shows every §5
+                            # decision — verdict + claim type — so pass/block rate is drillable.
+                            builder.step("verify", latency_ms=(time.monotonic() - t_claim) * 1000,
+                                         verdict=r.verdict.value, claim_type=type(claim).__name__)
                     verdicts = [str(r.verdict.value) for r in results_v]
                     # T-E6b (2): all claims BLOCKED/REFUSED → nothing verified → serve the honest
                     # D13 grounded render (real records, "confirm manually"), NOT an empty (or

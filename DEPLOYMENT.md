@@ -192,7 +192,7 @@ subsequent boots skip setup via the volume's completed-setup marker (~20 s).
 
 | Check | Result |
 |---|---|
-| `https://openemr-production-cc95.up.railway.app` login page over HTTPS | HTTP 200 |
+| `https://openemr-production-cc95.up.railway.app` over HTTPS | HTTP 302 to the login route |
 | Login with strong bootstrap credentials (real browser session) | accepted |
 | Login with default `admin`/`pass` | rejected |
 | `GET /apis/default/fhir/metadata` on public URL | HTTP 200, FHIR R4 CapabilityStatement, 34 resource types |
@@ -523,8 +523,8 @@ over privately.
 
 OpenEMR MySQL deep inspection is intentionally **not** a public tester surface.
 Its TCP proxy is closed (F-S.9); deployment owners use Railway's authenticated
-private console/tunnel for narrowly scoped operational checks such as the F8
-retention queries above.
+MySQL Data tab or a project-private maintenance job for narrowly scoped
+operational checks such as the F8 retention queries above.
 
 **API token (password grant) — the recipe a tester runs:**
 ```bash

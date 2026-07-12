@@ -10,6 +10,7 @@ fallback-rate is alertable; any failure propagates to the tracer, which counts i
 
 from __future__ import annotations
 
+import time
 from typing import Any, Protocol, runtime_checkable
 
 from app.llm.cost import estimate_cost
@@ -51,6 +52,29 @@ class NullTraceSink:
         return None
 
 
+def _usage_details(detail: dict) -> dict[str, int]:
+    """Per-generation token usage for a Langfuse generation (native token + cost display)."""
+    return {
+        "input": int(detail.get("input_tokens", 0) or 0),
+        "output": int(detail.get("output_tokens", 0) or 0),
+        "cache_read_input": int(detail.get("cache_read_tokens", 0) or 0),
+    }
+
+
+def _cost_details(detail: dict, model: str) -> dict[str, float] | None:
+    """Explicit per-generation USD cost (D4 pricing) so the native cost widget never depends on
+    Langfuse knowing this model's price. None on an unpriced model — never a silent zero."""
+    try:
+        usage = Usage(
+            input_tokens=int(detail.get("input_tokens", 0) or 0),
+            output_tokens=int(detail.get("output_tokens", 0) or 0),
+            cache_read_input_tokens=int(detail.get("cache_read_tokens", 0) or 0),
+        )
+        return {"total": estimate_cost(usage, model)}
+    except Exception:
+        return None
+
+
 class LangfuseSink:
     """Maps a RequestTrace to a real Langfuse trace (D5 system-of-record). Lazy/defensive: the
     SDK is imported and the client built on first emit; a missing credential or SDK error
@@ -74,6 +98,10 @@ class LangfuseSink:
 
     def emit(self, trace: RequestTrace) -> None:
         client = self._get_client()
+        # Trace attributes moved from `span.update_trace()` (v3) to `propagate_attributes()`
+        # (Langfuse v4) — lazy-imported so an unconfigured deployment never touches the SDK.
+        from langfuse import propagate_attributes
+
         # PHI-minimized metadata; client_id + scopes in the clear (accountability, not PHI, F-C.1).
         metadata = {
             "client_id": trace.client_id,
@@ -90,25 +118,45 @@ class LangfuseSink:
             "source": trace.source,
             "degraded": trace.degraded,
             "fallback_kind": trace.fallback_kind,
+            # Retry/latency posture for the ops agent: fallback_kind="transient" ⇒ the SDK
+            # exhausted its retries; llm_calls>1 ⇒ the tool loop iterated (retried work).
+            "llm_calls": sum(1 for s in trace.steps if s.name == "llm.complete"),
+            "fhir_reads": sum(1 for s in trace.steps if s.name.startswith("fhir.")),
         }
         tags = [
             f"client:{trace.client_id}",
             f"source:{trace.source}",
             f"fallback:{trace.fallback_kind or 'none'}",  # dashboard filter for fallback-rate
         ]
-        with client.start_as_current_span(name=f"previsit-brief:{trace.correlation_id}") as span:
-            span.update_trace(
-                name="previsit-brief",
-                user_id=trace.user_hash,          # already hashed (D5)
-                session_id=trace.correlation_id,
-                # No `input=` payload: never surface the URL (or anything PHI-bearing) as the
-                # visible trace input. The sanitized route lives in metadata only.
-                metadata=metadata,
-                tags=tags,
-            )
-            for st in trace.steps:
-                with span.start_as_current_observation(name=st.name) as child:
-                    child.update(metadata={"latency_ms": st.latency_ms, **st.detail})
+        now_ns = time.time_ns()
+        total_ns = int(sum(s.latency_ms for s in trace.steps) * 1_000_000)
+        # Trace-level attributes propagate to every observation created within this context (v4).
+        with propagate_attributes(user_id=trace.user_hash, session_id=trace.correlation_id,
+                                  trace_name="previsit-brief", tags=tags, metadata=metadata):
+            # `end_on_exit=False`: we set the root's end explicitly so the trace carries the real
+            # request duration (the tree is built at request end, so wall-clock spans are ~0).
+            with client.start_as_current_observation(
+                name="previsit-brief", as_type="span", metadata=metadata,
+                level="ERROR" if trace.degraded else "DEFAULT",
+                status_message=trace.fallback_kind, end_on_exit=False,
+            ) as root:
+                for st in trace.steps:
+                    end_ns = now_ns + int(st.latency_ms * 1_000_000)
+                    if st.name == "llm.complete":
+                        # A native GENERATION carries model + token usage + cost, so Langfuse's
+                        # native cost/latency widgets work (metadata alone cannot power them).
+                        obs = client.start_observation(
+                            name="llm", as_type="generation", model=trace.model,
+                            usage_details=_usage_details(st.detail),
+                            cost_details=_cost_details(st.detail, trace.model),
+                            metadata={"latency_ms": st.latency_ms, **st.detail})
+                    else:
+                        obs = client.start_observation(
+                            name=st.name, as_type="span",
+                            level="ERROR" if st.detail.get("status") == "failed" else "DEFAULT",
+                            metadata={"latency_ms": st.latency_ms, **st.detail})
+                    obs.end(end_time=end_ns)      # give the observation its real duration
+            root.end(end_time=now_ns + total_ns)  # trace duration = summed step latency
         # No synchronous flush on the serving path (CXR-13, §6 latency isolation): the SDK
         # batches spans and exports them on its own background thread, so a slow or unreachable
         # Langfuse can never add user-visible latency. Delivery is guaranteed by the SDK's

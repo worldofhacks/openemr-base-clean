@@ -51,23 +51,39 @@ The metrics depend on the following trace conventions:
 | Tool failure | Observation name starts `fhir.` or `tool.` (configurable) and has `level=ERROR` or error metadata |
 | LLM fallback | Trace context contains `fallback:<kind>` where kind is not `none`; the existing sink emits this tag |
 
-Known dependency: baseline FHIR reads and failures are not complete in Langfuse
-until CXR-05 moves the trace boundary ahead of the fan-out and emits the real
-tool spans. Until then, the checker is runnable but tool-failure and request-error
-coverage is limited to what the current trace exporter records. Do not interpret
-a zero rate as proof that untraced failures did not occur.
+CXR-05 and CXR-13 are merged (`d7235de`; SDK v4 follow-up `4dd1826`). The trace
+now begins before fan-out and emits one `fhir.*` observation for each read. Live
+aggregate validation on 2026-07-12 observed 18 tool calls across three requests,
+confirming those observations are queryable through API v2.
 
 The current sink creates Langfuse observations during export, after the clinical
 work has completed, and places measured step durations in `metadata.latency_ms`.
 For that reason, export-span wall time is only the final latency fallback. The
 checker treats `fhir.*` spans as one parallel fan-out and uses its longest span
-as that stage's critical path; other recorded stages are summed. CXR-05 should
-eventually emit one explicit root `request_latency_ms`; the checker already
-gives that field precedence.
+as that stage's critical path; other recorded stages are summed. The sink does
+not yet emit one explicit root `request_latency_ms`; the checker is ready to give
+that field precedence when it does.
 
-Live API and webhook validation are pending the owner-provisioned Langfuse
-project keys and webhook endpoint. Unit tests freeze the documented request and
-response shapes without network access.
+Live API authentication, pagination, trace grouping, and aggregation are
+validated. External webhook delivery remains pending an owner-provisioned test
+receiver; no receiver URL was present locally or in the Railway agent service at
+validation time. Unit tests freeze the documented request and response shapes
+without network access.
+
+### Live aggregate acceptance evidence (2026-07-12)
+
+An aggregate-only run used production project credentials with
+`COPILOT_ALERT_DRY_RUN=true`, a 120-minute diagnostic window, and zero settlement
+delay. It returned three `previsit-brief` requests, three completed requests, 18
+tool calls, zero tool failures, zero request errors, and zero LLM fallbacks. The
+p95 was 46,276 ms, so only `p95_latency` fired. No webhook POST was attempted and
+no trace IDs, inputs, outputs, patient data, or credentials were printed.
+
+The zero settlement delay and broad window were diagnostic overrides to prove
+current SDK v4 visibility; they do not change the conservative production
+defaults. In dry-run output, `notified` means the alerts that would have been
+handed to a notifier. Confirm `dry_run=true`; it is not evidence of external
+delivery.
 
 ## Configuration and operation
 
@@ -85,14 +101,14 @@ cd agent
 python -m ops.alert_checker
 ```
 
-Required variables:
+Query credentials and delivery variable:
 
 | Variable | Meaning |
 |---|---|
 | `LANGFUSE_BASE_URL` | Langfuse origin, such as the project region's Cloud origin; `LANGFUSE_HOST` is accepted as a compatibility alias |
 | `LANGFUSE_PUBLIC_KEY` | Basic Auth username; secret, never logged |
 | `LANGFUSE_SECRET_KEY` | Basic Auth password; secret, never logged |
-| `COPILOT_ALERT_WEBHOOK_URL` | HTTPS webhook/Slack incoming-webhook URL; secret, never logged or included in payloads |
+| `COPILOT_ALERT_WEBHOOK_URL` | Required only for delivery: owner-provisioned HTTPS webhook/Slack incoming-webhook URL; secret, never logged or included in payloads |
 
 For a local query-only check, explicitly set
 `COPILOT_ALERT_DRY_RUN=true`; otherwise a webhook is required and missing
@@ -161,7 +177,6 @@ Likely causes:
 - Anthropic latency or rate limiting.
 - The OpenEMR laboratory N+1 path on a large chart (F-P.3).
 - A slow FHIR dependency, retry, or total-turn-budget pressure.
-- Synchronous Langfuse export latency (CXR-13) until isolated.
 
 First on-call action:
 
@@ -285,7 +300,7 @@ Resolved when the rate is below the live re-baselined threshold for two closed
 windows and sample responses confirm verified narration or an intentional D13
 outcome.
 
-## Verification and synthetic delivery
+## Verification and delivery handoff
 
 The isolated suite validates API pagination/auth shape, all four thresholds,
 continuous-breach deduplication, webhook sanitization, and nonzero failure exits:
@@ -296,16 +311,41 @@ pytest -q ops/tests
 ```
 
 `test_checker_notifies_once_per_continuous_breach_and_rearms_after_resolution`
-is the synthetic breach proof: one window fires all four alerts, the identical
-next window does not notify again, a clean window rearms them, and the next
-breach sends a second notification.
+is the synthetic notification-path proof. It injects observations and a recording
+notifier in memory: one window fires all four alerts, the identical next window
+does not notify again, a clean window rearms them, and the next breach sends a
+second notification. `test_webhook_payload_contains_only_aggregate_sanitized_data`
+then proves the HTTP notifier receives only the allowed aggregate payload. These
+tests transmit no telemetry and do not claim delivery to an external receiver.
 
-Before declaring live delivery complete:
+The remaining deployment handoff belongs to the owner:
 
-1. Provision the Langfuse Cloud project/keys (E7.0) and a test webhook outside
-   version control.
-2. Run `--once` with a closed window known to contain a synthetic breach.
-3. Confirm exactly one webhook message, aggregate fields only, and a non-secret
-   checker log.
-4. Remove/rotate the test webhook after validation and record the live evidence
-   in the DEVLOG or Final submission artifact.
+1. Provision an owner-approved test receiver and expose its URL as
+   `COPILOT_ALERT_WEBHOOK_URL` through the runtime secret manager. Never add the
+   URL to `.env.example`, a command transcript, or version control.
+2. Confirm the three Langfuse credential variables are present and run a dry
+   query first:
+
+   ```bash
+   cd agent
+   COPILOT_ALERT_DRY_RUN=true python -m ops.alert_checker --once
+   ```
+
+3. With a closed window known to contain a firing alert, confirm the secret is
+   nonempty without printing it, then perform exactly one delivery run:
+
+   ```bash
+   test -n "${COPILOT_ALERT_WEBHOOK_URL:-}"
+   COPILOT_ALERT_DRY_RUN=false python -m ops.alert_checker --once
+   ```
+
+4. Confirm exactly one message at the receiver, aggregate fields only, and a
+   non-secret checker log. Repeating `--once` starts a new process and resets the
+   in-memory breach deduplication, so do not rerun the delivery command merely to
+   check the receiver.
+5. Remove or rotate a temporary receiver after validation and record the live
+   delivery evidence in the DEVLOG or Final submission artifact.
+
+Code acceptance is therefore split deliberately: live read/aggregation and all
+four synthetic alert paths are proven; owner-approved external delivery is a
+deployment handoff until a receiver exists.

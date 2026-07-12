@@ -143,7 +143,7 @@ Values with `${{…}}` are Railway reference variables resolved from the MySQL s
 | `OPENEMR_SETTING_rest_api` | `1` | Enables REST API (globals table, set at boot) |
 | `OPENEMR_SETTING_rest_fhir_api` | `1` | Enables FHIR API |
 | `OPENEMR_SETTING_site_addr_oath` | `https://openemr-production-cc95.up.railway.app` | Site address for OAuth2/FHIR (Connectors) |
-| `OPENEMR_SETTING_api_log_option` | `1` | Minimal API metadata only; do not duplicate FHIR request/response bodies into `api_log` (F-S.4/D15) |
+| `OPENEMR_SETTING_api_log_option` | `1` | Minimal API metadata for a new/bootstrap configuration; existing sites must also verify and, if necessary, update the persisted global (F-S.4/D15) |
 
 Secrets were generated with `openssl rand` and live only in Railway service
 variables (and a local gitignored scratch file) — never in git. See `.env.example`
@@ -240,12 +240,13 @@ Performed immediately at/after first public boot, all verified against the live 
    OpenEMR base URLs as `https://` at configuration load and the FHIR client
    rejects a non-HTTPS base, so a misconfigured service cannot silently downgrade
    its delegated-token traffic.
-7. **API-log data minimization (F-S.4/D15).** Production is configured with
-   `OPENEMR_SETTING_api_log_option=1` (Minimal Logging). OpenEMR still records API
-   access metadata but writes empty request/response bodies, avoiding a second
-   full copy of every FHIR bundle. The exact retention and verification procedure
-   is below; setting an environment variable is not treated as proof until the
-   post-deploy database query passes.
+7. **API-log data minimization (F-S.4/D15).** Production is verified at
+   `api_log_option=1` (Minimal Logging). OpenEMR still records API access metadata
+   but writes empty request/response bodies, avoiding a second full copy of every
+   FHIR bundle. The Railway environment variable was already `1`, but a successful
+   redeploy did **not** overwrite the existing persisted global from `2`; the owner
+   corrected the global through a temporary private path and verified it after a
+   restart. The exact retention and repeat-verification procedure is below.
 
 ### F8 deployment-hardening evidence and owner runbook (2026-07-12)
 
@@ -259,8 +260,8 @@ Railway resource identifiers.
 | HTTPS only; no downgrade | `agent/app/config.py` requires HTTPS for OAuth/FHIR URLs; `agent/app/tools/fhir_client.py` independently rejects non-HTTPS; live HTTP probes redirect to HTTPS | **Pass** |
 | MySQL public TCP proxy | `railway tcp-proxy list --project 1bddbc72-6307-4ec9-b6dd-8184310fbdcf --environment 056473db-d0da-44ab-997b-d491f0e2720b --service af2f61ef-2a8e-49e3-a3df-e41e485befbd --json` | **Pass:** `proxies` is empty; an external MySQL handshake fails |
 | Temporary Railway SSH key | `railway ssh keys list` and `railway ssh keys list --workspace 7d5f456e-72c5-4ea0-a3e7-a368cd85477b` | **Pass:** no personal or workspace keys remain; `claude-deploy-fix` was removed |
-| API body logging | persistent variable `OPENEMR_SETTING_api_log_option=1`; replacement deployment `654fa9cc-8d13-4359-a6d9-6adc4ccca4d6` completed successfully; verify the runtime value against `globals` | **Applied configuration; pending DB-console proof** |
-| Metadata retention | policy below; OpenEMR has no supported native `api_log` retention setting | **Residual owner action:** run and record the private purge monthly until automated outside this repository |
+| API body logging | replacement deployment `654fa9cc-8d13-4359-a6d9-6adc4ccca4d6` succeeded with env `1`, but the first runtime query still returned `2`; the owner privately set the persisted global, stripped old bodies, restarted OpenEMR, called FHIR metadata, and rechecked | **Pass:** runtime `api_log_option=1`; 539 rows; 0 rows with bodies |
+| Metadata retention | 30-day purge applied and verified privately; OpenEMR has no supported native `api_log` retention setting | **Pass now:** 0 rows older than 30 days. **Residual:** run and record the purge monthly until automated outside this repository |
 
 **Adjacent Railway residual, outside the audit's MySQL-specific F8 item:** both
 managed Postgres services still had active public TCP proxies at this review
@@ -276,6 +277,13 @@ The pre-change read-only baseline on 2026-07-12 found
 `api_log_option=2`, 475 rows, and 10.45 MiB of request/response bodies
 (oldest row 2026-07-08). This is the F-S.4/D15 exposure the following posture
 closes; it is not a synthetic estimate.
+
+The owner applied the posture through a temporary private SSH tunnel and removed
+that access immediately afterward. After setting the persisted global, stripping
+historical bodies, applying the 30-day purge, restarting OpenEMR, and exercising
+FHIR metadata, the final query returned `api_log_option=1`, 539 total rows,
+`rows_with_bodies=0`, and `rows_older_than_30_days=0`. Personal and workspace SSH
+key lists were empty on final recheck and the MySQL TCP-proxy list remained empty.
 
 - **Capture:** Minimal Logging (`api_log_option=1`). This retains method, URL,
   actor/patient metadata, and timestamp for operational corroboration, while
@@ -294,7 +302,7 @@ Run these statements only through Railway's authenticated MySQL Data tab or a
 project-private maintenance job, never by recreating the public TCP proxy:
 
 ```sql
--- Post-deploy proof: must return 1 before treating body logging as closed.
+-- Runtime proof: must return 1 after any configuration change or redeploy.
 SELECT gl_value AS api_log_option
 FROM globals
 WHERE gl_name = 'api_log_option';
@@ -320,10 +328,11 @@ SELECT
 FROM api_log;
 ```
 
-After any OpenEMR restart/deploy, re-run the read-only `globals` check because
-the environment variable is the persistent desired state and the database value
-is the runtime evidence. Never print Railway variable listings in shared logs:
-their JSON/KV output includes raw secrets.
+After any OpenEMR restart/deploy, re-run the read-only `globals` check. The
+2026-07-12 correction proved that the environment variable is useful bootstrap
+configuration but does not necessarily overwrite an existing persisted global;
+the database value is the runtime evidence. Never print Railway variable listings
+in shared logs: their JSON/KV output includes raw secrets.
 
 ## 5. Sample-data loading
 

@@ -143,6 +143,7 @@ Values with `${{…}}` are Railway reference variables resolved from the MySQL s
 | `OPENEMR_SETTING_rest_api` | `1` | Enables REST API (globals table, set at boot) |
 | `OPENEMR_SETTING_rest_fhir_api` | `1` | Enables FHIR API |
 | `OPENEMR_SETTING_site_addr_oath` | `https://openemr-production-cc95.up.railway.app` | Site address for OAuth2/FHIR (Connectors) |
+| `OPENEMR_SETTING_api_log_option` | `1` | Minimal API metadata for a new/bootstrap configuration; existing sites must also verify and, if necessary, update the persisted global (F-S.4/D15) |
 
 Secrets were generated with `openssl rand` and live only in Railway service
 variables (and a local gitignored scratch file) — never in git. See `.env.example`
@@ -168,7 +169,8 @@ railway add --service openemr \
   -v "OE_PASS=<strong generated password>" \
   -v 'SWARM_MODE=yes' \
   -v 'OPENEMR_SETTING_rest_api=1' \
-  -v 'OPENEMR_SETTING_rest_fhir_api=1'
+  -v 'OPENEMR_SETTING_rest_fhir_api=1' \
+  -v 'OPENEMR_SETTING_api_log_option=1'
 
 railway service link openemr
 railway volume add --mount-path /var/www/localhost/htdocs/openemr/sites
@@ -186,17 +188,17 @@ Deployment success is verified end-to-end against the public URL instead (§4);
 first boot imports the full database schema (~9 min) before Apache starts, and
 subsequent boots skip setup via the volume's completed-setup marker (~20 s).
 
-### Verified on Railway (2026-07-07, post sample-data import)
+### Verified on Railway (2026-07-07, post sample-data import; exposure rechecked 2026-07-12)
 
 | Check | Result |
 |---|---|
-| `https://openemr-production-cc95.up.railway.app` login page over HTTPS | HTTP 200 |
+| `https://openemr-production-cc95.up.railway.app` over HTTPS | HTTP 302 to the login route |
 | Login with strong bootstrap credentials (real browser session) | accepted |
 | Login with default `admin`/`pass` | rejected |
 | `GET /apis/default/fhir/metadata` on public URL | HTTP 200, FHIR R4 CapabilityStatement, 34 resource types |
 | Patients visible in Patient Finder (screenshot) | 25 Synthea patients, same panel as local |
 | Data counts in Railway MySQL | 25 patients / 1,042 encounters / 152 meds / 41 allergies / 4,101 labs |
-| Public exposure audit | only the app domain + MySQL TCP proxy (§4.5); no phpMyAdmin, no Xdebug |
+| Public exposure audit | OpenEMR and agent HTTPS domains; the OpenEMR MySQL proxy is closed; no phpMyAdmin or Xdebug (§4/F8). Two managed Postgres services still expose separately owned TCP proxies (residual review below). |
 
 ## 4. Security baseline
 
@@ -220,20 +222,117 @@ Performed immediately at/after first public boot, all verified against the live 
    `OPENEMR_SETTING_rest_fhir_api=1`;
    `GET /apis/default/fhir/metadata` on the public URL returns the FHIR R4
    CapabilityStatement (HTTP 200, 34 resource types).
-4. **No phpMyAdmin or debug service exposed.** The project contains exactly two
-   services: `openemr` (public HTTPS domain) and MySQL. phpMyAdmin is not
-   deployed (`/phpmyadmin/` on the app → 404). Xdebug is not installed in the
-   production image (`XDEBUG_ON` unset; probe with `XDEBUG_SESSION_START` just
-   redirects to login). Apache access/error logging to disk is disabled in the
-   image (upstream behavior; logs go to Railway's log stream).
-5. **Known residual exposure, documented:** the managed MySQL service has a
-   Railway TCP proxy (public host:port) protected by a 32-char random root
-   password — it was used for the one-time sample-data import. Recommended
-   hardening: remove the TCP proxy in the Railway dashboard (MySQL service →
-   Settings → Networking) until next needed; the app itself talks to MySQL only
-   over the private network (`mysql.railway.internal`).
-6. **TLS:** terminated at the Railway edge with a valid certificate for the
-   `up.railway.app` domain; the container's self-signed cert on :443 is unused.
+4. **No phpMyAdmin or debug service exposed.** The OpenEMR service exposes only
+   its HTTPS application domain; its managed MySQL dependency has no public
+   endpoint. phpMyAdmin is not deployed (`/phpmyadmin/` on the app → 404).
+   Xdebug is not installed in the production image (`XDEBUG_ON` unset; probe
+   with `XDEBUG_SESSION_START` just redirects to login). Apache access/error
+   logging to disk is disabled in the image (upstream behavior; logs go to
+   Railway's log stream).
+5. **No public OpenEMR database path (F-S.9/F8).** The one-time MySQL TCP proxy used for
+   sample-data import was removed on 2026-07-12. The OpenEMR service continues
+   to use only Railway's private network (`mysql.railway.internal:3306`). Do not
+   reopen a public proxy for routine administration; use Railway's authenticated
+   MySQL Data tab or a project-private maintenance job.
+6. **TLS and downgrade resistance (F-S.9).** Railway terminates TLS with valid
+   certificates for both public services; plain-HTTP requests redirect to HTTPS.
+   OpenEMR emits HSTS. Independently of the edge, the agent validates both
+   OpenEMR base URLs as `https://` at configuration load and the FHIR client
+   rejects a non-HTTPS base, so a misconfigured service cannot silently downgrade
+   its delegated-token traffic.
+7. **API-log data minimization (F-S.4/D15).** Production is verified at
+   `api_log_option=1` (Minimal Logging). OpenEMR still records API access metadata
+   but writes empty request/response bodies, avoiding a second full copy of every
+   FHIR bundle. The Railway environment variable was already `1`, but a successful
+   redeploy did **not** overwrite the existing persisted global from `2`; the owner
+   corrected the global through a temporary private path and verified it after a
+   restart. The exact retention and repeat-verification procedure is below.
+
+### F8 deployment-hardening evidence and owner runbook (2026-07-12)
+
+These controls deliberately separate repository evidence from mutable Railway
+state. The CLI commands use explicit project/environment/service selectors so a
+check cannot accidentally inspect a different deployment. IDs are non-secret
+Railway resource identifiers.
+
+| Control | Repository/live evidence | Current result |
+|---|---|---|
+| HTTPS only; no downgrade | `agent/app/config.py` requires HTTPS for OAuth/FHIR URLs; `agent/app/tools/fhir_client.py` independently rejects non-HTTPS; live HTTP probes redirect to HTTPS | **Pass** |
+| MySQL public TCP proxy | `railway tcp-proxy list --project 1bddbc72-6307-4ec9-b6dd-8184310fbdcf --environment 056473db-d0da-44ab-997b-d491f0e2720b --service af2f61ef-2a8e-49e3-a3df-e41e485befbd --json` | **Pass:** `proxies` is empty; an external MySQL handshake fails |
+| Temporary Railway SSH key | `railway ssh keys list` and `railway ssh keys list --workspace 7d5f456e-72c5-4ea0-a3e7-a368cd85477b` | **Pass:** no personal or workspace keys remain; `claude-deploy-fix` was removed |
+| API body logging | replacement deployment `654fa9cc-8d13-4359-a6d9-6adc4ccca4d6` succeeded with env `1`, but the first runtime query still returned `2`; the owner privately set the persisted global, stripped old bodies, restarted OpenEMR, called FHIR metadata, and rechecked | **Pass:** runtime `api_log_option=1`; 539 rows; 0 rows with bodies |
+| Metadata retention | 30-day purge applied and verified privately; OpenEMR has no supported native `api_log` retention setting | **Pass now:** 0 rows older than 30 days. **Residual:** run and record the purge monthly until automated outside this repository |
+
+**Adjacent Railway residual, outside the audit's MySQL-specific F8 item:** both
+managed Postgres services still had active public TCP proxies at this review
+(`Postgres` and `Postgres-aDU3`). They do not expose the OpenEMR clinical MySQL
+store, but the deployment owner should identify the live session-store database,
+close any unused proxy/service, and document why any retained public endpoint is
+necessary. This review does not silently fold that broader lifecycle decision
+into the already-closed MySQL control.
+
+#### Chosen `api_log` posture
+
+The pre-change read-only baseline on 2026-07-12 found
+`api_log_option=2`, 475 rows, and 10.45 MiB of request/response bodies
+(oldest row 2026-07-08). This is the F-S.4/D15 exposure the following posture
+closes; it is not a synthetic estimate.
+
+The owner applied the posture through a temporary private SSH tunnel and removed
+that access immediately afterward. After setting the persisted global, stripping
+historical bodies, applying the 30-day purge, restarting OpenEMR, and exercising
+FHIR metadata, the final query returned `api_log_option=1`, 539 total rows,
+`rows_with_bodies=0`, and `rows_older_than_30_days=0`. Personal and workspace SSH
+key lists were empty on final recheck and the MySQL TCP-proxy list remained empty.
+
+- **Capture:** Minimal Logging (`api_log_option=1`). This retains method, URL,
+  actor/patient metadata, and timestamp for operational corroboration, while
+  `ApiResponseLoggerListener` stores an empty body instead of the FHIR response.
+- **Retention:** 30 days for metadata-only `api_log` rows. The synthetic demo does
+  not justify indefinite identifiers/URLs, and Langfuse is the authoritative
+  agent-side accountability record under D5/F-C.1.
+- **Existing full-body rows:** strip request/response bodies once after the minimal
+  setting is live; do not wait 30 days for the old body copies to age out.
+- **Automation boundary:** the audit found no native OpenEMR purge/retention
+  setting. F8 does not add a database-writing service. The deployment owner runs
+  the private SQL below monthly and records its UTC timestamp; automating that
+  private operation remains an explicit residual control.
+
+Run these statements only through Railway's authenticated MySQL Data tab or a
+project-private maintenance job, never by recreating the public TCP proxy:
+
+```sql
+-- Runtime proof: must return 1 after any configuration change or redeploy.
+SELECT gl_value AS api_log_option
+FROM globals
+WHERE gl_name = 'api_log_option';
+
+-- One-time cleanup of bodies created while Full Logging was enabled.
+UPDATE api_log
+SET request_body = '', response = ''
+WHERE COALESCE(request_body, '') <> ''
+   OR COALESCE(response, '') <> '';
+
+-- Recurring 30-day metadata retention operation (run at least monthly).
+DELETE FROM api_log
+WHERE created_time < UTC_TIMESTAMP() - INTERVAL 30 DAY;
+
+-- Verification: both counts must be zero after the owner operation.
+SELECT
+  COALESCE(SUM(CASE WHEN COALESCE(request_body, '') <> ''
+            OR COALESCE(response, '') <> '' THEN 1 ELSE 0 END), 0)
+    AS rows_with_bodies,
+  COALESCE(SUM(CASE WHEN created_time < UTC_TIMESTAMP() - INTERVAL 30 DAY
+           THEN 1 ELSE 0 END), 0)
+    AS rows_older_than_30_days
+FROM api_log;
+```
+
+After any OpenEMR restart/deploy, re-run the read-only `globals` check. The
+2026-07-12 correction proved that the environment variable is useful bootstrap
+configuration but does not necessarily overwrite an existing persisted global;
+the database value is the runtime evidence. Never print Railway variable listings
+in shared logs: their JSON/KV output includes raw secrets.
 
 ## 5. Sample-data loading
 
@@ -267,6 +366,10 @@ Fallback paths if Synthea is unavailable (documented, not needed here):
 `demo_5_0_0_5.sql` dump) or `sql/example_patient_data.sql` in this repo.
 
 ### Loading the same data into the deployed (Railway) instance
+
+> **Historical one-time procedure.** The public MySQL proxy used here is now
+> closed under F8. Do not recreate it to repeat these commands; future data or
+> maintenance work must use Railway's authenticated private path.
 
 **Chosen path: seed locally, dump, import into Railway MySQL over its TCP proxy.**
 Why this over re-running the Synthea devtool against the deployed container: the
@@ -414,9 +517,9 @@ schema belongs to the code version, only roll back across commits that did not r
 a schema migration — for this fork's current history every deployment shares one
 schema, so rollback is always safe.
 
-## 8. Testing access — the four ways to exercise the deployment
+## 8. Testing access — the three public tester surfaces
 
-A tester can exercise the deployment through four independent surfaces. **Secret
+A tester can exercise the deployment through three independent surfaces. **Secret
 values are not committed** (they live in the deployment's Railway variables and a
 local gitignored `tmp/railway-secrets.env` / `tmp/tester_client.json`); hand them
 over privately.
@@ -426,7 +529,11 @@ over privately.
 | **1. Web UI** (clinician/admin experience) | Open the public URL → login | `admin` / *(rotated `OE_PASS`)* — the default `admin/pass` is rejected |
 | **2. REST + FHIR API** | OAuth2 token → call `/apis/default/fhir/*` | a dedicated **enabled** OAuth client (`client_id` + `client_secret`) via password grant |
 | **3. FHIR capability (no auth)** | `GET /apis/default/fhir/metadata` | none (public) |
-| **4. Database (deep inspection)** | MySQL over the Railway TCP proxy | proxy host:port + `root` pw from the MySQL service's `MYSQL_PUBLIC_URL` |
+
+OpenEMR MySQL deep inspection is intentionally **not** a public tester surface.
+Its TCP proxy is closed (F-S.9); deployment owners use Railway's authenticated
+MySQL Data tab or a project-private maintenance job for narrowly scoped
+operational checks such as the F8 retention queries above.
 
 **API token (password grant) — the recipe a tester runs:**
 ```bash
@@ -454,9 +561,7 @@ architecture decision D14). To give someone **Railway dashboard** access (deploy
 logs, metrics, volume), invite them as a project collaborator in the Railway UI —
 that is an account action, not a credential to share.
 
-> **Ops note:** a temporary SSH key (`claude-deploy-fix`) was registered with Railway
-> to perform the §5 crypto reset. Remove it when done: `railway ssh keys` →
-> `railway ssh keys remove`. The open MySQL TCP proxy (used for testing surface 4)
-> should be closed in the Railway dashboard (MySQL → Settings → Networking) once
-> external DB testing is finished — the app itself reaches MySQL only over the
-> private network.
+> **F8 status (2026-07-12):** the temporary `claude-deploy-fix` Railway SSH key
+> has been removed and the MySQL TCP proxy is closed. Keep both closed; the app
+> reaches MySQL only over the private network. See the §4 F8 evidence table and
+> retention runbook for repeatable verification.

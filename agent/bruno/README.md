@@ -63,6 +63,14 @@ cd agent
 python -m unittest discover -s bruno/tests -v
 ```
 
+## Sanitized deployed validation
+
+The authenticated end-to-end collection run completed against the synthetic-data
+deployment on 2026-07-12: `/health` returned 200, `/ready` returned 200, and `/chat`
+returned 200 in 42,373 ms. Bruno reported 3/3 requests and 10/10 tests passing in
+46,918 ms total. Credentials and the opaque session ID were not retained; the generated
+`environments/Runtime.bru` was deleted after the run.
+
 ## Contract note
 
 The collection follows the deployed E9 contract: browser `/launch` → `/callback` →

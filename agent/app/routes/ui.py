@@ -126,6 +126,20 @@ _PAGE = """<!doctype html>
   button.send { padding:0 20px; border:0; border-radius:10px; background:#0f5c8c; color:#fff; font-weight:700;
     cursor:pointer; font-size:14px; }
   button.send:disabled { opacity:.5; cursor:default; }
+
+  /* responsive: stack the patient header, tighten paddings, let badges/examples wrap on phones */
+  @media (max-width: 620px) {
+    header.app { padding:9px 12px; }
+    header.app .tag { font-size:10px; padding:2px 7px; }
+    .patient { padding:9px 12px; flex-wrap:wrap; }
+    .patient .reason { margin-left:0; text-align:left; margin-top:3px; }
+    #log { padding:12px; gap:12px; }
+    .brief .head { padding:9px 12px; }
+    .brief .body { padding:4px 12px 12px; }
+    .composer { padding:8px 11px 11px; }
+    .row.user .bubble { max-width:88%; }
+    .pop { max-width:88vw; }
+  }
 </style>
 </head>
 <body>
@@ -210,8 +224,10 @@ _PAGE = """<!doctype html>
     var l = line.toLowerCase();
     if (/confirm with patient|no allergy records|^allergy:|allergies:/.test(l)) return 'allergies';
     if (/^immunization:|vaccine/.test(l)) return 'immunizations';
+    // Labs BEFORE meds: a lab unit like "mg/dL" contains "mg", which the medication heuristic
+    // below would otherwise claim. A "Display: <number>" shape is the reliable lab signal.
+    if (/:\\s*[-0-9.]+/.test(line)) return 'labs';
     if (/ — |\\bmg\\b|tablet|capsule|sublingual|oral gel|injection/.test(l)) return 'medications';
-    if (/:\\s*[-0-9.]+\\s*\\S+/.test(line)) return 'labs';
     return 'problems';
   }
   var HEADER_MAP = { 'problems':'problems','medications':'medications','labs':'labs',
@@ -235,17 +251,23 @@ _PAGE = """<!doctype html>
   }
 
   // ---- citation popover ----
-  var pop = null;
-  function closePop() { if (pop) { pop.remove(); pop = null; } }
+  var pop = null, popChip = null, popOpenedAt = 0;
+  function closePop() { if (pop) { pop.remove(); pop = null; popChip = null; } }
   document.addEventListener('click', function (e) { if (pop && !e.target.classList.contains('chip')) closePop(); });
+  window.addEventListener('resize', closePop);
+  // Close on a genuine log scroll (the popover is fixed-position and would detach), but ignore
+  // the brief scroll-into-view that can accompany the opening click — else the click that opens
+  // the popover immediately closes it when the chip was below the fold.
+  log.addEventListener('scroll', function () { if (pop && Date.now() - popOpenedAt > 350) closePop(); }, true);
   function showPop(chip, cid) {
+    if (popChip === chip) { closePop(); return; }   // clicking the same chip toggles it off
     closePop();
     var parts = String(cid).split(':');
     var type = parts[0] || 'Reference', hash = parts[parts.length - 1] || cid;
     var srcId = parts.length > 2 ? parts.slice(1, -1).join(':') : (parts[1] || '');
     // Build with DOM + textContent (never innerHTML): evidence ids flow from external FHIR
     // data, so they are treated as untrusted — textContent neutralizes any markup in them.
-    pop = el('pop');
+    pop = el('pop'); popChip = chip; popOpenedAt = Date.now();
     var title = el(null, type + ' — chart record'); title.style.cssText = 'font-weight:700;margin-bottom:4px';
     pop.appendChild(title);
     var r1 = el(null); r1.appendChild(document.createTextNode('source id: '));
@@ -255,9 +277,11 @@ _PAGE = """<!doctype html>
     var note = el(null, '✓ this line was verified field-by-field against this record');
     note.style.cssText = 'margin-top:5px;color:#9fd0a8'; pop.appendChild(note);
     document.body.appendChild(pop);
-    var r = chip.getBoundingClientRect();
-    pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8)) + 'px';
-    pop.style.top = Math.max(8, r.top - pop.offsetHeight - 8) + 'px';
+    var r = chip.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
+    pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pw - 8)) + 'px';
+    var top = r.top - ph - 8;                                   // prefer above the chip…
+    if (top < 8) top = Math.min(r.bottom + 8, window.innerHeight - ph - 8);  // …flip below if no room
+    pop.style.top = Math.max(8, top) + 'px';
   }
 
   // ---- render one assistant brief ----
@@ -315,17 +339,24 @@ _PAGE = """<!doctype html>
       body.appendChild(sec);
     });
 
-    // citation chips
+    // empty-state guard: a verified response that parsed no clinical lines still shows the
+    // attention panel above; make the absence explicit rather than a blank card.
+    var totalItems = SECTIONS.reduce(function (n, s) { return n + (sections[s.key] ? sections[s.key].length : 0); }, 0);
+    if (!totalItems) body.appendChild(el('meta', 'No verified clinical lines to display — see the note above.'));
+
+    // citation chips (clickable + keyboard-accessible; full id on hover)
     var cites = data.citations || [];
     if (cites.length) {
       var cw = el('cites'); cw.appendChild(el('lbl', 'Evidence:'));
       cites.slice(0, 30).forEach(function (c) {
         var parts = String(c).split(':'); var type = parts[0] || 'ref'; var hash = parts[parts.length - 1] || c;
         var chip = el('chip', type + ' · ' + hash);
+        chip.title = c; chip.tabIndex = 0; chip.setAttribute('role', 'button');
         chip.onclick = function (e) { e.stopPropagation(); showPop(chip, c); };
+        chip.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showPop(chip, c); } };
         cw.appendChild(chip);
       });
-      if (cites.length > 30) cw.appendChild(el('chip', '+' + (cites.length - 30)));
+      if (cites.length > 30) cw.appendChild(el('chip', '+' + (cites.length - 30) + ' more'));
       body.appendChild(cw);
     }
     if (data.correlation_id) body.appendChild(el('meta', 'trace ' + data.correlation_id));

@@ -173,6 +173,7 @@ _PAGE = """<!doctype html>
   });
 
   function el(cls, text) { var d = document.createElement('div'); if (cls) d.className = cls; if (text != null) d.textContent = text; return d; }
+  function elt(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
   // ---- patient header ----
   function ageFrom(dob) {
@@ -263,7 +264,7 @@ _PAGE = """<!doctype html>
     var dropped = verdicts.filter(function (v) { return v === 'blocked' || (v && v.indexOf('refus') === 0); }).length;
     var isLLM = data.source === 'llm';
 
-    var head = el('brief head');
+    var head = el('head');
     head.appendChild(el('title', 'Pre-visit brief'));
     head.appendChild(Object.assign(el('badge ok'), { textContent: '✓ ' + verified + ' verified' }));
     head.appendChild(Object.assign(el('badge drop'), { textContent: '✕ ' + dropped + ' dropped' }));
@@ -271,7 +272,7 @@ _PAGE = """<!doctype html>
     if (data.degraded) head.appendChild(Object.assign(el('badge warn'), { textContent: 'degraded' }));
     card.appendChild(head);
 
-    var body = el('brief body');
+    var body = el('body');
     var sections = parseBrief(data.brief);
 
     // "Review before entering" attention panel
@@ -283,12 +284,12 @@ _PAGE = """<!doctype html>
 
     var att = el('attention');
     if (flags.length) {
-      att.appendChild(Object.assign(el('h4'), { textContent: '⚠ Review before entering' }));
-      var ul = el('ul'); flags.forEach(function (f) { ul.appendChild(el('li', f)); }); att.appendChild(ul);
+      att.appendChild(elt('h4', null, '⚠ Review before entering'));
+      var ul = elt('ul'); flags.forEach(function (f) { ul.appendChild(elt('li', null, f)); }); att.appendChild(ul);
     } else {
       att.className = 'attention clear';
-      att.appendChild(Object.assign(el('h4'), { textContent: '✓ Reviewed' }));
-      att.appendChild(el('li', 'No blocking flags — every line below is verified against the chart.'));
+      att.appendChild(elt('h4', null, '✓ Reviewed'));
+      var ulc = elt('ul'); ulc.appendChild(elt('li', null, 'No blocking flags — every line below is verified against the chart.')); att.appendChild(ulc);
     }
     body.appendChild(att);
 
@@ -335,10 +336,10 @@ _PAGE = """<!doctype html>
   ];
   function renderLoading(card) {
     card.className = 'brief'; card.innerHTML = '';
-    var head = el('brief head'); head.appendChild(el('title', 'Preparing pre-visit brief…')); card.appendChild(head);
-    var body = el('brief body'); var ul = el('steps');
+    var head = el('head'); head.appendChild(el('title', 'Preparing pre-visit brief…')); card.appendChild(head);
+    var body = el('body'); var ul = elt('ul', 'steps');
     LOAD_STEPS.forEach(function (s, i) {
-      var li = el('' + (i === 0 ? 'active' : '')); li.appendChild(el('b')); li.appendChild(el(null, s));
+      var li = elt('li', i === 0 ? 'active' : ''); li.appendChild(el('b')); li.appendChild(el(null, s));
       ul.appendChild(li);
     });
     body.appendChild(ul); card.appendChild(body);
@@ -362,7 +363,7 @@ _PAGE = """<!doctype html>
   }
   function renderError(card, msg) {
     card.className = 'brief'; card.innerHTML = '';
-    var b = el('brief body'); b.style.color = '#b3261e';
+    var b = el('body'); b.style.color = '#b3261e';
     b.appendChild(el(null, '⚠ ' + msg)); card.appendChild(b);
   }
 

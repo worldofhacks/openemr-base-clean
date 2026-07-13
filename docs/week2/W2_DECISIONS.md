@@ -3,10 +3,17 @@
 > New file; W1 DECISIONS.md (D1–D16) is frozen at docs/week1/. Tags: **locked** /
 > proposed / open. Owner decisions recorded 2026-07-13 (see W2_PRESEARCH.md).
 
-## W2-D1. Writes: append-only creates with lineage — **locked**
+## W2-D1. Writes: append-only creates with lineage — **locked** (mechanism validated 2026-07-13, W2-R5)
 - W1 was read-only (D9/D12). W2 requires storing documents and derived facts.
-- The agent gets exactly two write capabilities: create DocumentReference, create
-  derived Observations. No update. No delete. Nothing clinician-authored is touchable.
+- Mechanism (R5-validated: this fork has NO FHIR write for DocumentReference or
+  Observation): source files + structured extraction artifacts via
+  `POST /api/patient/:pid/document` (standard REST, confirmed real); vitals-class
+  facts via `POST /api/patient/:pid/encounter/:eid/vital`. The PRD's "or OpenEMR
+  records" clause sanctions this; W1 D9's standard-REST fallback clause fires as
+  written. Verify at build: `api:oemr` scope set on the SMART client (D14-class
+  enable step).
+- The agent gets exactly two write capabilities: create documents, create
+  vitals-class records. No update. No delete. Nothing clinician-authored is touchable.
 - Idempotent: content-hash on files, deterministic IDs on facts. Re-upload creates
   nothing. That is the PRD round-trip requirement.
 - New safety claim: injection worst case is a quarantined, machine-authored,
@@ -33,18 +40,34 @@
 - Confidence = grounding agreement, binary per field. VLM self-report is never trusted.
 - This is W1 verify-then-flush extended to pixels. One mechanism answers invention,
   confidence inflation, and the required overlay.
+- Reading path (owner-confirmed 2026-07-13): **text-layer first, OCR fallback** —
+  born-digital PDFs use their embedded text + exact coordinates; true scans go
+  through Tesseract; a junk-text-layer sanity check routes to OCR. Both emit the
+  same words+boxes shape; downstream grounding is one code path.
 - Rejected: trusting VLM output (the PRD's named pitfall); hosted OCR (new egress for
-  nothing); ColQwen2 (stretch).
+  nothing); OCR-always (degrades perfect digital text to guesses); ColQwen2 (stretch).
 
-## W2-D4. RAG: hybrid + Cohere rerank, PHI-free by contract — **locked**
-- Corpus: public-domain US guidance matched to the panel (USPSTF, ADA, CDC, JNC-8
-  class). Provenance documented. Rebuildable from repo.
-- Retrieve BM25 + dense. Rerank with Cohere (PRD-named).
+## W2-D4. RAG: VA/DoD corpus trio + hybrid retrieval + Cohere rerank — **locked** (revised 2026-07-13 after deep research + owner decisions)
+- Corpus: **VA/DoD CPG trio** — Diabetes (2023), Hypertension (2020, version pinned),
+  Lipids (2025) — plus their pocket-card summaries. US-government works
+  (license-verified, W2-R2); exactly the PCP panel's chronic conditions; literally
+  "agreed clinical practices" per the PRD. Manifest-driven (per-doc provenance,
+  license, version) so CDC/USPSTF are one-line additions if a demo case needs them.
+  Do-not-ingest list documented (ADA bans ML use; AHA/ACC, JAMA, GINA all-rights-
+  reserved; never JAMA-branded PDFs).
+- Retrieve: BM25 (`rank-bm25`) + dense (`bge-small-en-v1.5`, MIT, ONNX/FastEmbed —
+  clinical-retrieval evidence in W2-R3). Rerank: **Cohere Rerank** (owner decision;
+  production key recommended ~$2/1k searches — trial terms exclude production use,
+  W2-R3). Reranker down → serve un-reranked hybrid scores, degraded, logged.
 - Hard contract: queries are condition/test terms only, never identifiers. Corpus has
-  no PHI. Cohere never sees PHI. If the contract breaks, local cross-encoder fallback.
+  no PHI. Cohere never sees PHI.
+- CI never calls Cohere live (PRD: tests pass without live APIs); reranker stubbed in
+  fixtures; rubric booleans must not depend on exact rerank ordering.
 - Snippets carry {source_id, section, chunk_id, quote} and are the only guideline
-  content the model sees.
-- Rejected: licensed content (indefensible); raw patient text as queries.
+  content the model sees. Verbatim chunks only (license + citation contract aligned).
+- Rejected: licensed content (indefensible); raw patient text as queries; local
+  cross-encoder as primary (owner chose Cohere; mxbai-rerank-base-v1 documented as
+  the vendor-independence alternative, W2-R3).
 
 ## W2-D5. Eval gate: 50 boolean cases, PR-blocking — **locked**
 - 50 synthetic cases in-repo (reproducible from repo alone). Boolean rubrics only.

@@ -17,6 +17,7 @@ from app.evidence.packet import build_evidence_packet
 from app.tools.contracts import (
     AllergyRecord,
     ConditionRecord,
+    EncounterRecord,
     LabObservation,
     MedicationRecord,
     ToolResult,
@@ -103,3 +104,76 @@ def test_fallback_is_deterministic():
     r = ConditionRecord(resource_id="c1", display="COPD", onset=date(2018, 1, 1))
     packet = build_evidence_packet(PID, {"get_conditions": _ok("get_conditions", [r])})
     assert render_packet_fallback(packet) == render_packet_fallback(packet)
+
+
+def test_general_fallback_has_hard_record_and_character_caps():
+    packet = build_evidence_packet(PID, {"get_conditions": _ok("get_conditions", [
+        ConditionRecord(resource_id=f"c-{i}", display=f"Condition {i}", clinical_status="active")
+        for i in range(30)
+    ])})
+
+    out = render_packet_fallback(packet)
+
+    assert sum(line.startswith("- ") for line in out.splitlines()) <= 8
+    assert len(out) <= 2_500
+    assert "additional" in out.lower() and "omitted" in out.lower()
+
+
+def test_resolution_followup_fallback_is_scoped_bounded_and_honest():
+    conditions = [
+        ConditionRecord(
+            resource_id=f"inactive-{i}",
+            display=f"Inactive condition {i:02d}",
+            clinical_status="inactive" if i % 2 == 0 else "resolved",
+        )
+        for i in range(30)
+    ]
+    conditions.append(ConditionRecord(
+        resource_id="active-sentinel",
+        display="ACTIVE CONDITION MUST NOT RENDER",
+        clinical_status="active",
+    ))
+    packet = build_evidence_packet(PID, {
+        "get_conditions": _ok("get_conditions", conditions),
+        "get_active_medications": _ok("get_active_medications", [MedicationRecord(
+            resource_id="med-sentinel", name="MEDICATION MUST NOT RENDER", dose_text="5 mg")]),
+        "get_recent_labs": _ok("get_recent_labs", [LabObservation(
+            resource_id="lab-sentinel", display="LAB MUST NOT RENDER", value=99)]),
+        "get_encounters": _ok("get_encounters", [EncounterRecord(
+            resource_id="enc-sentinel", type_display="ENCOUNTER MUST NOT RENDER")]),
+    })
+
+    out = render_packet_fallback(
+        packet,
+        question="What has been cured, and what does the patient no longer have?",
+    )
+    low = out.lower()
+
+    assert "inactive condition 00" in low
+    assert "inactive" in low or "resolved" in low
+    assert "cured" in low and ("can't verify" in low or "cannot verify" in low)
+    assert "confirm with the chart" in low
+    assert "active condition must not render" not in low
+    assert "medication must not render" not in low
+    assert "lab must not render" not in low
+    assert "encounter must not render" not in low
+    assert "## medications" not in low
+    assert "## labs / observations" not in low
+    assert "## encounters" not in low
+    assert sum(line.startswith("- ") for line in out.splitlines()) <= 8
+    assert len(out) <= 2_500
+    assert "additional" in low and "omitted" in low
+
+
+def test_resolution_followup_with_no_inactive_records_returns_short_honest_message():
+    packet = build_evidence_packet(PID, {"get_conditions": _ok("get_conditions", [
+        ConditionRecord(resource_id="active", display="Asthma", clinical_status="active"),
+    ])})
+
+    out = render_packet_fallback(packet, question="Which problems are resolved?")
+    low = out.lower()
+
+    assert "asthma" not in low
+    assert "no conditions are marked inactive or resolved" in low
+    assert "can't verify" in low or "cannot verify" in low
+    assert len(out) <= 2_500

@@ -260,6 +260,18 @@ def test_condition_present_claim_matching_active_record_passes():  # spec: F-D.6
     assert Verifier().verify(claim, packet).verdict == Verdict.PASS
 
 
+def test_inactive_condition_claim_passes_with_record_sourced_status():  # spec: F-D.6 / D7
+    packet = build_evidence_packet(PID, {"get_conditions": _ok("get_conditions", [
+        ConditionRecord(resource_id="c1", display="Pneumonia", clinical_status="resolved")])})
+    claim = ConditionClaim(display="Pneumonia", present=True,
+                           evidence_ids=[_first_id(packet, "Condition")])
+
+    result = Verifier().verify(claim, packet)
+
+    assert result.verdict == Verdict.PASS
+    assert result.verified == {"display": "Pneumonia", "clinical_status": "resolved"}
+
+
 # ============================================================================
 # F-D.2 — empty dose phrasing (verifier does not invent) + order/plan de-dup
 # ============================================================================

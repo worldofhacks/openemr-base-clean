@@ -11,7 +11,15 @@ from app.orchestrator.loop import (
     render_patient_prefix,
 )
 from app.evidence.packet import build_evidence_packet
-from app.tools.contracts import ConditionRecord, ToolResult, ToolStatus
+from app.llm.provider import LLMResponse, ToolUseBlock, Usage
+from app.tools.contracts import (
+    ConditionRecord,
+    EncounterRecord,
+    LabObservation,
+    MedicationRecord,
+    ToolResult,
+    ToolStatus,
+)
 from app.tools.fhir_tools import map_medication
 from app.verify.templater import FALLBACK_BANNER, render_from_verified, render_packet_fallback
 from evals.fixtures import deceased_patient, fhir_failure, llm_failure, no_allergy
@@ -34,6 +42,76 @@ async def _run_llm_failure():
     packet = llm_failure.grounded_packet()
     return await Orchestrator(llm_failure.FailingProvider()).run_previsit_brief(
         packet, _Q, tools=_EMPTY_REGISTRY)
+
+
+class _BlockedSynthesisProvider:
+    """Reproduces the live failure: an inactive record is misphrased as absent history.
+
+    F-D.6 correctly blocks ``present=False`` because the chart contains the Condition. The
+    regression is what the D13 all-blocked fallback serves after that safe rejection.
+    """
+
+    model = "claude-sonnet-4-6"
+
+    def __init__(self, evidence_id: str):
+        self.evidence_id = evidence_id
+
+    async def complete(self, *, system, messages, tools):
+        return LLMResponse(
+            content=[ToolUseBlock(
+                id="toolu_synthesis_regression",
+                name="submit_claims",
+                input={"claims": [{
+                    "type": "condition",
+                    "display": "Past pneumonia",
+                    "present": False,
+                    "evidence_ids": [self.evidence_id],
+                }]},
+            )],
+            stop_reason="tool_use",
+            usage=Usage(input_tokens=10, output_tokens=5),
+            model=self.model,
+        )
+
+
+async def _run_synthesis_followup():
+    conditions = [
+        ConditionRecord(
+            resource_id=f"inactive-{i}",
+            display=f"Past pneumonia {i:02d}",
+            clinical_status="inactive" if i % 2 == 0 else "resolved",
+        )
+        for i in range(30)
+    ] + [
+        ConditionRecord(
+            resource_id=f"active-{i}",
+            display=f"ACTIVE SENTINEL {i:02d}",
+            clinical_status="active",
+        )
+        for i in range(30)
+    ]
+    packet = build_evidence_packet("pat-synthesis", {
+        "get_conditions": ToolResult(
+            tool="get_conditions", status=ToolStatus.OK, records=conditions),
+        "get_active_medications": ToolResult(
+            tool="get_active_medications", status=ToolStatus.OK,
+            records=[MedicationRecord(resource_id="med-1", name="MEDICATION SENTINEL")]),
+        "get_recent_labs": ToolResult(
+            tool="get_recent_labs", status=ToolStatus.OK,
+            records=[LabObservation(resource_id="lab-1", display="LAB SENTINEL", value=99)]),
+        "get_encounters": ToolResult(
+            tool="get_encounters", status=ToolStatus.OK,
+            records=[EncounterRecord(resource_id="enc-1", type_display="ENCOUNTER SENTINEL")]),
+    })
+    inactive_id = next(
+        r.evidence_id for r in packet.by_type("Condition")
+        if r.fields.get("clinical_status") == "inactive"
+    )
+    return await Orchestrator(_BlockedSynthesisProvider(inactive_id)).run_previsit_brief(
+        packet,
+        "What has been cured, and what does the patient no longer have?",
+        tools=_EMPTY_REGISTRY,
+    )
 
 
 def _adversarial_prefix() -> str:
@@ -115,6 +193,41 @@ EVAL_CASES: list[EvalCase] = [
         check=lambda res: (res.degraded and res.source == "deterministic_fallback"
                            and FALLBACK_BANNER in res.text
                            and "diabetes" in res.text.lower() and "metformin" in res.text.lower()),
+    ),
+    # --- REGRESSION: synthesis follow-up must not dump the full chart (D13/F-D.6) ---
+    EvalCase(
+        id="regression-synthesis-followup-scoped-fallback",
+        category=EvalCategory.REGRESSION,
+        guards="D13 / F-D.6 / UC3 / §5 / §6 / §8",
+        description=(
+            "an all-blocked 'what was cured' follow-up returns a bounded inactive-condition "
+            "answer instead of re-dumping the EvidencePacket"
+        ),
+        expected=(
+            "all_blocked fallback; <=2500 chars and <=8 records; honest cure limitation; "
+            "inactive/resolved conditions only"
+        ),
+        run=_run_synthesis_followup,
+        check=lambda res: (
+            res.source == "deterministic_fallback"
+            and res.fallback_kind == "all_blocked"
+            and res.verdicts == ["blocked"]
+            and len(res.text) <= 2_500
+            and sum(line.startswith("- ") for line in res.text.splitlines()) <= 8
+            and "past pneumonia" in res.text.lower()
+            and "inactive" in res.text.lower()
+            and "resolved" in res.text.lower()
+            and "cured" in res.text.lower()
+            and ("can't verify" in res.text.lower() or "cannot verify" in res.text.lower())
+            and "confirm with the chart" in res.text.lower()
+            and "active sentinel" not in res.text.lower()
+            and "medication sentinel" not in res.text.lower()
+            and "lab sentinel" not in res.text.lower()
+            and "encounter sentinel" not in res.text.lower()
+            and "## medications" not in res.text.lower()
+            and "## labs / observations" not in res.text.lower()
+            and "## encounters" not in res.text.lower()
+        ),
     ),
     # --- BOUNDARY: FHIR tool failure → partial answer naming what's missing (F3) ---
     EvalCase(

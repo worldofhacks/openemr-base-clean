@@ -60,6 +60,11 @@ SYSTEM_PROMPT = (
     "bracketed evidence id(s) of the record(s) it rests on. If a tool failed or returned no "
     "records, say so plainly — an absent allergy record is 'confirm with patient', never "
     "'no known allergies'. When you need data not in the packet, call the provided tools.\n\n"
+    "For questions about what is resolved, inactive, or no longer active, report only what the "
+    "chart marks inactive/resolved. Submit each as a cited condition claim with present=true "
+    "(the condition exists in chart history even though its status is inactive/resolved). Never "
+    "translate an inactive/resolved status into 'cured'; that clinical judgment is not a FHIR "
+    "field and cannot be verified.\n\n"
     "When you are ready to answer, do NOT write the brief as prose. Instead call the "
     "`submit_claims` tool EXACTLY ONCE, passing every part of the brief as a typed claim that "
     "cites the bracketed evidence id(s) it rests on. Each clinical statement is one claim; a "
@@ -96,7 +101,13 @@ SUBMIT_CLAIMS_TOOL: dict = {
                         "display": {"type": "string", "description": "Lab/condition display name."},
                         "value": {"type": "string", "description": "Lab value (type=lab)."},
                         "unit": {"type": "string", "description": "Lab unit (type=lab)."},
-                        "present": {"type": "boolean", "description": "Condition present (type=condition)."},
+                        "present": {
+                            "type": "boolean",
+                            "description": (
+                                "For a cited condition record, use true even when its chart status "
+                                "is inactive/resolved. False means no history and cannot cite a record."
+                            ),
+                        },
                         "substance": {"type": "string", "description": "Allergy substance (type=allergy)."},
                         "risk": {"type": "string", "description": "Do not use — allergy risk is never trusted."},
                         "vaccine": {"type": "string", "description": "Vaccine name (type=immunization)."},
@@ -327,7 +338,7 @@ class Orchestrator:
         return self._fallback(
             floor, Usage(), 0, [], "request_too_large",
             f"prompt too large even after trimming to {self.trim_schedule[-1] if self.trim_schedule else 'n/a'}"
-            f"/type: {last_too_large}")
+            f"/type: {last_too_large}", question=question)
 
     async def _attempt(self, packet: EvidencePacket, question: str,
                        tools: ToolRegistry, builder: TraceBuilder | None = None) -> BriefResult:
@@ -346,7 +357,9 @@ class Orchestrator:
                 try:
                     self.cost_cap.guard()
                 except CostCapExceeded as exc:
-                    return self._fallback(packet, total, iteration - 1, tool_calls, "cost_cap", f"cost cap: {exc}")
+                    return self._fallback(
+                        packet, total, iteration - 1, tool_calls, "cost_cap", f"cost cap: {exc}",
+                        question=question)
 
             t0 = time.monotonic()
             try:
@@ -355,11 +368,12 @@ class Orchestrator:
                 raise  # bubble up to trim-and-retry (must precede the LLMClientError clause)
             except LLMUnavailable as exc:
                 return self._fallback(packet, total, iteration - 1, tool_calls, "transient",
-                                      f"LLM transient failure — retries exhausted; graceful degradation: {exc}")
+                                      f"LLM transient failure — retries exhausted; graceful degradation: {exc}",
+                                      question=question)
             except LLMClientError as exc:
                 return self._fallback(packet, total, iteration - 1, tool_calls, "client_error",
                                       f"LLM client error HTTP {exc.status} — likely bug/misconfig, not "
-                                      f"normal degradation: {exc}")
+                                      f"normal degradation: {exc}", question=question)
 
             total = total.add(resp.usage)
             if self.cost_cap is not None:
@@ -390,7 +404,8 @@ class Orchestrator:
                 # alone (packet notices don't count), so a trimmed packet's trim notice can't
                 # masquerade as a verified answer.
                 if not _has_verified_content([result]):
-                    return self._grounded_supersede(packet, total, iteration, tool_calls, verdicts)
+                    return self._grounded_supersede(
+                        packet, total, iteration, tool_calls, verdicts, question=question)
                 served = render_from_verified([result], packet=packet)
                 return BriefResult(text=served, source="llm", degraded=False,
                                    usage=total, iterations=iteration, tool_calls=tool_calls,
@@ -424,7 +439,8 @@ class Orchestrator:
                     # D13 grounded render (real records, "confirm manually"), NOT an empty (or
                     # notice-only) source="llm". Per-claim verdicts carry through unchanged.
                     if not _has_verified_content(results_v):
-                        return self._grounded_supersede(packet, total, iteration, tool_calls, verdicts)
+                        return self._grounded_supersede(
+                            packet, total, iteration, tool_calls, verdicts, question=question)
                     served = render_from_verified(results_v, packet=packet)
                     return BriefResult(text=served, source="llm", degraded=False,
                                        usage=total, iterations=iteration, tool_calls=tool_calls,
@@ -434,7 +450,8 @@ class Orchestrator:
                     # packet render (D13 _fallback) rather than surfacing an exception. The
                     # fallback is the safe floor — the physician always gets something grounded.
                     return self._fallback(packet, total, iteration, tool_calls, "client_error",
-                                         "unexpected error during submit_claims verify+render")
+                                         "unexpected error during submit_claims verify+render",
+                                         question=question)
 
             messages.append({"role": "assistant", "content": _assistant_content(resp)})
             results: list[dict] = []
@@ -451,17 +468,19 @@ class Orchestrator:
 
         # Tool loop did not converge within the cap → deterministic partial answer (D13).
         return self._fallback(packet, total, self.max_tool_iterations, tool_calls,
-                              "no_convergence", "tool-use iteration cap reached before a final answer")
+                              "no_convergence", "tool-use iteration cap reached before a final answer",
+                              question=question)
 
     def _grounded_supersede(self, packet: EvidencePacket, usage: Usage, iterations: int,
-                            tool_calls: list[str], verdicts: list[str]) -> BriefResult:
+                            tool_calls: list[str], verdicts: list[str], *,
+                            question: str | None = None) -> BriefResult:
         """T-E6b (2): every claim BLOCKED/REFUSED → the verified render is EMPTY. Instead of an
         empty source="llm" answer, serve the honest D13 grounded render — the real records under
         a "couldn't verify — confirm manually" framing. This is NOT the error/defect fallback:
         it is grounded degradation, so it carries the accumulated usage and the per-claim
         verdicts through (the trace already recorded each verdict via builder.record_verdict)."""
         return BriefResult(
-            text=render_packet_fallback(packet),
+            text=render_packet_fallback(packet, question=question),
             source="deterministic_fallback",
             degraded=True,
             usage=usage,
@@ -473,9 +492,10 @@ class Orchestrator:
         )
 
     def _fallback(self, packet: EvidencePacket, usage: Usage, iterations: int,
-                  tool_calls: list[str], kind: str, reason: str) -> BriefResult:
+                  tool_calls: list[str], kind: str, reason: str, *,
+                  question: str | None = None) -> BriefResult:
         return BriefResult(
-            text=render_packet_fallback(packet),
+            text=render_packet_fallback(packet, question=question),
             source="deterministic_fallback",
             degraded=True,
             usage=usage,

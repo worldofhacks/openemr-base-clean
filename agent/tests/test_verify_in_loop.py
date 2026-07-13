@@ -28,6 +28,8 @@ from app.observability.trace import AccountabilityContext
 from app.orchestrator.loop import Orchestrator, ToolRegistry, ToolSpec
 from app.tools.contracts import (
     ConditionRecord,
+    EncounterRecord,
+    LabObservation,
     MedicationRecord,
     PatientRecord,
     ToolResult,
@@ -279,6 +281,86 @@ async def test_fully_supported_claims_are_served():  # spec: §5 verify-then-flu
     assert len(sink.traces) == 1
     traced = [str(v).lower() for v in sink.traces[0].verdicts]
     assert any("pass" in v for v in traced)
+
+
+async def test_resolution_followup_all_blocked_returns_scoped_honest_fallback():
+    conditions = [
+        ConditionRecord(resource_id="resolved-1", display="Pneumonia",
+                        clinical_status="resolved"),
+        ConditionRecord(resource_id="inactive-1", display="Childhood asthma",
+                        clinical_status="inactive"),
+        ConditionRecord(resource_id="active-1", display="ACTIVE PROBLEM SENTINEL",
+                        clinical_status="active"),
+    ]
+    packet = build_evidence_packet(PID, {
+        "get_conditions": _ok("get_conditions", conditions),
+        "get_active_medications": _ok("get_active_medications", [MedicationRecord(
+            resource_id="med-1", name="MEDICATION SENTINEL", dose_text="5 mg")]),
+        "get_recent_labs": _ok("get_recent_labs", [LabObservation(
+            resource_id="lab-1", display="LAB SENTINEL", value=99)]),
+        "get_encounters": _ok("get_encounters", [EncounterRecord(
+            resource_id="enc-1", type_display="ENCOUNTER SENTINEL")]),
+    })
+    resolved_id = next(
+        r.evidence_id for r in packet.by_type("Condition")
+        if r.fields.get("clinical_status") == "resolved"
+    )
+    # `present=False` means "no history" and correctly BLOCKS against a real historical
+    # Condition (F-D.6), reproducing the live all-blocked synthesis failure deterministically.
+    prov = SubmitClaimsProvider([{
+        "type": "condition",
+        "display": "Pneumonia",
+        "present": False,
+        "evidence_ids": [resolved_id],
+    }])
+    sink = InMemoryTraceSink()
+
+    res = await Orchestrator(prov).run_previsit_brief(
+        packet,
+        "What has been cured, and what does the patient no longer have?",
+        tools=_registry(),
+        tracer=RequestTracer(sink),
+        accountability=_acct(),
+    )
+    low = res.text.lower()
+
+    assert res.source == "deterministic_fallback"
+    assert res.fallback_kind == "all_blocked"
+    assert res.verdicts == ["blocked"]
+    assert "pneumonia" in low and "childhood asthma" in low
+    assert "inactive" in low and "resolved" in low
+    assert "cured" in low and ("can't verify" in low or "cannot verify" in low)
+    assert "confirm with the chart" in low
+    assert "active problem sentinel" not in low
+    assert "medication sentinel" not in low
+    assert "lab sentinel" not in low
+    assert "encounter sentinel" not in low
+    assert len(res.text) <= 2_500
+
+
+async def test_resolution_followup_with_cited_inactive_claim_renders_verified_status():
+    packet = _condition_packet(display="Pneumonia", clinical_status="resolved")
+    eid = packet.by_type("Condition")[0].evidence_id
+    prov = SubmitClaimsProvider([{
+        "type": "condition",
+        "display": "Pneumonia",
+        "present": True,
+        "evidence_ids": [eid],
+    }])
+    sink = InMemoryTraceSink()
+
+    res = await Orchestrator(prov).run_previsit_brief(
+        packet,
+        "What has been cured?",
+        tools=_registry(),
+        tracer=RequestTracer(sink),
+        accountability=_acct(),
+    )
+
+    assert res.source == "llm"
+    assert res.verdicts == ["pass"]
+    assert "Pneumonia [resolved]" in res.text
+    assert "cured" not in res.text.lower()
 
 
 # ============================================================================

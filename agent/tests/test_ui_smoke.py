@@ -50,6 +50,13 @@ MOCK_CHAT = {
     "correlation_id": "test-corr-1",
 }
 
+LONG_MOCK_CHAT = {
+    **MOCK_CHAT,
+    "brief": MOCK_CHAT["brief"] + "\n" + "\n".join(
+        f"- Synthetic problem {index} (finding) [active]" for index in range(1, 36)
+    ),
+}
+
 
 def _free_port() -> int:
     s = socket.socket()
@@ -83,7 +90,8 @@ def _serve():
         thread.join(timeout=5)
 
 
-def test_app_ui_smoke():
+@pytest.mark.parametrize("viewport", [{"width": 1280, "height": 720}, {"width": 390, "height": 844}])
+def test_app_ui_smoke(viewport):
     from playwright.sync_api import Error as PWError
     from playwright.sync_api import sync_playwright
 
@@ -93,10 +101,10 @@ def test_app_ui_smoke():
         except PWError as exc:
             pytest.skip(f"Playwright chromium not installed ({exc}); run `playwright install chromium`")
         try:
-            page = browser.new_page()
+            page = browser.new_page(viewport=viewport)
             # mock /chat BEFORE navigating (the page auto-fires the brief on load)
             page.route("**/chat", lambda route: route.fulfill(
-                status=200, content_type="application/json", body=json.dumps(MOCK_CHAT)))
+                status=200, content_type="application/json", body=json.dumps(LONG_MOCK_CHAT)))
             page.goto(base + "/app?sid=test-sid")
 
             # 1) the panel loads + the brief renders into sections
@@ -105,6 +113,24 @@ def test_app_ui_smoke():
             section_titles = " ".join(page.locator(".section .sh").all_text_contents())
             assert "Problems" in section_titles and "Medications" in section_titles \
                 and "Labs" in section_titles and "Allergies" in section_titles
+
+            # The conversation is the sole scrolling flex child. The composer stays pinned while
+            # a long brief can reach its final line at desktop and phone widths (Final UI gate).
+            scroll_metrics = page.locator("#log").evaluate(
+                "el => ({clientHeight: el.clientHeight, scrollHeight: el.scrollHeight})"
+            )
+            assert scroll_metrics["scrollHeight"] > scroll_metrics["clientHeight"]
+            composer_before = page.locator(".composer").bounding_box()
+            assert composer_before is not None
+            page.locator("#log").evaluate("el => { el.scrollTop = el.scrollHeight; }")
+            page.wait_for_timeout(50)
+            assert page.locator("#log").evaluate(
+                "el => Math.ceil(el.scrollTop + el.clientHeight) >= el.scrollHeight"
+            )
+            assert page.get_by_text("Synthetic problem 35", exact=False).is_visible()
+            composer_after = page.locator(".composer").bounding_box()
+            assert composer_after is not None
+            assert composer_after["y"] == pytest.approx(composer_before["y"], abs=1)
 
             # 2) trust badge (verified / dropped) + attention panel
             badges = " ".join(page.locator(".badge").all_text_contents())
@@ -122,11 +148,11 @@ def test_app_ui_smoke():
 
             # 4) the follow-up input drives a second turn
             n_attention = page.locator(".attention").count()
-            page.fill("#msg", "What changed since the last visit?")
+            page.fill("#msg", "What are the patient's active problems?")
             page.click("button.send")
             page.wait_for_function(
                 f"document.querySelectorAll('.attention').length > {n_attention}", timeout=15000)
             # the typed question shows as a user bubble
-            assert "What changed" in " ".join(page.locator(".row.user .bubble").all_text_contents())
+            assert "active problems" in " ".join(page.locator(".row.user .bubble").all_text_contents())
         finally:
             browser.close()

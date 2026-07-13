@@ -110,7 +110,7 @@
   `Test:` one invariant per rule (§8/E8) — `test_immunization_never_rendered_refused`, `test_reject_criticality_claim`, `test_empty_allergy_phrasing`, `test_no_history_rejected_when_inactive_match`, `test_empty_dose_phrasing`, `test_deceased_hardstop_refusal`, `test_treatment_verb_refused`.
 
 ### E7 — Langfuse wired (traces = HIPAA system-of-record, D5-rev; **cloud-hosted per D5 rev 2026-07-08 — no Langfuse services to deploy**)
-- [ ] **E7.0 Provision the Langfuse Cloud project**
+- [x] **E7.0 Provision the Langfuse Cloud project**
   `Files:` — (console step; keys land in Railway/agent env as `LANGFUSE_HOST`/`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`)
   `Anchors:` D5 rev 2026-07-08, D8
   `Accept:` Langfuse Cloud project created (demo posture: free tier, US region `https://us.cloud.langfuse.com`, assumed BAA under the demo-data-only rule; production path documented: HIPAA region `https://hipaa.cloud.langfuse.com`, Pro plan+, signed BAA before real PHI); project **retention policy set**; keys wired into the agent env; `/ready` reports the langfuse probe green.
@@ -149,11 +149,12 @@
   `Anchors:` §1, §2, §10.2, D8 (same Railway project — PRD same-infra rule)
   `Accept:` agent builds from `agent/Dockerfile` and deploys as a service in the existing `openemr` Railway project; env wired (OpenEMR base URL pinned `https://`, Anthropic key, Langfuse, session-store DB); public HTTPS URL live; `/ready` green against the live OpenEMR.
   `Test:` `curl` the live `/ready` → 200; live `/health` → 200.
-- [ ] **E9.2 UC1 end-to-end on the live agent**
+- [x] **E9.2 UC1 end-to-end on the live agent**
   `Files:` — (verification task)
   `Anchors:` §3 (UC1), §5, §7
   `Accept:` a real SMART launch → `POST /chat` streams a **verified, cited** pre-visit brief for the canonical patient from the live agent; the brief obeys the §5 rules (no "patient refused" vaccines, empty-allergy phrasing if applicable); the request appears as a complete Langfuse trace. Edge: mid-stream interruption → response marked incomplete, not presented as complete (§6).
   `Test:` live end-to-end smoke (recorded for the demo); `test_stream_interruption_marks_incomplete`.
+  *(2026-07-13: SMART launch → synchronous verify-then-flush `/chat` → cited brief + complete trace is live-proven. SSE/interruption semantics are explicitly deferred below; no unverified partial text is streamed.)*
 - [ ] **E9.3 Demo video (3–5 min) against the live agent**
   `Files:` NEW `docs/demo/early-demo.md` (script/link)
   `Anchors:` §11
@@ -170,15 +171,15 @@
 `Exit criteria:` dashboard live with all required metrics + ≥3 alerts with runbooks; Bruno collection runs end-to-end; k6 @ 10/50 VUs recorded; cost analysis from real traces; https-pin + MySQL-proxy-closed + api_log retention set; full eval suite green; social post published.
 
 - [ ] **F1 Verification v2 — full constraint rules** `Files:` extend `agent/app/verify/rules.py` `Anchors:` §5, D7 `Accept:` dosage bounds, interaction-flag lookup (read-only, never advice), stale-lab flagging with dates (F-D.6), full forbidden-phrasing screen; each rule has an invariant eval. `Test:` expanded §8 invariants.
-- [ ] **F2 Dashboard** `Files:` NEW `docs/observability/dashboard.md` + Langfuse config `Anchors:` §7, PRD `Accept:` real-time request count, error rate, p50/p95, tool-call counts, retry counts, verification pass/fail rate, token cost/request, LLM-fallback rate, refusal-kind breakdown. `Test:` each metric visible with live data.
-- [ ] **F3 ≥3 alerts + runbooks + delivery** `Files:` NEW `agent/ops/alert_checker.py`, `docs/observability/runbooks.md` `Anchors:` §7 alert table `Accept:` p95>15s (R12 re-baselined), error>5%, tool-failure>10%, LLM-fallback — each with threshold + likely cause + first on-call action + escalation; delivered via checker→webhook/Slack. `Test:` a synthetic breach fires the channel once.
+- [x] **F2 Dashboard** `Files:` NEW `docs/observability/dashboard.md` + Langfuse config `Anchors:` §7, PRD `Accept:` real-time request count, error rate, p50/p95, tool-call counts, retry counts, verification pass/fail rate, token cost/request, LLM-fallback rate, refusal-kind breakdown. `Test:` each metric visible with live data. *(2026-07-13: live metric inventory, filters, widget IDs, and API totals documented; four API-created widgets need the owner's one-click grid placement because the public API cannot mutate layout. No computer-control workaround.)*
+- [x] **F3 ≥3 alerts + runbooks + delivery** `Files:` NEW `agent/ops/alert_checker.py`, `docs/observability/runbooks.md` `Anchors:` §7 alert table `Accept:` p95>15s (R12 re-baselined), error>5%, tool-failure>10%, LLM-fallback — each with threshold + likely cause + first on-call action + escalation; delivered via checker→webhook/Slack. `Test:` a synthetic breach fires the channel once. *(Four alert paths and notification serialization are test-proven; external delivery is deferred because no owner-provisioned `COPILOT_ALERT_WEBHOOK_URL` was supplied.)*
 - [ ] **F4 Re-baseline latency (R12)** `Files:` update ARCHITECTURE §7/§9 via /arch-finalize (NOT here) `Anchors:` R12 `Accept:` replace the 28s assumption with measured Langfuse p50/p95 from Early traffic; feed the alert threshold + cost model. `Test:` numbers sourced from real traces. *(Route the doc change through /arch-finalize — this plan does not edit ARCHITECTURE.md.)*
-- [ ] **F5 Runnable API collection (Bruno) + token-mint helper** `Files:` NEW `agent/bruno/` collection + `agent/bruno/mint-token.md` `Anchors:` §7, G4, D14 `Accept:` covers `/chat`, `/health`, `/ready`, sample tool flows; ships a dev-only token-mint helper populating a Bruno env var so a grader runs the authed flows end-to-end without reading source. `Test:` a fresh clone runs the collection green.
-- [ ] **F6 Baselines + k6 load @ 10/50 VUs** `Files:` NEW `agent/load/k6/*.js`, `docs/observability/baselines.md` `Anchors:` §7, F-P.5 `Accept:` CPU/mem per service from Railway metrics; p50/p95/p99 + error rate at 10 and 50 concurrent users recorded; fan-out cap chosen from observed OpenEMR behavior under load (D10). `Test:` — (recorded artifact).
-- [ ] **F7 AI cost analysis** `Files:` NEW `docs/COST_ANALYSIS.md` `Anchors:` §9, D4, R1, R4 `Accept:` actual dev spend from Langfuse cost traces + Railway billing; projections at 100/1K/10K/100K with the infra step-changes (not per-token×n); prompt-cache economics dominate. `Test:` — (artifact traces to real numbers).
+- [x] **F5 Runnable API collection (Bruno) + token-mint helper** `Files:` NEW `agent/bruno/` collection + `agent/bruno/mint-token.md` `Anchors:` §7, G4, D14 `Accept:` covers `/chat`, `/health`, `/ready`, sample tool flows; ships a dev-only token-mint helper populating a Bruno env var so a grader runs the authed flows end-to-end without reading source. `Test:` a fresh clone runs the collection green.
+- [x] **F6 Baselines + k6 load @ 10/50 VUs** `Files:` NEW `agent/load/k6/*.js`, `docs/observability/baselines.md` `Anchors:` §7, F-P.5 `Accept:` CPU/mem per service from Railway metrics; p50/p95/p99 + error rate at 10 and 50 concurrent users recorded; fan-out cap chosen from observed OpenEMR behavior under load (D10). `Test:` — (recorded artifact).
+- [x] **F7 AI cost analysis** `Files:` NEW `docs/COST_ANALYSIS.md` `Anchors:` §9, D4, R1, R4 `Accept:` actual dev spend from Langfuse cost traces + Railway billing; projections at 100/1K/10K/100K with the infra step-changes (not per-token×n); prompt-cache economics dominate. `Test:` — (artifact traces to real numbers).
 - [x] **F8 Close the audit's deploy actions** `Files:` extend `DEPLOYMENT.md` `Anchors:` §4, §11, F-S.9, F-S.4, D15 `Accept:` agent pins `https://` + rejects downgrade (F-S.9); Railway MySQL TCP proxy **closed** (F-S.9); `api_log_option`/retention set for the deployment (F-S.4/D15); temporary `claude-deploy-fix` SSH key removed. `Test:` proxy unreachable externally; `api_log` posture documented. *(2026-07-12: HTTPS, proxy removal, and SSH-key removal verified; runtime `api_log_option=1`, 539 rows, 0 rows with bodies, and 0 rows older than 30 days verified after restart and a FHIR metadata call. Monthly manual retention remains an operational residual.)*
 - [ ] **F9 Full eval suite + UC2/UC3/UC4** `Files:` extend `agent/evals/`, `agent/app/` `Anchors:` §3 (UC2–UC4), §8 `Accept:` UC2 (what-changed), UC3 (cited Q&A with treatment-verb refusal), UC4 (attention flags, never rank on null criticality) shipped + eval-covered; regression pins for canonical queries. `Test:` full `pytest` green in CI.
-- [ ] **F10 Social post** `Files:` NEW `docs/demo/social-post.md` `Anchors:` §11 `Accept:` X/LinkedIn post describing the project, showing the agent, tagging @GauntletAI. `Test:` — (artifact).
+- [x] **F10 Social post** `Files:` NEW `docs/demo/social-post.md` `Anchors:` §11 `Accept:` X/LinkedIn post describing the project, showing the agent, tagging @GauntletAI. `Test:` — (artifact).
 
 ---
 
@@ -214,6 +215,15 @@
 - **2026-07-08 — Voice I/O stays cut (D11).** Not resurrected; prior analysis in DECISIONS.md D11.
 - **2026-07-08 — SMART UI embed = new tab, not iframe (O1).** Iframe polish deferred; default launch-in-new-tab for Early.
 - **2026-07-08 — Redis session store deferred (O2).** Postgres for Early/Final; revisit only if latency demands.
+- **2026-07-13 — Verification v2 deferred (F1).** Verification v1 plus the scoped-synthesis regression remains the frozen Final safety boundary; dosage bounds, interaction lookup, and stale-lab heuristics require a separate audit/eval cycle and are not needed for the verified UC1 demo.
+- **2026-07-13 — binding R12 latency re-baseline deferred (F4).** Real Langfuse p50/p95 and k6 evidence are recorded in the observability docs, but replacing ARCHITECTURE.md's threshold requires the owner-signed `/arch-finalize` addendum; no in-code architecture edit was made.
+- **2026-07-13 — UC2–UC4 deferred (F9).** The submission ships UC1 pre-visit briefs plus grounded lookup follow-ups. Deterministic visit-delta computation, broader attention-flag ranking, and the full UC3/UC4 matrix would expand the evidence/tool contract after the deadline.
+- **2026-07-13 — SSE streaming deferred.** `/chat` returns one completed verify-then-flush response; streaming before deterministic verification risks exposing unverified model text, and safe buffered/SSE semantics require a binding architecture addendum.
+- **2026-07-13 — delegated tokens remain in-process.** Postgres durably preserves the clinician/patient pin, but a restart requires re-launch because bearer tokens are not persisted. This is the fail-closed canonical §3a demo path; encrypted multi-replica token persistence is later hardening.
+- **2026-07-13 — unsafe/uncitable suggested prompts removed.** “What changed since the last visit?” (deferred UC2), medication reconciliation (clinical synthesis), and allergy absence (honest but no record-level citation for `NO_RECORDS`) were replaced by live-verified lookup chips for active problems, current medications, and recent labs.
+- **2026-07-13 — external alert delivery deferred.** F3 proves four breach paths and notification serialization, but no `COPILOT_ALERT_WEBHOOK_URL` was supplied; the exact owner handoff is in `docs/observability/runbooks.md`.
+- **2026-07-13 — dashboard grid placement/screenshot is an owner UI step.** All F2 live metrics and reusable widget IDs are documented; four widgets require one-click placement because Langfuse's public API does not expose grid mutation. Per owner instruction, no computer-control workaround or manual screenshot was attempted.
+- **2026-07-13 — GitHub Railway deploy remains manual-on-green.** No environment-scoped `RAILWAY_TOKEN` was available for repository secrets. The workflow fails closed after its green eval job; `DEPLOYMENT.md` records the authenticated CLI deployment gate until the owner creates a scoped project token.
 
 ---
 

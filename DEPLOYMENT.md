@@ -565,3 +565,61 @@ that is an account action, not a credential to share.
 > has been removed and the MySQL TCP proxy is closed. Keep both closed; the app
 > reaches MySQL only over the private network. See the §4 F8 evidence table and
 > retention runbook for repeatable verification.
+
+## 9. Clinical Co-Pilot agent deployment
+
+> **Agent URL:** https://agent-production-9f62.up.railway.app
+>
+> **Service:** `agent` in the same Railway project/environment as OpenEMR (D8, §1/§10).
+>
+> **Data path:** delegated SMART token → read-only FHIR; the agent has no OpenEMR DB
+> credentials or write scopes (D2/D9, §4).
+
+The service builds from `agent/Dockerfile`. Railway variables provide the OpenEMR OAuth/FHIR
+origins, the `eVymzn…` SMART client, Anthropic, Langfuse, and `SESSION_STORE_DSN`. Secret
+values remain in Railway and gitignored local files; never copy them into a command transcript
+or repository file. `GET /ready` must be HTTP 200 with green FHIR, Anthropic, Postgres, and
+Langfuse checks before the deployment is considered healthy.
+
+### Deploy gate and current manual path
+
+`.github/workflows/agent-deploy.yml` correctly orders `eval gate → deploy`, but its deploy
+job requires a Railway **project token** in the GitHub repository secret `RAILWAY_TOKEN`.
+As of 2026-07-13 that secret is absent: the eval job passes and the deploy job fails closed
+with `Invalid RAILWAY_TOKEN`; it does not silently deploy an untested commit. Railway only
+creates project tokens through Project Settings → Tokens, and the owner has not supplied one.
+
+Until that token is added, deployment is an explicit manual operation from an authenticated
+Railway CLI session, still gated on the exact same local tests:
+
+```bash
+cd agent
+.venv/bin/pytest -q
+.venv/bin/python -m evals.runner
+cd ..
+
+# The path argument is required: it makes agent/ the archive root and avoids uploading the
+# full OpenEMR checkout or selecting the repository-root Dockerfile.
+railway up agent --path-as-root --service agent --detach --json \
+  --message "main <git-sha> — tests and eval gate green"
+
+railway deployment list --service agent --limit 3 --json
+curl -fsS https://agent-production-9f62.up.railway.app/ready
+```
+
+Never deploy if either test command is red. After adding a scoped project token to GitHub,
+rerun `agent-deploy` once and remove this manual-path exception from the handoff; do not use
+a personal/account token where an environment-scoped project token is sufficient.
+
+### Session restart behavior
+
+The clinician/patient session envelope is durable in Railway Postgres (D-O2/§3a), but the
+delegated OAuth access token intentionally remains only in the agent process. A deploy or
+restart therefore preserves the pin but requires a new SMART launch before the next `/chat`.
+This is the canonical fail-closed demo path: no bearer token is persisted, reconstructed, or
+printed. Multi-replica encrypted token persistence is deferred and recorded in
+`IMPLEMENTATION_PLAN.md`.
+
+Agent rollback mirrors the OpenEMR procedure: select the previous successful `agent`
+deployment and redeploy it, then re-launch SMART and recheck `/ready`. Postgres and OpenEMR
+data are independent of the agent image rollback.

@@ -1,8 +1,11 @@
 # Clinical Co-Pilot Langfuse dashboard
 
-> **Status:** Console configuration and live screenshot are pending the Langfuse Cloud
-> project/key handoff. This file is a working specification until the live-validation table
-> is populated; do not mark F2 complete from this draft alone.
+> **Status (2026-07-12):** live production telemetry is validated and the manual dashboard
+> grid is partially populated. Four reusable widgets created through the public API still
+> require owner placement in the dashboard UI. This PR remains draft if F2 acceptance
+> requires every widget to be visibly rendered on the grid.
+>
+> **Dashboard:** [Clinical Co-Pilot / Production](https://us.cloud.langfuse.com/project/cmrie27hr0kw7ad0dpgmwsb2u/dashboards/cmrifybt80kpxad0dh10bhmln)
 >
 > **Anchors:** F2, ARCHITECTURE.md §7, D5, D10-rev, F-C.1/F-C.2.
 
@@ -14,7 +17,7 @@ prompt or response bodies:
 
 1. Is the service receiving and completing requests?
 2. Where is latency or failure occurring—FHIR, verification, or the model?
-3. Is verify-then-flush passing, blocking, or refusing claims as expected?
+3. Is verify-then-flush passing, flagging, blocking, or refusing claims as expected?
 4. What does each served request cost, and how often does deterministic fallback take over?
 
 Only synthetic Synthea traffic is permitted in the demo project. Widgets use trace names,
@@ -23,9 +26,10 @@ not display prompt/response bodies, raw patient or clinician identifiers, OAuth 
 FHIR payloads. Patient and clinician dimensions remain one-way hashes under D5.
 
 Langfuse's [custom-dashboard documentation](https://langfuse.com/docs/metrics/features/custom-dashboards)
-defines the UI workflow. The [Metrics API v2 documentation](https://langfuse.com/docs/metrics/features/metrics-api)
-is the machine-readable definition used by F3 and F7; dashboard totals and API totals must
-agree over the same UTC window and filters.
+defines dashboard/widget behavior. The
+[Metrics API v2 documentation](https://langfuse.com/docs/metrics/features/metrics-api) is the
+machine-readable contract used by F3 and F7; dashboard totals and API totals must agree over
+the same UTC window and filters.
 
 ## Global dashboard settings
 
@@ -39,94 +43,125 @@ agree over the same UTC window and filters.
 | Identifier display | Hashed IDs only; no raw input/output columns |
 | Project region | Langfuse US Cloud for synthetic demo data |
 
-## Required widgets
+## Dashboard inventory
 
-The dashboard is incomplete unless every row below is visible with live data. Rates use a
-single denominator—distinct `previsit-brief` traces in the selected window—so a tool-heavy
-request cannot inflate a request-level percentage.
+Request-level rates use distinct `previsit-brief` traces as their denominator. Verification
+rates instead use `verify` observations because one request can contain many independently
+verified claims. This prevents a claim-heavy brief from distorting request error/fallback
+rates and prevents a multi-claim brief from collapsing verification safety into one bit.
 
-| Widget | Source and calculation | Visualization | Operational use |
-|---|---|---|---|
-| Request count | Distinct `previsit-brief` traces | Big number + hourly time series | Traffic and the denominator for all request rates |
-| Error rate | Distinct traces carrying an error outcome ÷ request count | Percentage + hourly time series | Route/dependency failures; separate from safe fallback |
-| Request latency p50 / p95 | Trace latency, p50 and p95 | Two-value chart + time series | F4 baseline and the p95 alert threshold |
-| Tool-call count | Observation count where name begins `tool.`; split by observation name | Stacked bar | Volume and tool mix, including the six baseline FHIR reads once traced |
-| Retry count | Observations explicitly tagged as retry attempts; split by stage/reason | Big number + bar | Provider/network instability without conflating normal tool-loop iterations |
-| Verification pass/fail rate | `verification_verdict` categorical scores or equivalent verdict observations, grouped `pass`, `flagged`, `blocked`, `refused` | 100% stacked bar | Verify-then-flush safety behavior; pass rate and fail/drop rate |
-| Cost per request | Sum native generation cost ÷ distinct request traces; show average and p95 | Currency number + time series | F7 unit economics and outlier detection |
-| LLM-fallback rate | Traces with `fallback_kind != none` ÷ request count | Percentage + breakdown | D13 degradation frequency |
-| Refusal-kind breakdown | Refused traces grouped by deterministic refusal kind | Bar | Distinguish deceased-patient hard stops from failures |
+### Visible on the live grid
 
-### Emission contract gate
+| Widget | Live source and calculation | Operational use |
+|---|---|---|
+| Traces | Distinct `previsit-brief` traces | Traffic and denominator for request-level rates |
+| Model Costs | Native Langfuse generation cost | Provider-model spend visible to Langfuse |
+| Trace Latency p50/p95 | Native root trace duration | Serving latency and F4 threshold evidence |
+| FHIR tool-call count | Counts split across `fhir.get_patient_summary`, `fhir.get_conditions`, `fhir.get_active_medications`, `fhir.get_recent_labs`, `fhir.get_encounters`, and `fhir.get_allergies` | Confirms the six-read D10 fan-out is traced |
+| Request error rate | Error-level root traces ÷ distinct traces | Route/dependency failures, separate from safe fallback |
+| LLM retry/rework count | Trace `llm_calls` / generation count, interpreted as repeated model work | Provider retry/rework signal without treating normal verification as an error |
 
-The dashboard can only aggregate fields that Langfuse ingests as native metrics or stable
-categorical filters. Replaying a short export span after the request and copying a number
-into metadata does not create a native latency or cost measure. Before console configuration,
-the deployed emission must prove this contract:
+### Created through the public API; owner grid placement remains
 
-| Dashboard requirement | Required emitted form |
+| Reusable widget | Widget ID | Calculation after placement |
+|---|---|---|
+| Verification passes | `cmrigkkpe0kllad0ds1szao7j` | `pass` verdict observations |
+| Verification non-pass numerator | `cmrigkuzp0l5jad0dicysa6v0` | `flagged + blocked + refused` verdict observations |
+| LLM fallback numerator | `cmrigkv3f0l5mad0ddlmk25pz` | Distinct traces where `fallback_kind != none`; divide by Traces |
+| Native LLM cost/request | `cmrigkv6l0l5pad0dzbta02l8` | Native generation cost ÷ distinct traces |
+
+The public create endpoint creates a reusable widget definition but does **not** place that
+widget on a dashboard grid. Grid placement is available only through the dashboard UI under
+the official [custom-dashboard](https://langfuse.com/docs/metrics/features/custom-dashboards)
+and [API](https://langfuse.com/docs/metrics/features/metrics-api) contract. The four widget
+IDs above therefore prove creation, not rendering. The remaining F2 owner hand-off is to add
+those existing widgets to the linked dashboard and visually confirm their shared filters.
+
+## Emission contract: live
+
+App fix commit `4dd1826` updated the sink for Langfuse SDK v4 and emits a native root span
+plus native `generation` observations with usage, cost, and duration. Railway deployment
+`ee3c97f8-a02f-4313-b53a-996a9f3d3ba8` carries that fix. Its `/ready` Langfuse probe returned
+HTTP 200 and the full readiness response was green before validation.
+
+| Dashboard requirement | Live emitted form |
 |---|---|
-| Request duration and error | One root request observation covering the real serving interval, with native start/end and error level/outcome |
-| Provider cost/tokens | `llm.complete` as a Langfuse `generation` carrying model, `usage_details`, and `cost_details` |
-| Retry count | Explicit retry attempt/reason metadata; normal tool-loop iterations remain untagged |
-| Tool/FHIR outcome | One `fhir.*`/`tool.*` observation per call with stable status |
-| Verification result | One `verify` observation or score per verdict with categorical verdict |
-| Fallback/refusal | Stable trace tag/field naming the fallback or refusal kind |
-
-As of the local `final/langfuse-emission` commit `620200e`, FHIR and per-verdict spans plus
-fallback tags satisfy the last three rows. Native root duration/error, explicit retry, and
-native generation usage/cost remain app-owned blockers. Do not configure zero-valued or
-export-duration widgets and present them as request latency, error, retry, or cost evidence.
+| Request duration and error | Root `previsit-brief` span covering the serving interval, with native start/end and level/outcome |
+| Provider cost/tokens | Native `llm` generation with model, usage details, and cost details |
+| Retry/rework count | Stable `llm_calls` metadata plus generation count |
+| Tool/FHIR outcome | One named `fhir.*` observation per call with status and duration |
+| Verification result | One `verify` observation per claim verdict |
+| Fallback/refusal | Stable `fallback:*` tag and `fallback_kind` metadata |
 
 ### Metric semantics
 
 - **Error is not fallback.** A successfully served deterministic fallback remains a completed
-  request and contributes only to fallback rate unless a separate route/dependency error is
-  recorded. This prevents safe D13 behavior from making availability look worse than it is.
-- **A blocked claim is not a failed request.** `blocked` and `refused` feed the verification
-  chart. The request error numerator changes only when the serving operation itself fails.
-- **Retries are explicit.** Multiple `llm.complete` observations can be normal tool-loop
-  iterations. Count a retry only when its trace metadata/observation marks it as a retry.
-- **Cost is native usage cost.** Do not average a `cost_usd` string copied into metadata when
-  Langfuse has native generation usage/cost; the F7 export must reconcile to provider billing.
-- **Tool failures are observation outcomes.** F3 computes the alerting ratio from `tool.*`
-  observations with failed/error outcome over all `tool.*` observations, using the same
-  definition displayed in the tool widget.
+  request and contributes only to fallback rate unless a separate serving error is recorded.
+- **A blocked claim is not a failed request.** `flagged`, `blocked`, and `refused` feed the
+  verification view. Request error changes only when the serving operation itself fails.
+- **Repeated model work needs context.** Multiple generation observations can represent
+  retries or rework; the widget is an operational signal, not proof of a transport retry
+  without the associated trace metadata.
+- **Native cost and full provider economics are different views.** Native Langfuse generation
+  cost powers the live dashboard. F7 reconstructs the full provider economics when token
+  classes omitted from native cost—specifically cache-creation tokens in this window—must be
+  priced.
+- **Tool failures are observation outcomes.** F3 computes its alerting ratio from failed/error
+  `fhir.*` observations over all `fhir.*` observations using the same UTC filter.
 
 ## Live validation
 
-Populate this table from one bounded authenticated synthetic `/chat` run after Railway has
-all three `LANGFUSE_*` variables and the deployed agent emits the complete trace. Record
-counts only—never paste a session ID, prompt, patient identifier, response body, or API key.
+The bounded validation window contains only synthetic demo activity. Counts below were
+queried without copying session IDs, prompts, patient identifiers, response bodies, or API
+keys into this repository.
 
-| Evidence | Result |
+| Evidence | Live result |
 |---|---|
-| Railway deployment ID / agent commit | **PENDING** |
-| UTC validation window | **PENDING** |
-| `/ready` Langfuse check | **PENDING** |
-| Trace present with correlation/accountability metadata | **PENDING** |
-| FHIR/tool, LLM, and verify observations present | **PENDING** |
-| Token usage and native cost present | **PENDING** |
-| Verification verdicts and fallback/refusal fields queryable | **PENDING** |
-| All required widgets return live data | **PENDING** |
+| Agent fix / Railway deployment | `4dd1826` / `ee3c97f8-a02f-4313-b53a-996a9f3d3ba8` |
+| UTC validation window | 2026-07-12T23:37:24.594Z–2026-07-12T23:39:20.050Z |
+| `/ready` Langfuse check | HTTP 200; full deployment readiness green |
+| Trace count | 3 `previsit-brief` traces |
+| Observation coverage | 130 total: 3 root + 3 `llm` generations + 18 FHIR + 106 `verify` |
+| FHIR coverage | Six named reads per trace; 18/18 observations present |
+| Native Langfuse model cost | $0.11687970 total; $0.03895990 per generation/request |
+| F7 reconstructed full provider economics | $0.24495345 total; $0.08165115 per request |
+| Cost reconciliation | F7 is $0.12807375 higher because cache-creation tokens were absent from native Langfuse cost |
+| Verification verdicts | 33 `pass`, 20 `flagged`, 52 `blocked`, 1 `refused` (106 total) |
+| Fallback tags | `fallback:none` on 3/3 traces; 0 fallback traces |
+| Widgets visibly rendered | Traces, Model Costs, Trace Latency p50/p95, FHIR tool-call count, Request error rate, LLM retry/rework count |
+| Reusable widgets awaiting grid placement | Four: verification passes, verification non-pass, LLM fallback numerator, native LLM cost/request |
 
-## Screenshot
+There are three generations and three requests in this window, so the native average is
+simultaneously per generation and per request. That equivalence is specific to this sample;
+future windows with more than one generation per trace must keep the two denominators
+separate.
 
-Add the sanitized live dashboard capture at `docs/observability/langfuse-dashboard.png` and
-embed it here only after the validation table is complete. The capture must show every
-required widget and must not expose API keys, raw prompts/responses, or unhashed identifiers.
+## Screenshot intentionally omitted
+
+The owner explicitly stopped computer-control and screenshot work. No browser/computer UI
+actions continue from this documentation task, and no dashboard image is created or added.
+This omission is intentional, not evidence that every widget renders. If F2 acceptance
+requires a rendered-grid capture, the owner must first place the four reusable widgets in
+the Langfuse UI and separately authorize a sanitized screenshot.
 
 ## Reproduction and ownership
 
-1. Sign in to `https://us.cloud.langfuse.com` through GitHub or Google SSO.
-2. Select the Clinical Co-Pilot project and create the dashboard/global filters above.
-3. Create each widget from the Required widgets table; keep all time windows identical.
-4. Run one bounded synthetic authenticated request and confirm the trace before accepting
-   any zero-valued widget as valid.
-5. Cross-check request count, latency, cost, tool failures, and fallback totals with the F3
-   Metrics API checker for the same UTC window.
-6. Save the sanitized screenshot and record the immutable agent deployment/commit here.
+The live checks can be reproduced without reading application source:
 
-The deployment owner owns project membership, keys, retention, and dashboard changes. The
-on-call owner uses this dashboard with `docs/observability/runbooks.md`; changes to metric
+1. Confirm deployment `ee3c97f8-a02f-4313-b53a-996a9f3d3ba8` reports a green `/ready`,
+   including HTTP 200 for Langfuse.
+2. Use the Langfuse SDK or Metrics API v2 with the exact UTC window, `production`
+   environment, and `previsit-brief` trace filter to query trace, observation, latency,
+   verdict, fallback, and native-cost aggregates.
+3. Reconcile native generation cost with F7's token-class reconstruction; do not force the
+   two values to match when cache-creation tokens are absent from Langfuse native cost.
+4. Confirm the six `fhir.*` names produce 18 observations across the three traces and that
+   the verification counts sum to 106.
+5. In the Langfuse UI, open the linked dashboard and place the four existing reusable widget
+   IDs on the grid. The API cannot perform this layout step.
+6. Verify that every placed widget shares the environment, trace-name, and UTC filters before
+   using it for F3/F7 operations.
+
+The deployment owner owns project membership, keys, retention, and dashboard grid changes.
+The on-call owner uses this dashboard with `docs/observability/runbooks.md`; changes to metric
 semantics require a documentation update in the same PR.

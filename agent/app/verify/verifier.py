@@ -329,6 +329,9 @@ class Verifier:
                 matched_evidence_ids=matched_ids,
             )
 
+        # ``present=True`` means the cited condition exists in chart history; it is not a claim
+        # that the problem is currently active. Preserve the record's status so inactive/resolved
+        # follow-ups can render that verifiable fact without upgrading it to a "cured" inference.
         return VerificationResult(
             verdict=Verdict.PASS,
             matched_evidence_ids=matched_ids,

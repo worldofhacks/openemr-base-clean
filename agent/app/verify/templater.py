@@ -36,6 +36,33 @@ FALLBACK_BANNER = (
     "Records below are present in the chart; clinical synthesis was not performed."
 )
 
+# D13 output is a safety floor, not a second chart viewer. These are hard, user-visible bounds:
+# even an unexpectedly large packet or long free-text field cannot turn fallback into a chart dump.
+FALLBACK_MAX_RECORDS = 8
+FALLBACK_MAX_CHARS = 2_500
+_FALLBACK_MAX_FIELD_CHARS = 160
+
+_INACTIVE_CONDITION_STATUSES: frozenset[str] = frozenset({"inactive", "resolved"})
+_RESOLUTION_PHRASES: tuple[str, ...] = (
+    "cured",
+    "resolved",
+    "inactive",
+    "no longer active",
+    "no longer has",
+    "no longer have",
+    "doesn't have anymore",
+    "does not have anymore",
+)
+_GENERAL_BRIEF_PHRASES: tuple[str, ...] = ("pre-visit brief", "previsit brief", "pre visit brief")
+_RESOLUTION_CAVEAT = (
+    "I can show which problems are marked inactive or resolved in the chart, but I can't "
+    "verify a clinical judgment of what's been cured — confirm with the chart."
+)
+_SCOPED_CAVEAT = (
+    "I couldn't verify a synthesized answer. Only chart records relevant to this question "
+    "are shown below; confirm with the chart."
+)
+
 # resource_type → section heading, in clinical reading order.
 _SECTION_ORDER: list[tuple[str, str]] = [
     ("Patient", "Patient"),
@@ -56,10 +83,77 @@ _TOOL_LABEL: dict[str, str] = {
     "get_allergies": "Allergies",
 }
 
+_RESOURCE_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Condition", ("condition", "problem", "diagnos", "disease")),
+    ("MedicationRequest", ("medication", "medicine", "drug", "prescription")),
+    ("Observation", ("lab", "observation", "test result", "a1c")),
+    ("Encounter", ("encounter", "visit", "appointment")),
+    ("AllergyIntolerance", ("allergy", "allergies", "allergic")),
+    ("Patient", ("demographic", "birth", "gender", "age")),
+)
+
+
+def _clip_text(value: Any) -> str:
+    text = " ".join(str(value).split())
+    if len(text) <= _FALLBACK_MAX_FIELD_CHARS:
+        return text
+    return text[: _FALLBACK_MAX_FIELD_CHARS - 1].rstrip() + "…"
+
 
 def _s(fields: dict[str, Any], key: str) -> str:
     v = fields.get(key)
-    return "" if v is None else str(v)
+    return "" if v is None else _clip_text(v)
+
+
+def _is_resolution_question(question: str | None) -> bool:
+    normalized = " ".join((question or "").lower().split())
+    return any(phrase in normalized for phrase in _RESOLUTION_PHRASES)
+
+
+def _question_resource_types(question: str | None) -> set[str] | None:
+    """Return an explicit targeted scope, or ``None`` for a general/unknown request.
+
+    This is intentionally a small deterministic vocabulary, not clinical NLP. A resolution
+    question is always Condition-only. Other clear resource words may select one or several
+    sections; an unrecognized general brief keeps the normal clinical section order.
+    """
+    normalized = " ".join((question or "").lower().split())
+    if not normalized:
+        return None
+    if _is_resolution_question(normalized):
+        return {"Condition"}
+    if any(phrase in normalized for phrase in _GENERAL_BRIEF_PHRASES):
+        return None
+    selected = {
+        resource_type
+        for resource_type, keywords in _RESOURCE_KEYWORDS
+        if any(keyword in normalized for keyword in keywords)
+    }
+    return selected or None
+
+
+def _bounded_output(lines: list[str], max_chars: int) -> str:
+    """Join whole lines under a hard character ceiling; never slice a record mid-line."""
+    if max_chars <= 0:
+        return ""
+
+    kept: list[str] = []
+    for line in lines:
+        candidate = "\n".join([*kept, line]).rstrip() + "\n"
+        if len(candidate) <= max_chars:
+            kept.append(line)
+            continue
+
+        marker = "⚠ Output limit reached; additional relevant records omitted."
+        while kept:
+            candidate = "\n".join([*kept, marker]).rstrip() + "\n"
+            if len(candidate) <= max_chars:
+                kept.append(marker)
+                break
+            kept.pop()
+        break
+
+    return "\n".join(kept).rstrip() + "\n" if kept else ""
 
 
 def _render_record(resource_type: str, f: dict[str, Any]) -> str:
@@ -121,19 +215,38 @@ def _render_record(resource_type: str, f: dict[str, Any]) -> str:
 def _render_notice(kind: str, tool: str, detail: str) -> str | None:
     label = _TOOL_LABEL.get(tool, tool)
     if kind == "tool_failed":
-        return f"⚠ {label}: data unavailable — {detail} (partial answer, not a silent omission)"
+        return f"⚠ {label}: data unavailable — {_clip_text(detail)} (partial answer, not a silent omission)"
     if kind == "no_records":
         if tool == "get_allergies":
             # F-D.5: an empty allergy result is NOT NKDA.
             return "⚠ Allergies: no allergy records returned — confirm with patient (not evidence of no allergies)."
         return f"{label}: no records returned."
     if kind == "trimmed":
-        return f"{label}: {detail}"
+        return f"{label}: {_clip_text(detail)}"
     return None
 
 
-def render_packet_fallback(packet: EvidencePacket) -> str:
+def render_packet_fallback(
+    packet: EvidencePacket,
+    *,
+    question: str | None = None,
+    max_records: int = FALLBACK_MAX_RECORDS,
+    max_chars: int = FALLBACK_MAX_CHARS,
+) -> str:
+    """Render a grounded D13 answer, scoped to a targeted question and always bounded.
+
+    Resolution questions are a special safety boundary: ``inactive``/``resolved`` is a chart
+    status that can be shown, while ``cured`` is a clinical inference the packet cannot prove.
+    Those questions therefore render only inactive/resolved Conditions plus an explicit caveat.
+    """
+    max_records = max(0, max_records)
+    resolution_question = _is_resolution_question(question)
+    selected_types = _question_resource_types(question)
     lines: list[str] = [FALLBACK_BANNER, ""]
+    if resolution_question:
+        lines.extend([_RESOLUTION_CAVEAT, ""])
+    elif selected_types is not None:
+        lines.extend([_SCOPED_CAVEAT, ""])
 
     notices_by_label: dict[str, list[str]] = {}
     for n in packet.notices:
@@ -141,22 +254,52 @@ def render_packet_fallback(packet: EvidencePacket) -> str:
         if rendered:
             notices_by_label.setdefault(_TOOL_LABEL.get(n.tool, n.tool), []).append(rendered)
 
+    total_matching_records = 0
+    rendered_records = 0
+    rendered_any_section = False
     for resource_type, heading in _SECTION_ORDER:
-        records = packet.by_type(resource_type)
-        notices = notices_by_label.pop(heading, [])
-        if not records and not notices:
+        if selected_types is not None and resource_type not in selected_types:
             continue
-        lines.append(f"## {heading}")
-        for r in records:
+        records = packet.by_type(resource_type)
+        if resolution_question and resource_type == "Condition":
+            records = [
+                record for record in records
+                if str(record.fields.get("clinical_status") or "").strip().lower()
+                in _INACTIVE_CONDITION_STATUSES
+            ]
+        total_matching_records += len(records)
+        notices = notices_by_label.pop(heading, [])
+        remaining = max_records - rendered_records
+        records_to_render = records[:remaining] if remaining > 0 else []
+        if not records_to_render and not notices:
+            continue
+        rendered_any_section = True
+        scoped_heading = "Problems marked inactive or resolved" if resolution_question else heading
+        lines.append(f"## {scoped_heading}")
+        for r in records_to_render:
             lines.append(f"- {_render_record(resource_type, r.fields)}  [{r.evidence_id}]")
+            rendered_records += 1
         lines.extend(notices)
         lines.append("")
 
-    # Any notices whose tool didn't map to a known section (defensive).
-    for leftover in notices_by_label.values():
-        lines.extend(leftover)
+    if resolution_question and total_matching_records == 0:
+        lines.append("No conditions are marked inactive or resolved in the available chart data.")
+    elif selected_types is not None and not rendered_any_section:
+        lines.append("No relevant records were available for this question.")
 
-    return "\n".join(lines).rstrip() + "\n"
+    omitted = max(0, total_matching_records - rendered_records)
+    if omitted:
+        lines.append(
+            f"⚠ {omitted} additional relevant chart record(s) omitted by the fallback safety limit."
+        )
+
+    if selected_types is None:
+        # Unknown/general request: keep honest gap notices, but never let a targeted scope leak
+        # unrelated notices from the rest of the packet.
+        for leftover in notices_by_label.values():
+            lines.extend(leftover)
+
+    return _bounded_output(lines, max_chars)
 
 
 # ---------------------------------------------------------------------------

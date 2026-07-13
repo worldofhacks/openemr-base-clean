@@ -21,7 +21,7 @@ Suggested media: `chat-ui-verified-brief.png`.
 >
 > Raw model prose never goes directly to the physician. Unsupported or contradictory claims are blocked instead of being polished into something convincing, and displayed clinical claims trace back to source evidence.
 >
-> The current deployment is a synthetic-data demo using Synthea patients only—no real PHI. It is read-only by construction and does not diagnose, recommend treatment, prescribe, order, message patients, or write to the chart.
+> The current deployment is a synthetic-data demo using Synthea patients only. No real PHI. It is read-only by construction and does not diagnose, recommend treatment, prescribe, order, message patients, or write to the chart.
 >
 > Live agent: https://agent-production-9f62.up.railway.app (the patient-specific flow requires a SMART launch from OpenEMR).
 >

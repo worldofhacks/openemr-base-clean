@@ -55,6 +55,14 @@ class Settings(BaseSettings):
     langfuse_host: HttpUrl | None = Field(default=None)
     langfuse_public_key: SecretStr | None = Field(default=None)
     langfuse_secret_key: SecretStr | None = Field(default=None)
+    langfuse_log_content: bool = Field(
+        default=False,
+        description=(
+            "When true, send raw prompt/answer content to Langfuse. Default OFF = D5 "
+            "minimum-necessary. Enable ONLY on synthetic-data deployments; prod has no BAA "
+            "on the US region."
+        ),
+    )
 
     # --- Turn/session budgets (§3a, D10) ---
     fhir_per_call_timeout_seconds: float = Field(default=8.0, gt=0)

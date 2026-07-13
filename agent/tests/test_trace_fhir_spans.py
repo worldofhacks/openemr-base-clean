@@ -13,6 +13,8 @@ from app.llm.provider import LLMResponse, TextBlock, Usage
 from app.observability.langfuse import InMemoryTraceSink, RequestTracer
 from app.observability.trace import AccountabilityContext
 from app.orchestrator.loop import Orchestrator, ToolRegistry
+from app.service import _fhir_trace_content
+from app.tools.contracts import ConditionRecord, ToolResult, ToolStatus
 from app.tools.fhir_tools import run_previsit_fanout
 
 PID = "a234b786-539a-4f9a-96a0-432293226f02"
@@ -90,3 +92,14 @@ async def test_trace_begins_before_fanout_and_records_every_fhir_read():
     assert t.client_id == "copilot-42" and t.correlation_id == "req-fhir-1"
     assert "user/Condition.read" in t.exercised_scopes
     assert t.verdicts and t.source == "deterministic_fallback" and t.fallback_kind == "all_blocked"
+
+
+def test_fhir_span_content_contains_the_exact_typed_result():
+    """D16/§7: the sink mask—not the service—decides whether synthetic FHIR content exports."""
+    result = ToolResult(
+        tool="get_conditions", status=ToolStatus.OK,
+        records=[ConditionRecord(resource_id="c1", display="Type 2 diabetes")],
+    )
+    content = _fhir_trace_content(result)
+    assert content["tool"] == "get_conditions"
+    assert content["records"][0]["display"] == "Type 2 diabetes"

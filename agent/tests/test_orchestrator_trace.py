@@ -41,8 +41,10 @@ class FakeProvider:
     def __init__(self, scripted, model="claude-sonnet-4-6"):
         self._scripted = list(scripted)
         self.model = model
+        self.calls = []
 
     async def complete(self, *, system, messages, tools):
+        self.calls.append({"system": system, "messages": messages, "tools": tools})
         nxt = self._scripted.pop(0)
         if isinstance(nxt, Exception):
             raise nxt
@@ -131,3 +133,36 @@ async def test_no_tracer_is_a_noop():
     # served answer is the D13 grounded render (source="deterministic_fallback"), not empty llm.
     assert res.source == "deterministic_fallback"
     assert "Type 2 diabetes" in res.text  # grounded, request completed without a tracer
+
+
+async def test_trace_captures_exact_model_io_and_verified_served_output():
+    """D16/§7: raw content reaches only the trace value object; the sink mask owns disclosure."""
+    packet = _packet()
+    evidence_id = packet.records[0].evidence_id
+    raw_claims = {"claims": [{
+        "type": "condition", "display": "Type 2 diabetes", "present": True,
+        "evidence_ids": [evidence_id],
+    }]}
+    response = LLMResponse(
+        content=[ToolUseBlock(id="toolu_submit", name="submit_claims", input=raw_claims)],
+        stop_reason="tool_use", usage=Usage(input_tokens=14, output_tokens=8),
+        model="claude-sonnet-4-6",
+    )
+    provider = FakeProvider([response])
+    sink = InMemoryTraceSink()
+
+    result = await Orchestrator(provider).run_previsit_brief(
+        packet, "Which problems are recorded?", tools=ToolRegistry([]),
+        tracer=RequestTracer(sink), accountability=_acct())
+
+    assert result.source == "llm"
+    trace = sink.traces[0]
+    generation = next(step for step in trace.steps if step.name == "llm.complete")
+    assert generation.detail["prompt"] == provider.calls[0]  # exact provider.complete payload
+    assert "Which problems are recorded?" in repr(generation.detail["prompt"])
+    assert generation.detail["raw_submit_claims"] == raw_claims
+    assert generation.detail["raw_completion"][0]["name"] == "submit_claims"
+    verify = next(step for step in trace.steps if step.name == "verify")
+    assert verify.detail["claim"]["display"] == "Type 2 diabetes"
+    assert trace.served_output == result.text
+    assert "Type 2 diabetes" in trace.served_output

@@ -94,6 +94,33 @@ HTTP 200 and the full readiness response was green before validation.
 | Verification result | One `verify` observation per claim verdict |
 | Fallback/refusal | Stable `fallback:*` tag and `fallback_kind` metadata |
 
+### Where to look in Langfuse
+
+Use the dashboard above for aggregate F2 health. For one request, open **Tracing**, filter to
+`environment=production` and trace name `previsit-brief`, then expand the trace in this order:
+
+- the root `previsit-brief` observation for request outcome, duration, source/fallback metadata,
+  and the PHI-minimized D5/F-C.1 accountability context;
+- the six `fhir.*` observations for read name, outcome, duration, and — only with the approved
+  content switch — the normalized typed tool result;
+- the `llm` generation for model, usage, native cost, and, with that switch, the exact model
+  prompt/completion;
+- the `verify` observations for each `pass`, `flagged`, `blocked`, or `refused` verdict and, with
+  that switch, the submitted claim; the trace/root output carries the verified served answer.
+
+On that live trace, open the **Scores** panel for the stable request-level fields
+`claims_submitted`, `claims_verified`, `claims_dropped`, `verification_drop_rate`, `source`, and
+`degraded`. For the offline gate, open **Datasets** → `clinical-copilot-offline-evals` → the
+`eval-gate-<commit-or-timestamp>` run. Its item traces carry `offline_gate_passed` and, when the
+case yields verifier accounting, the applicable live score names above. The checked-in JSON and
+offline process exit remain authoritative; the Langfuse run is the review/drill-down surface.
+
+If trace content is blank while the spans and metrics are present, first check the owner-approved
+Synthea-demo `LANGFUSE_LOG_CONTENT` switch; that is an intentional privacy state, not a broken trace. Never paste keys,
+tokens, raw authorization headers, or trace content into dashboard documentation or screenshots.
+The D16 content policy remains **pending owner finalize sign-off**; D5/F-C.1 accountability and
+§7 aggregate telemetry do not depend on that approval.
+
 ### Metric semantics
 
 - **Error is not fallback.** A successfully served deterministic fallback remains a completed

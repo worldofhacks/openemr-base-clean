@@ -106,6 +106,32 @@
   instructions. Schema-bound output + append-only writes bound the blast radius.
   Injection cases required in the 50.
 
+## W2-D8. CI tiers: live Anthropic in the graded eval gate; stubs everywhere else — **locked** (2026-07-13)
+- Reading the PRD precisely: "integration tests... must pass in CI without live API
+  access" scopes the stub requirement to INTEGRATION TESTS. Nothing forbids live
+  calls in the eval gate — and the hard gate (grader-injected regression must fail
+  CI) plus the required judge configuration both argue for them.
+- **Tier 1 — offline, every PR, and the local Git Hook:** unit tests, integration
+  tests on fixture documents with stubbed LLM/VLM/reranker, deterministic eval
+  subset (schema_valid structure, citation completeness, PHI checks, deterministic
+  refusal paths). Satisfies the PRD's no-live-API clause verbatim. No secrets on
+  contributor machines.
+- **Tier 2 — the graded gate, PR-blocking in GH Actions:** full 50-case run with
+  LIVE Anthropic (real agent turns + the pinned LLM judge for factually_consistent).
+  This is what the graders' regression injection hits; it exercises real prompt and
+  orchestration behavior, closing the stubbed-gate blind spot.
+- Guardrails: judge = pinned model + version, temperature 0, boolean questions
+  quoting evidence spans; agent calls temperature-pinned; infra failure ≠ case
+  failure (bounded retries, then the job errors as inconclusive — reruns required,
+  never silent green, never auto-pass); Cohere NEVER live in CI (rate limits —
+  stubbed; rubric booleans independent of rerank ordering); ANTHROPIC_API_KEY via
+  GH Actions repo secrets (sanctioned store, same class as RAILWAY_TOKEN).
+- Cost owned: ~50 live turns/run, W1-measured ~$0.08/request upper bound ≈ $4/run
+  before prompt-cache savings; acceptable for a graded gate, monitored in traces.
+- Resolves: the judge contradiction (a real judge needs a real call) and the
+  stubbed-gate blind spot (prompt/behavior regressions now catchable). The two-tier
+  design stands either way; this decision fixes WHERE live calls are allowed.
+
 ## Open
 - W2-O1. Vector index: in-process (default, small corpus) vs external. → W2-R3.
 - W2-O2. SLO numbers set from measured baselines, not invented. Working targets:

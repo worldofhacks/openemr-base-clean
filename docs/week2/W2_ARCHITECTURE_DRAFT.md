@@ -229,13 +229,22 @@ convention; searchable by case_id, event_id, correlation_id; all PHI-free):**
 `writeback.created` (record type, lineage ids), `eval.run.outcome` (per category),
 `breaker.state.changed` (dependency, open/half-open/closed).
 
-**CI pipeline per PR (extends the W1 eval gate):** build → ruff lint + mypy typecheck →
-pytest with coverage → Pydantic schema-validation tests → supervisor-worker contract
-tests → extraction regression tests (fixtures + stubbed VLM) → OpenAPI contract tests
-(spec ↔ implementation) → dependency audit (pip-audit) → security scan (semgrep) →
-PHI-detection check over logs/fixtures/eval artifacts → eval gate (50 cases, category
-thresholds) → deploy on green. The PR-blocking Git Hook (committed hooksPath + setup
-doc) runs the fast subset locally; GH Actions is the enforcement graders can't bypass.
+**CI pipeline per PR — two tiers (W2-D8):**
+*Tier 1 (offline; also the local Git Hook — no secrets on contributor machines):*
+build → ruff lint + mypy typecheck → pytest with coverage → Pydantic schema-validation
+tests → supervisor-worker contract tests → extraction regression tests (fixtures +
+stubbed VLM) → OpenAPI contract tests (spec ↔ implementation) → dependency audit
+(pip-audit) → security scan (semgrep) → PHI-detection check over logs/fixtures/eval
+artifacts → deterministic eval subset. Passes with zero live API access (PRD
+integration-test clause satisfied verbatim).
+*Tier 2 (the graded, PR-blocking gate in GH Actions):* the full 50-case eval run with
+LIVE Anthropic — real agent turns plus the pinned judge (model+version pinned,
+temperature 0, boolean questions quoting evidence spans) for factually_consistent.
+Cohere stays stubbed in CI (rate limits; rubrics independent of rerank order). Infra
+failure ≠ case failure: bounded retries then an inconclusive job error — never a
+silent green. Deploy only on Tier 1 + Tier 2 green. This tier is what the graders'
+regression injection must trip: it exercises real prompt and orchestration behavior,
+not canned stubs (~$4/run upper bound, W2-D8).
 
 **Privacy scrubbing (stated approach, verified in CI):** traces and logs carry ids,
 hashes, counts, booleans, and latencies — never patient identifiers, raw document

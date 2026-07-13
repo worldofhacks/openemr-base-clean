@@ -41,6 +41,7 @@ class ChatResponse(BaseModel):
     degraded: bool
     verdicts: list[str]        # per-claim verification verdicts (§5)
     citations: list[str]       # evidence ids backing the served lines (presentation-only, T-E9 UI)
+    patient: dict[str, str] | None = None   # chart-header demographics (presentation-only, T-E9 UI)
     correlation_id: str
 
 
@@ -92,5 +93,6 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse:
         degraded=result.degraded,
         verdicts=list(result.verdicts),
         citations=_citations_for(result),
+        patient=result.patient,
         correlation_id=correlation_id_var.get(),
     )

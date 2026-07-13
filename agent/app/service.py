@@ -15,6 +15,7 @@ persist it encrypted alongside the pinned session.
 from __future__ import annotations
 
 import secrets
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from app.auth.scopes import requested_scope_string
@@ -41,6 +42,17 @@ def _build_tracer(settings: Settings) -> RequestTracer:
     else:
         sink = NullTraceSink()  # observability optional (§6 soft dep) — serving is unaffected
     return RequestTracer(sink)
+
+
+def _patient_header(packet) -> dict[str, str] | None:
+    """Presentation-only chart header (T-E9 UI): name/gender/birth_date from the packet's Patient
+    record (age is computed client-side). None if no Patient record was returned."""
+    records = packet.by_type("Patient")
+    if not records:
+        return None
+    fields = records[0].fields
+    header = {k: str(fields[k]) for k in ("name", "gender", "birth_date") if fields.get(k)}
+    return header or None
 
 
 class AgentServices:
@@ -150,5 +162,8 @@ class AgentServices:
         # UC1: the packet is pre-built deterministically (D10); the LLM narrates it in typed
         # claims (empty tool registry → only submit_claims), which are verified and re-rendered.
         # The trace begun above is threaded in so the LLM/verify spans join the FHIR spans.
-        return await self.orchestrator.run_previsit_brief(
+        result = await self.orchestrator.run_previsit_brief(
             packet, message, tools=ToolRegistry([]), builder=builder)
+        # Attach the patient header (presentation-only, T-E9 UI) from the already-fetched Patient
+        # record — the UI draws a chart header from it; verification/serving are untouched.
+        return replace(result, patient=_patient_header(packet))

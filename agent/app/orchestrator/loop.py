@@ -212,6 +212,10 @@ class BriefResult:
     # rendered brief text — it only lets the UI show citation chips. Empty on paths whose text
     # already carries inline [evidence_id] tokens (the deterministic fallback render).
     citations: list[str] = field(default_factory=list)
+    # Additive presentation-only patient header (T-E9 UI): name/gender/birth_date read from the
+    # already-fetched Patient record. Set by the composition root, never by verification — it has
+    # no effect on what is verified or served, only on the chart header the UI draws.
+    patient: dict[str, str] | None = None
 
 
 def _refusal_result(kind: RefusalKind) -> BriefResult:

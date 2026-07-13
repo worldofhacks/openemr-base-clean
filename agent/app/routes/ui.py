@@ -1,11 +1,13 @@
-"""GET /app — a minimal single-page chat UI for the pre-visit co-pilot (T-E9 demo UI).
+"""GET /app — the practitioner chat UI for the pre-visit co-pilot (T-E9 demo UI).
 
-Presentation layer ONLY. It is a self-contained HTML page (inline CSS/JS, no build step) that
-calls the EXISTING POST /chat for the session pinned by the SMART launch and renders the
-verified brief as a chat message — citation chips from the response's `citations`, a
-"verified / dropped" badge from `verdicts`. It changes nothing about verification or serving:
-it is a client of /chat like any other. The session id arrives as `?sid=` (the /callback
-redirect); production would carry it in a cookie instead of the URL.
+Presentation layer ONLY. A self-contained single-page app (inline CSS/JS, no build step) that
+calls the EXISTING POST /chat for the SMART-pinned session and renders the verified brief as a
+scannable clinical card: a patient header, a "Review before entering" attention panel, the brief
+grouped into Problems / Medications / Labs / Allergies (parsed client-side from the served text),
+a "N verified / M dropped" trust badge, clickable citation chips, amber caution on the
+confirm-with-patient allergy line, and a multi-turn follow-up with example prompts. It changes
+nothing about verification or serving — it is a client of /chat like any other. The session id
+arrives as `?sid=` (the /callback redirect); production would carry it in a cookie.
 """
 
 from __future__ import annotations
@@ -22,46 +24,133 @@ _PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Clinical Co-Pilot</title>
 <style>
-  * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-         background: #eef1f6; color: #1a2233; height: 100vh; display: flex; flex-direction: column; }
-  header { background: #123a5e; color: #fff; padding: 12px 18px; font-weight: 600; font-size: 16px;
-           display: flex; align-items: center; gap: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.2); }
-  header .dot { width: 9px; height: 9px; border-radius: 50%; background: #4ade80; }
-  header small { font-weight: 400; opacity: .8; font-size: 12px; margin-left: auto; }
-  #log { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
-  .row { display: flex; }
-  .row.user { justify-content: flex-end; }
-  .bubble { max-width: 760px; padding: 12px 15px; border-radius: 14px; line-height: 1.5;
-            box-shadow: 0 1px 2px rgba(0,0,0,.08); font-size: 14px; }
-  .user .bubble { background: #123a5e; color: #fff; border-bottom-right-radius: 4px; }
-  .assistant .bubble { background: #fff; color: #1a2233; border-bottom-left-radius: 4px; }
-  .brief { white-space: pre-wrap; word-break: break-word; }
-  .badges { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-  .badge { font-size: 12px; padding: 3px 9px; border-radius: 20px; font-weight: 600; }
-  .badge.ok { background: #dcfce7; color: #166534; }
-  .badge.drop { background: #fee2e2; color: #991b1b; }
-  .badge.src { background: #e0e7ff; color: #3730a3; }
-  .badge.warn { background: #fef9c3; color: #854d0e; }
-  .cites { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px; }
-  .chip { font-size: 11px; padding: 2px 8px; border-radius: 6px; background: #f1f5f9; color: #334155;
-          border: 1px solid #cbd5e1; font-family: ui-monospace, Menlo, monospace; cursor: default; }
-  .meta { margin-top: 8px; font-size: 11px; color: #94a3b8; }
-  form { display: flex; gap: 8px; padding: 12px; background: #fff; border-top: 1px solid #d7dce5; }
-  #msg { flex: 1; padding: 11px 13px; border: 1px solid #c3ccd9; border-radius: 10px; font-size: 14px; }
-  button { padding: 0 20px; border: 0; border-radius: 10px; background: #123a5e; color: #fff;
-           font-weight: 600; cursor: pointer; font-size: 14px; }
-  button:disabled { opacity: .5; cursor: default; }
-  .typing { color: #64748b; font-style: italic; }
+  :root {
+    --ink:#0f2233; --muted:#5c7186; --line:#dce3ec; --bg:#eef2f7; --card:#ffffff;
+    --brand:#0f5c8c; --brand-d:#0c4d76;
+    --ok-bg:#e3f5ea; --ok-fg:#1a7a45; --drop-bg:#fde7e7; --drop-fg:#b3261e;
+    --amber-bg:#fff5e0; --amber-fg:#8a5a00; --amber-line:#f0c469; --chip:#eef3f8;
+  }
+  * { box-sizing:border-box; }
+  html,body { height:100%; }
+  body { margin:0; font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+         background:var(--bg); color:var(--ink); display:flex; flex-direction:column; height:100vh; }
+  header.app { background:linear-gradient(180deg,#0f5c8c,#0c4d76); color:#fff; padding:10px 18px;
+    display:flex; align-items:center; gap:10px; box-shadow:0 1px 5px rgba(0,0,0,.25); z-index:5; }
+  header.app .brand { font-weight:700; font-size:16px; letter-spacing:.2px; }
+  header.app .dot { width:9px;height:9px;border-radius:50%;background:#5ee08a;box-shadow:0 0 0 3px rgba(94,224,138,.25); }
+  header.app .tag { margin-left:auto; font-size:11px; font-weight:600; background:rgba(255,255,255,.16);
+    padding:3px 9px; border-radius:20px; }
+
+  /* patient header */
+  .patient { background:var(--card); border-bottom:1px solid var(--line); padding:11px 18px;
+    display:flex; align-items:center; gap:14px; }
+  .patient .avatar { width:38px;height:38px;border-radius:50%;background:#dbe8f2;color:#0f5c8c;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px; }
+  .patient .who { font-weight:700; font-size:15px; }
+  .patient .meta { color:var(--muted); font-size:12.5px; margin-top:1px; }
+  .patient .reason { margin-left:auto; text-align:right; }
+  .patient .reason .k { font-size:10.5px; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); }
+  .patient .reason .v { font-weight:600; font-size:13px; }
+  .skeleton { color:transparent; background:linear-gradient(90deg,#e9eef4,#f4f7fa,#e9eef4);
+    background-size:200% 100%; animation:sk 1.2s infinite; border-radius:5px; }
+  @keyframes sk { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+  #log { flex:1; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:16px; }
+  .row { display:flex; }
+  .row.user { justify-content:flex-end; }
+  .row.user .bubble { background:#0f5c8c; color:#fff; max-width:70%; padding:10px 14px;
+    border-radius:14px 14px 4px 14px; font-size:14px; line-height:1.45; box-shadow:0 1px 2px rgba(0,0,0,.12); }
+
+  .brief { background:var(--card); border:1px solid var(--line); border-radius:14px;
+    max-width:820px; width:100%; box-shadow:0 2px 8px rgba(15,40,60,.07); overflow:hidden; }
+  .brief .head { display:flex; align-items:center; gap:8px; padding:11px 15px; border-bottom:1px solid var(--line);
+    flex-wrap:wrap; background:#f7fafc; }
+  .brief .head .title { font-weight:700; font-size:13.5px; }
+  .badge { font-size:11.5px; padding:3px 9px; border-radius:20px; font-weight:700; white-space:nowrap; }
+  .badge.ok { background:var(--ok-bg); color:var(--ok-fg); }
+  .badge.drop { background:var(--drop-bg); color:var(--drop-fg); }
+  .badge.src { background:#e5edf6; color:#0f5c8c; }
+  .badge.warn { background:var(--amber-bg); color:var(--amber-fg); }
+  .brief .body { padding:6px 15px 13px; }
+
+  .attention { border:1px solid var(--amber-line); background:var(--amber-bg); border-radius:10px;
+    padding:10px 12px; margin:11px 0; }
+  .attention h4 { margin:0 0 6px; font-size:12.5px; color:var(--amber-fg); display:flex; align-items:center; gap:6px; }
+  .attention ul { margin:0; padding-left:18px; }
+  .attention li { font-size:13px; color:#5a4200; margin:3px 0; line-height:1.4; }
+  .attention.clear { border-color:#bfe3cb; background:var(--ok-bg); }
+  .attention.clear h4 { color:var(--ok-fg); }
+
+  .section { margin:12px 0 4px; }
+  .section > .sh { display:flex; align-items:center; gap:7px; font-size:11.5px; font-weight:700;
+    text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin-bottom:5px; }
+  .section > .sh .n { background:var(--chip); color:var(--muted); border-radius:20px; padding:0 7px; font-size:11px; }
+  .item { padding:6px 10px; border:1px solid var(--line); border-left:3px solid #cfe0ee; border-radius:8px;
+    margin:5px 0; font-size:13.5px; line-height:1.4; display:flex; gap:8px; align-items:flex-start; }
+  .item .ic { color:#0f5c8c; flex:none; }
+  .item.amber { border-left-color:var(--amber-line); background:#fffaf0; }
+  .item.amber .ic { color:var(--amber-fg); }
+
+  .cites { display:flex; flex-wrap:wrap; gap:5px; margin-top:12px; padding-top:10px; border-top:1px dashed var(--line); }
+  .cites .lbl { font-size:11px; color:var(--muted); align-self:center; margin-right:2px; }
+  .chip { font-size:11px; padding:2px 8px; border-radius:6px; background:var(--chip); color:#33506b;
+    border:1px solid #cdddea; font-family:ui-monospace,Menlo,monospace; cursor:pointer; }
+  .chip:hover { background:#e3eef7; }
+  .meta { margin-top:9px; font-size:10.5px; color:#9fb0bf; }
+
+  /* loading stepper */
+  .steps { list-style:none; margin:6px 0; padding:0; }
+  .steps li { display:flex; align-items:center; gap:9px; font-size:13px; color:var(--muted); padding:4px 0; }
+  .steps li .b { width:16px;height:16px;border-radius:50%;border:2px solid #cdd8e2;flex:none;
+    display:flex;align-items:center;justify-content:center;font-size:10px; }
+  .steps li.active { color:var(--ink); font-weight:600; }
+  .steps li.active .b { border-color:#0f5c8c; }
+  .steps li.active .b:after { content:""; width:6px;height:6px;border-radius:50%;background:#0f5c8c; animation:pulse 1s infinite; }
+  .steps li.done { color:#1a7a45; }
+  .steps li.done .b { border-color:#1a7a45; background:#1a7a45; color:#fff; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  /* popover */
+  .pop { position:fixed; z-index:50; background:#0f2233; color:#fff; border-radius:8px; padding:9px 11px;
+    font-size:12px; max-width:320px; box-shadow:0 6px 22px rgba(0,0,0,.3); line-height:1.5; }
+  .pop .pk { font-family:ui-monospace,Menlo,monospace; color:#8fd0ff; word-break:break-all; }
+
+  /* composer */
+  .composer { border-top:1px solid var(--line); background:var(--card); padding:9px 14px 12px; }
+  .examples { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:8px; }
+  .ex { font-size:12px; padding:5px 11px; border-radius:20px; background:#eef3f8; color:#0f5c8c;
+    border:1px solid #d5e2ee; cursor:pointer; }
+  .ex:hover { background:#e2edf6; }
+  form { display:flex; gap:8px; }
+  #msg { flex:1; padding:11px 13px; border:1px solid #c3ccd9; border-radius:10px; font-size:14px; }
+  button.send { padding:0 20px; border:0; border-radius:10px; background:#0f5c8c; color:#fff; font-weight:700;
+    cursor:pointer; font-size:14px; }
+  button.send:disabled { opacity:.5; cursor:default; }
 </style>
 </head>
 <body>
-<header><span class="dot"></span> Clinical Co-Pilot <small id="sub">read-only · verify-then-flush</small></header>
+<header class="app"><span class="dot"></span><span class="brand">Clinical Co-Pilot</span>
+  <span class="tag">READ-ONLY · VERIFY-THEN-FLUSH</span></header>
+
+<div class="patient" id="phead">
+  <div class="avatar" id="pavatar">–</div>
+  <div>
+    <div class="who skeleton" id="pname">Patient Name</div>
+    <div class="meta skeleton" id="pmeta">00 yrs · —</div>
+  </div>
+  <div class="reason"><div class="k">Today</div><div class="v">Pre-visit chart review</div></div>
+</div>
+
 <div id="log"></div>
-<form id="f" autocomplete="off">
-  <input id="msg" placeholder="Ask a follow-up about this patient…">
-  <button id="send" type="submit">Send</button>
-</form>
+
+<div class="composer">
+  <div class="examples" id="examples"></div>
+  <form id="f" autocomplete="off">
+    <input id="msg" placeholder="Ask a follow-up about this patient…">
+    <button class="send" id="send" type="submit">Send</button>
+  </form>
+</div>
+
 <script>
 (function () {
   var log = document.getElementById('log');
@@ -70,71 +159,230 @@ _PAGE = """<!doctype html>
   var sendBtn = document.getElementById('send');
   var sid = new URLSearchParams(location.search).get('sid');
 
-  function el(cls, text) { var d = document.createElement('div'); d.className = cls; if (text != null) d.textContent = text; return d; }
+  var EXAMPLES = [
+    "What changed since the last visit?",
+    "Summarize the active problems.",
+    "Which medications need reconciliation?",
+    "Any allergies to confirm?"
+  ];
+  var exWrap = document.getElementById('examples');
+  EXAMPLES.forEach(function (t) {
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'ex'; b.textContent = t;
+    b.onclick = function () { input.value = t; input.focus(); };
+    exWrap.appendChild(b);
+  });
 
-  function addUser(text) {
-    var row = el('row user'); var b = el('bubble'); b.appendChild(el('brief', text));
-    row.appendChild(b); log.appendChild(row); log.scrollTop = log.scrollHeight;
+  function el(cls, text) { var d = document.createElement('div'); if (cls) d.className = cls; if (text != null) d.textContent = text; return d; }
+
+  // ---- patient header ----
+  function ageFrom(dob) {
+    if (!dob) return null;
+    var d = new Date(dob + "T00:00:00"); if (isNaN(d)) return null;
+    var n = new Date(), a = n.getFullYear() - d.getFullYear();
+    if (n.getMonth() < d.getMonth() || (n.getMonth() === d.getMonth() && n.getDate() < d.getDate())) a--;
+    return a;
+  }
+  function setHeader(p) {
+    if (!p || !p.name) return;
+    document.getElementById('pname').className = 'who';
+    document.getElementById('pname').textContent = p.name;
+    var age = ageFrom(p.birth_date);
+    var bits = [];
+    if (age != null) bits.push(age + ' yrs');
+    if (p.gender) bits.push(p.gender.charAt(0).toUpperCase() + p.gender.slice(1));
+    if (p.birth_date) bits.push('DOB ' + p.birth_date);
+    document.getElementById('pmeta').className = 'meta';
+    document.getElementById('pmeta').textContent = bits.join(' · ');
+    var initials = p.name.split(/\\s+/).filter(Boolean).map(function (w) { return w[0]; }).join('').slice(0, 2).toUpperCase();
+    document.getElementById('pavatar').textContent = initials || '–';
   }
 
-  function addTyping() {
-    var row = el('row assistant'); var b = el('bubble');
-    b.appendChild(el('brief typing', 'Reviewing the chart, verifying against evidence…'));
-    row.appendChild(b); log.appendChild(row); log.scrollTop = log.scrollHeight; return row;
+  // ---- parse the served brief text into sections ----
+  var SECTIONS = [
+    { key: 'problems',      title: 'Problems',    icon: '◉' },
+    { key: 'medications',   title: 'Medications', icon: '℞' },
+    { key: 'labs',          title: 'Labs',        icon: '⚕' },
+    { key: 'allergies',     title: 'Allergies',   icon: '⚠' },
+    { key: 'immunizations', title: 'Immunizations', icon: '✔' }
+  ];
+  function classify(line) {
+    var l = line.toLowerCase();
+    if (/confirm with patient|no allergy records|^allergy:|allergies:/.test(l)) return 'allergies';
+    if (/^immunization:|vaccine/.test(l)) return 'immunizations';
+    if (/ — |\\bmg\\b|tablet|capsule|sublingual|oral gel|injection/.test(l)) return 'medications';
+    if (/:\\s*[-0-9.]+\\s*\\S+/.test(line)) return 'labs';
+    return 'problems';
+  }
+  var HEADER_MAP = { 'problems':'problems','medications':'medications','labs':'labs',
+    'labs / observations':'labs','observations':'labs','allergies':'allergies','immunizations':'immunizations' };
+  function parseBrief(text) {
+    var out = { problems:[], medications:[], labs:[], allergies:[], immunizations:[] };
+    var cur = null;
+    (text || '').split('\\n').forEach(function (raw) {
+      var line = raw.trim();
+      if (!line) return;
+      if (/^generated without llm|^verified summary/i.test(line)) return;   // headers, not content
+      var mh = line.match(/^#{1,3}\\s+(.*)$/);
+      if (mh) { cur = HEADER_MAP[mh[1].trim().toLowerCase()] || null; return; }  // fallback section headers
+      var body = line.replace(/^[-*\\u2022]\\s*/, '').trim();
+      if (!body) return;
+      var sec = cur || classify(body);
+      if (!out[sec]) sec = 'problems';
+      out[sec].push(body);
+    });
+    return out;
   }
 
-  function renderAssistant(row, data) {
-    row.innerHTML = ''; var b = el('bubble');
-    b.appendChild(el('brief', data.brief || '(empty)'));
+  // ---- citation popover ----
+  var pop = null;
+  function closePop() { if (pop) { pop.remove(); pop = null; } }
+  document.addEventListener('click', function (e) { if (pop && !e.target.classList.contains('chip')) closePop(); });
+  function showPop(chip, cid) {
+    closePop();
+    var parts = String(cid).split(':');
+    var type = parts[0] || 'Reference', hash = parts[parts.length - 1] || cid;
+    var srcId = parts.length > 2 ? parts.slice(1, -1).join(':') : (parts[1] || '');
+    pop = el('pop');
+    pop.innerHTML = '<div style="font-weight:700;margin-bottom:4px">' + type + ' — chart record</div>' +
+      '<div>source id: <span class="pk">' + (srcId || '(synthetic)') + '</span></div>' +
+      '<div>evidence key: <span class="pk">' + hash + '</span></div>' +
+      '<div style="margin-top:5px;color:#9fd0a8">✓ this line was verified field-by-field against this record</div>';
+    document.body.appendChild(pop);
+    var r = chip.getBoundingClientRect();
+    pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8)) + 'px';
+    pop.style.top = Math.max(8, r.top - pop.offsetHeight - 8) + 'px';
+  }
+
+  // ---- render one assistant brief ----
+  function renderAssistant(card, data) {
+    setHeader(data.patient);
+    card.className = 'brief'; card.innerHTML = '';
 
     var verdicts = data.verdicts || [];
     var verified = verdicts.filter(function (v) { return v === 'pass' || v === 'flagged'; }).length;
-    var dropped = verdicts.filter(function (v) { return v === 'blocked' || v === 'refused' || (v && v.indexOf('refused') === 0); }).length;
-    var badges = el('badges');
-    badges.appendChild(Object.assign(el('badge ok'), { textContent: '\\u2713 ' + verified + ' verified' }));
-    badges.appendChild(Object.assign(el('badge drop'), { textContent: '\\u2715 ' + dropped + ' dropped' }));
-    badges.appendChild(Object.assign(el('badge src'), { textContent: data.source === 'llm' ? 'LLM + verified' : (data.source || '') }));
-    if (data.degraded) badges.appendChild(Object.assign(el('badge warn'), { textContent: 'degraded' }));
-    b.appendChild(badges);
+    var dropped = verdicts.filter(function (v) { return v === 'blocked' || (v && v.indexOf('refus') === 0); }).length;
+    var isLLM = data.source === 'llm';
 
+    var head = el('brief head');
+    head.appendChild(el('title', 'Pre-visit brief'));
+    head.appendChild(Object.assign(el('badge ok'), { textContent: '✓ ' + verified + ' verified' }));
+    head.appendChild(Object.assign(el('badge drop'), { textContent: '✕ ' + dropped + ' dropped' }));
+    head.appendChild(Object.assign(el('badge src'), { textContent: isLLM ? 'LLM + verified' : 'grounded fallback' }));
+    if (data.degraded) head.appendChild(Object.assign(el('badge warn'), { textContent: 'degraded' }));
+    card.appendChild(head);
+
+    var body = el('brief body');
+    var sections = parseBrief(data.brief);
+
+    // "Review before entering" attention panel
+    var flags = [];
+    var allergyConfirm = sections.allergies.filter(function (a) { return /confirm with patient|no allergy records/i.test(a); });
+    if (allergyConfirm.length) flags.push('Allergies not confirmed in the chart — verify directly with the patient (missing ≠ none known).');
+    if (dropped > 0) flags.push(dropped + ' statement' + (dropped === 1 ? '' : 's') + ' could not be verified against the chart and ' + (dropped === 1 ? 'was' : 'were') + ' withheld — review the record directly.');
+    if (!isLLM) flags.push('Automated grounded fallback — clinical synthesis was not performed; read the records below directly.');
+
+    var att = el('attention');
+    if (flags.length) {
+      att.appendChild(Object.assign(el('h4'), { textContent: '⚠ Review before entering' }));
+      var ul = el('ul'); flags.forEach(function (f) { ul.appendChild(el('li', f)); }); att.appendChild(ul);
+    } else {
+      att.className = 'attention clear';
+      att.appendChild(Object.assign(el('h4'), { textContent: '✓ Reviewed' }));
+      att.appendChild(el('li', 'No blocking flags — every line below is verified against the chart.'));
+    }
+    body.appendChild(att);
+
+    // sections
+    SECTIONS.forEach(function (s) {
+      var items = sections[s.key]; if (!items || !items.length) return;
+      var sec = el('section');
+      var sh = el('sh'); sh.appendChild(el(null, s.icon + ' ' + s.title));
+      sh.appendChild(Object.assign(el('n'), { textContent: items.length })); sec.appendChild(sh);
+      items.forEach(function (line) {
+        var amber = s.key === 'allergies' && /confirm with patient|no allergy records/i.test(line);
+        var it = el('item' + (amber ? ' amber' : ''));
+        it.appendChild(Object.assign(el('ic'), { textContent: amber ? '⚠' : s.icon }));
+        it.appendChild(el(null, line.replace(/^⚠\\s*/, '')));
+        sec.appendChild(it);
+      });
+      body.appendChild(sec);
+    });
+
+    // citation chips
     var cites = data.citations || [];
     if (cites.length) {
-      var wrap = el('cites');
-      cites.slice(0, 24).forEach(function (c) {
-        var parts = String(c).split(':'); var type = parts[0] || 'ref'; var short = parts[parts.length - 1] || c;
-        var chip = el('chip', type + ' \\u00b7 ' + short); chip.title = c; wrap.appendChild(chip);
+      var cw = el('cites'); cw.appendChild(el('lbl', 'Evidence:'));
+      cites.slice(0, 30).forEach(function (c) {
+        var parts = String(c).split(':'); var type = parts[0] || 'ref'; var hash = parts[parts.length - 1] || c;
+        var chip = el('chip', type + ' · ' + hash);
+        chip.onclick = function (e) { e.stopPropagation(); showPop(chip, c); };
+        cw.appendChild(chip);
       });
-      if (cites.length > 24) wrap.appendChild(el('chip', '+' + (cites.length - 24) + ' more'));
-      b.appendChild(wrap);
+      if (cites.length > 30) cw.appendChild(el('chip', '+' + (cites.length - 30)));
+      body.appendChild(cw);
     }
-
-    if (data.correlation_id) b.appendChild(el('meta', 'trace ' + data.correlation_id));
-    row.appendChild(b); log.scrollTop = log.scrollHeight;
+    if (data.correlation_id) body.appendChild(el('meta', 'trace ' + data.correlation_id));
+    card.appendChild(body);
+    log.scrollTop = log.scrollHeight;
   }
 
-  function renderError(row, msg) {
-    row.innerHTML = ''; var b = el('bubble');
-    b.appendChild(el('brief', '\\u26a0 ' + msg));
-    row.appendChild(b); log.scrollTop = log.scrollHeight;
+  // ---- progressive loading (shows the work during the ~35s call) ----
+  var LOAD_STEPS = [
+    'Authenticating the SMART session',
+    'Reading the chart (6 FHIR resources)',
+    'Verifying each claim against the evidence',
+    'Rendering the verified brief'
+  ];
+  function renderLoading(card) {
+    card.className = 'brief'; card.innerHTML = '';
+    var head = el('brief head'); head.appendChild(el('title', 'Preparing pre-visit brief…')); card.appendChild(head);
+    var body = el('brief body'); var ul = el('steps');
+    LOAD_STEPS.forEach(function (s, i) {
+      var li = el('' + (i === 0 ? 'active' : '')); li.appendChild(el('b')); li.appendChild(el(null, s));
+      ul.appendChild(li);
+    });
+    body.appendChild(ul); card.appendChild(body);
+    var lis = ul.querySelectorAll('li'); var i = 0;
+    // advance through the first three steps on a representative cadence; the last holds until the
+    // real response returns (verification of a rich chart dominates the wall-clock).
+    var timers = [];
+    [1800, 5000, 12000].forEach(function (t, k) {
+      timers.push(setTimeout(function () {
+        if (lis[k]) { lis[k].className = 'done'; lis[k].querySelector('.b').textContent = '✓'; }
+        if (lis[k + 1]) lis[k + 1].className = 'active';
+      }, t));
+    });
+    return { finish: function () { timers.forEach(clearTimeout);
+      lis.forEach(function (li) { li.className = 'done'; li.querySelector('.b').textContent = '✓'; }); } };
+  }
+
+  function addUser(text) {
+    var row = el('row user'); row.appendChild(el('bubble', text)); log.appendChild(row);
+    log.scrollTop = log.scrollHeight;
+  }
+  function renderError(card, msg) {
+    card.className = 'brief'; card.innerHTML = '';
+    var b = el('brief body'); b.style.color = '#b3261e';
+    b.appendChild(el(null, '⚠ ' + msg)); card.appendChild(b);
   }
 
   async function ask(message) {
-    if (!sid) { addUser(message); var r0 = addTyping(); renderError(r0, 'No session. Start a SMART launch at /launch.'); return; }
+    var card = el(''); log.appendChild(card);
+    if (!sid) { renderError(card, 'No session — start a SMART launch at /launch.'); return; }
     sendBtn.disabled = true; input.disabled = true;
-    var row = addTyping();
+    var loader = renderLoading(card);
     try {
-      var resp = await fetch('/chat', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sid, message: message })
-      });
+      var resp = await fetch('/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sid, message: message }) });
+      loader.finish();
       if (!resp.ok) {
         var d = await resp.json().catch(function () { return {}; });
-        renderError(row, 'HTTP ' + resp.status + ' — ' + (d.detail || 'request failed'));
+        renderError(card, 'HTTP ' + resp.status + ' — ' + (d.detail || 'request failed'));
       } else {
-        renderAssistant(row, await resp.json());
+        renderAssistant(card, await resp.json());
       }
     } catch (e) {
-      renderError(row, 'Network error: ' + e);
+      loader.finish(); renderError(card, 'Network error: ' + e);
     } finally {
       sendBtn.disabled = false; input.disabled = false; input.focus();
     }
@@ -146,7 +394,7 @@ _PAGE = """<!doctype html>
     input.value = ''; addUser(m); ask(m);
   });
 
-  // Auto-run the pre-visit brief on load (the demo essential).
+  // auto-run the pre-visit brief on load (the demo essential)
   var opening = 'Give me the pre-visit brief for this patient.';
   addUser(opening); ask(opening);
 })();

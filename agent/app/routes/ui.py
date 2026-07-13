@@ -33,7 +33,8 @@ _PAGE = """<!doctype html>
   * { box-sizing:border-box; }
   html,body { height:100%; }
   body { margin:0; font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-         background:var(--bg); color:var(--ink); display:flex; flex-direction:column; height:100vh; }
+         background:var(--bg); color:var(--ink); display:flex; flex-direction:column;
+         height:100vh; overflow:hidden; }
   header.app { background:linear-gradient(180deg,#0f5c8c,#0c4d76); color:#fff; padding:10px 18px;
     display:flex; align-items:center; gap:10px; box-shadow:0 1px 5px rgba(0,0,0,.25); z-index:5; }
   header.app .brand { font-weight:700; font-size:16px; letter-spacing:.2px; }
@@ -55,13 +56,14 @@ _PAGE = """<!doctype html>
     background-size:200% 100%; animation:sk 1.2s infinite; border-radius:5px; }
   @keyframes sk { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
 
-  #log { flex:1; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:16px; }
+  #log { flex:1; min-height:0; overflow-y:auto; padding:18px; display:flex;
+    flex-direction:column; gap:16px; overscroll-behavior:contain; }
   .row { display:flex; }
   .row.user { justify-content:flex-end; }
   .row.user .bubble { background:#0f5c8c; color:#fff; max-width:70%; padding:10px 14px;
     border-radius:14px 14px 4px 14px; font-size:14px; line-height:1.45; box-shadow:0 1px 2px rgba(0,0,0,.12); }
 
-  .brief { background:var(--card); border:1px solid var(--line); border-radius:14px;
+  .brief { flex:none; background:var(--card); border:1px solid var(--line); border-radius:14px;
     max-width:820px; width:100%; box-shadow:0 2px 8px rgba(15,40,60,.07); overflow:hidden; }
   .brief .head { display:flex; align-items:center; gap:8px; padding:11px 15px; border-bottom:1px solid var(--line);
     flex-wrap:wrap; background:#f7fafc; }
@@ -116,7 +118,8 @@ _PAGE = """<!doctype html>
   .pop .pk { font-family:ui-monospace,Menlo,monospace; color:#8fd0ff; word-break:break-all; }
 
   /* composer */
-  .composer { border-top:1px solid var(--line); background:var(--card); padding:9px 14px 12px; }
+  .composer { flex:none; border-top:1px solid var(--line); background:var(--card);
+    padding:9px 14px 12px; }
   .examples { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:8px; }
   .ex { font-size:12px; padding:5px 11px; border-radius:20px; background:#eef3f8; color:#0f5c8c;
     border:1px solid #d5e2ee; cursor:pointer; }
@@ -174,10 +177,9 @@ _PAGE = """<!doctype html>
   var sid = new URLSearchParams(location.search).get('sid');
 
   var EXAMPLES = [
-    "What changed since the last visit?",
-    "Summarize the active problems.",
-    "Which medications need reconciliation?",
-    "Any allergies to confirm?"
+    "What are the patient's active problems?",
+    "What medications is the patient currently taking?",
+    "What are the most recent lab results?"
   ];
   var exWrap = document.getElementById('examples');
   EXAMPLES.forEach(function (t) {

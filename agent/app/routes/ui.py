@@ -243,11 +243,17 @@ _PAGE = """<!doctype html>
     var parts = String(cid).split(':');
     var type = parts[0] || 'Reference', hash = parts[parts.length - 1] || cid;
     var srcId = parts.length > 2 ? parts.slice(1, -1).join(':') : (parts[1] || '');
+    // Build with DOM + textContent (never innerHTML): evidence ids flow from external FHIR
+    // data, so they are treated as untrusted — textContent neutralizes any markup in them.
     pop = el('pop');
-    pop.innerHTML = '<div style="font-weight:700;margin-bottom:4px">' + type + ' — chart record</div>' +
-      '<div>source id: <span class="pk">' + (srcId || '(synthetic)') + '</span></div>' +
-      '<div>evidence key: <span class="pk">' + hash + '</span></div>' +
-      '<div style="margin-top:5px;color:#9fd0a8">✓ this line was verified field-by-field against this record</div>';
+    var title = el(null, type + ' — chart record'); title.style.cssText = 'font-weight:700;margin-bottom:4px';
+    pop.appendChild(title);
+    var r1 = el(null); r1.appendChild(document.createTextNode('source id: '));
+    r1.appendChild(elt('span', 'pk', srcId || '(synthetic)')); pop.appendChild(r1);
+    var r2 = el(null); r2.appendChild(document.createTextNode('evidence key: '));
+    r2.appendChild(elt('span', 'pk', hash)); pop.appendChild(r2);
+    var note = el(null, '✓ this line was verified field-by-field against this record');
+    note.style.cssText = 'margin-top:5px;color:#9fd0a8'; pop.appendChild(note);
     document.body.appendChild(pop);
     var r = chip.getBoundingClientRect();
     pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8)) + 'px';

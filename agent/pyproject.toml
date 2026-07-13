@@ -26,6 +26,13 @@ dev = [
     # never imports it.
     "selenium>=4.20",
 ]
+# Opt-in browser deps for the pure-frontend /app UI smoke test (tests/test_ui_smoke.py).
+# NOT in the default install, so `pip install -e .` + `pytest` stays browser-free and the
+# smoke test self-skips (pytest.importorskip). To run it: `pip install -e ".[ui]"` then
+# `playwright install chromium` then `pytest -m ui`.
+ui = [
+    "playwright>=1.40",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -33,6 +40,7 @@ asyncio_mode = "auto"
 filterwarnings = ["error::DeprecationWarning"]
 markers = [
     "live: hits the live deployed OpenEMR / drives Selenium (opt-in via RUN_LIVE=1)",
+    "ui: pure-frontend /app smoke test; drives Playwright against a mocked /chat (opt-in — see [ui] extra)",
 ]
 
 [tool.setuptools.packages.find]

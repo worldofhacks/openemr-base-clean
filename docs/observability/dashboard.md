@@ -121,6 +121,15 @@ tokens, raw authorization headers, or trace content into dashboard documentation
 The D16 content policy remains **pending owner finalize sign-off**; D5/F-C.1 accountability and
 §7 aggregate telemetry do not depend on that approval.
 
+CLI/API validation on 2026-07-12 (synthetic data only) produced two concrete drill-down points:
+
+- **Dataset:** `clinical-copilot-offline-evals` → run ID
+  `4b7d5fdf-dfd4-4981-bc32-2e84cceeca21` (`eval-gate-d16-premerge`), 10/10 linked item traces
+  with `offline_gate_passed` and verifier-accounting scores.
+- **Live request:** trace `e81c974b3aa5aac45c631c5fb0c5c866`, a fresh José SMART launch
+  with content enabled: exact provider prompt and served brief, raw structured answer metadata,
+  6/6 FHIR content spans, 14/14 verifier claim spans, and the six request-level scores above.
+
 ### Metric semantics
 
 - **Error is not fallback.** A successfully served deterministic fallback remains a completed

@@ -2,13 +2,13 @@
 
 > The synthesized, sequential narrative of the project — what was set out, decided, found, changed, and shipped, in order and with the *why*. Regenerated from `docs/DEVLOG.md` + git + the ADRs. Every claim cites a decision (D#), finding (F#), research note (R#), or commit so it's traceable. For the raw dated record see `docs/DEVLOG.md`; for the decisions themselves see `docs/planning/DECISIONS.md` and `AUDIT.md`.
 >
-> Last synthesized: 2026-07-09.
+> Last synthesized: 2026-07-12.
 
 ---
 
 ## The arc, in one paragraph
 
-The task was to build an AI *Clinical Co-Pilot* on top of a real EHR — a read-only, multi-turn agent that gives a primary-care physician a **verified, cited pre-visit brief** in the 90 seconds between exam rooms. We started from a pruned fork of OpenEMR master (`ef3d490`), spent a disciplined planning day turning the brief into research-backed ADRs (D1–D13), then deployed the fork publicly on Railway — pathfinding through a builder that rejected standard Dockerfile instructions and a healthcheck that false-failed a healthy app. Before writing a line of agent code we ran a **read-only forensic audit** (the PRD's hard gate), whose most important output was not a vulnerability but a discovery: the inherited FHIR data layer *lies* in specific, enumerable ways (a status-inversion bug renders every completed vaccine as "patient refused", F-D.1) and OpenEMR's audit log *cannot attribute* an agent's calls (F-C.1/F-C.2). Those findings reshaped the architecture — the verification layer (§5) went from plausible to load-bearing, and the observability layer (D5) became the HIPAA system of record. We finalized a §-anchored `ARCHITECTURE.md`, decomposed it into a build plan, and shipped the first slice of the agent (E1: skeleton + a *real* readiness endpoint + correlation-ID observability, test-first). Along the way we reversed four decisions when evidence demanded it — VPS→Railway, voice cut, the api_log join withdrawn, and self-hosted→cloud Langfuse — each documented forward rather than smoothed over. Where it stands: the fork is live, the plan is set, E1 is green, and the agent build is on the Early critical path.
+The task was to build an AI *Clinical Co-Pilot* on top of a real EHR — a read-only, multi-turn agent that gives a primary-care physician a **verified, cited pre-visit brief** in the 90 seconds between exam rooms. We started from a pruned fork of OpenEMR master (`ef3d490`), turned the brief into research-backed ADRs, and ran a read-only forensic audit before agent code. Its decisive discoveries were that inherited FHIR fields can misstate clinical status (F-D.1) and OpenEMR cannot attribute API calls to the OAuth client/scopes (F-C.1/F-C.2). Those findings made the deterministic verification layer (§5) and Langfuse accountability record (D5/§7) load-bearing. The finished sidecar now launches from one SMART chart button, performs six delegated read-only FHIR calls, makes the model answer in typed cited claims, verifies each claim, and renders only verified fields; it has durable session pins, a scrollable UI, grounded prompts, deployment hardening, load/cost evidence, alerts, Bruno flows, and a 10-case deploy gate. D16 adds a default-off content policy for synthetic-only trace debugging plus PHI-free live scores and Langfuse-native scored Dataset runs, explicitly pending owner architecture-finalize sign-off. The live José path, full suite, offline eval gate, both remotes, and Railway readiness are the submission evidence; real PHI remains out of scope.
 
 ---
 
@@ -63,9 +63,19 @@ In parallel, seeding prod bit back. The cross-instance DB import had **overwritt
 
 Then the first application code: **E1**, built test-first with observability *first* (per §7). E1.1 a FastAPI skeleton with **fail-fast** typed config (a missing secret fails at boot, not as a request-time 500). E1.2 a `/health` liveness endpoint and a **real** `/ready` that probes hard dependencies (OpenEMR FHIR metadata, Anthropic, session store) → 503, and treats Langfuse as a soft dependency → 200 `degraded` — no unconditional 200. E1.3 JSON logging + a correlation-ID middleware that threads an ID through every log line and outbound call. 19 tests green, and — the satisfying part — verified against the *live* OpenEMR, where `/ready` correctly returned 503 with genuine per-probe results. (An aside: the host's Python 3.14 was broken, so the venv runs on 3.12.)
 
-## Phase 6 — Where it stands (2026-07-09)
+## Phase 6 — Early build acceleration (2026-07-09 to 2026-07-10)
 
-The submission repo was wired up on the Gauntlet labs GitLab (after SSH proved a dead end, HTTPS + a PAT pushed and auto-created the project), and this devlog was bootstrapped. The planning chain is complete and gated at every stage; the fork is live; E1 is green; the agent build (E2 SMART/OAuth client next) is on the Early critical path.
+The submission repo was wired to the Gauntlet GitLab mirror and the agent then moved through the full Early chain: delegated SMART authorization and a clinician/patient session pin; typed six-tool FHIR fan-out; stable EvidencePacket IDs; direct Anthropic tool use and prompt caching; the deterministic verifier and verify-then-flush renderer; Langfuse accountability; the mixed-category eval gate; and a Railway `/chat` serving path. Each layer was landed test-first, and audit findings such as medication dosage shape (F-D.2), empty allergies (F-D.5), inactive conditions (F-D.6), and missing OAuth attribution (F-C.1) became executable contracts rather than documentation-only warnings.
+
+## Phase 7 — Final: make the live path demonstrable (2026-07-10 to 2026-07-12)
+
+Final work closed the gap between a safe backend and a credible physician demo. The all-blocked D13 path was bounded so a synthesis question could never dump a full chart; resolution questions were taught to cite inactive Condition records without claiming “cured.” PostgreSQL made the clinician/patient pin durable, while the bearer token intentionally stayed in-process so a restart fails closed into SMART re-launch (§3a). The UI gained citation chips, correctly separated labs from medications, made the conversation scroll on desktop and phone, and replaced speculative prompts with three questions proven against José’s actual FHIR chart. The obsolete SMART client was disabled, leaving one EHR launcher. Operational deliverables added the Langfuse dashboard/alerts, bounded k6 baselines, Bruno authenticated flow, real cost analysis, deployment hardening, and the social post. Deferred items—UC2–UC4, SSE, verifier v2 depth, and encrypted multi-replica token persistence—were named rather than disguised.
+
+## Phase 8 — D16: observability that can answer “what happened?” (2026-07-12)
+
+The first Langfuse integration proved accountability and timings but intentionally omitted clinical content, so a reviewer could not see what the model saw or compare its typed answer with the physician-visible verified brief. D16 separates those concerns. The production-correct policy stays minimum-necessary: `LANGFUSE_LOG_CONTENT=false`, with hashed patient/user accountability and PHI-free metrics. The Synthea-only Railway demo opts in through an environment flag. A single Langfuse v4 mask controls prompt, normalized tool result, submitted claim, raw completion, and served-brief disclosure; a malformed mask value fails closed, and score/export failures never touch serving (CXR-13/§6).
+
+The same decision makes the eval claim visible in the tool instead of merely asserted. The ten deterministic cases are stable Dataset items, and each configured run reruns the real case pipeline as a linked trace with pass/fail and verifier accounting scores. Offline pytest/JSON remains the deploy authority, so Langfuse downtime cannot change a gate. The proof is concrete: 238 tests passed, the offline suite passed 10/10, Dataset run `4b7d5fdf-dfd4-4981-bc32-2e84cceeca21` contains ten scored traces, and José’s live request is trace `e81c974b3aa5aac45c631c5fb0c5c866` with exact prompt/verified output, all six FHIR contents, fourteen verifier claims, and six PHI-free request scores. D16 and the matching §7 architecture addendum remain proposed until the owner records architecture-finalize sign-off.
 
 ---
 
@@ -88,7 +98,7 @@ These reversals are the proof the process was *reasoned*, not lucky — each is 
 ## Read it deeper
 
 - Every dated entry with evidence: `docs/DEVLOG.md`.
-- The decisions and their full defenses: `docs/planning/DECISIONS.md` (D1–D15).
+- The decisions and their full defenses: `docs/planning/DECISIONS.md` (D1–D16; D16 pending owner finalize sign-off).
 - The findings with file:line evidence: `AUDIT.md` (F-#).
 - The sourced external facts: `docs/planning/RESEARCH.md` (R1–R12).
 - The binding contract: `ARCHITECTURE.md` (§1–§11).

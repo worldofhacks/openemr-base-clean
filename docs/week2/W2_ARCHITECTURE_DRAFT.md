@@ -16,9 +16,12 @@ idempotency, and reads it: born-digital PDFs by their exact text layer, true sca
 local Tesseract OCR — both yielding words + coordinates (W2-D3). A **LangGraph
 supervisor** (W2-D2 — W1 D6's own invalidation clause fired) routes work to two workers.
 The **intake-extractor** sends page images to Claude (the W1 provider is also the VLM —
-zero new PHI processors) and receives strict-schema fields; every field must **ground**
-in the OCR/text layer to earn its citation and bounding box — ungrounded or disagreeing
-fields render UNSUPPORTED with a "verify against source document" flag. The
+zero new PHI processors) and its JSON output is validated into **strict Pydantic models**
+(`LabPdfExtraction`, `IntakeFormExtraction` — PRD req 2; malformed output is a hard
+reject, raw VLM output never bypasses the schema); every validated field must then
+**ground** in the OCR/text layer to earn its citation and bounding box — ungrounded or
+disagreeing fields render UNSUPPORTED with a "verify against source document" flag.
+Pydantic proves the shape; grounding proves the content is on the page. The
 **evidence-retriever** runs hybrid BM25 + bge-small dense retrieval over a three-document
 guideline corpus — the VA/DoD Diabetes/Hypertension/Lipids CPGs, license-verified
 US-government works that literally are "agreed clinical practices" (W2-D4, W2-R2) — and
@@ -76,16 +79,28 @@ deps: Tesseract binary, ONNX runtime for bge-small. New env: `COHERE_API_KEY`.
   typed state (extracted fields, citations, partial answers — W2-R1); handoff record
   {correlation_id, turn, supervisor_decision, reason_code, worker, input_ref,
   output_ref, handoff_ts}; W1 direct loop survives inside workers.
-- **Extraction schemas (canonical contracts, PRD req 2)** — lab_pdf: test_name, value,
-  unit, reference_range, collection_date, abnormal_flag, source_citation. intake_form:
-  demographics, chief_concern, current_medications, allergies, family_history,
-  source_citation. Raw VLM output never bypasses schema.
+- **Extraction schemas (canonical contracts, PRD req 2) — Pydantic v2, explicitly.**
+  All Week 2 typed contracts are Pydantic models in `agent/app/` (same stack as W1 D3),
+  each with validation tests (a named PRD deliverable):
+  `LabPdfExtraction{test_name, value, unit, reference_range, collection_date,
+  abnormal_flag, source_citation}`; `IntakeFormExtraction{demographics, chief_concern,
+  current_medications, allergies, family_history, source_citation}`;
+  `CitationV2{source_type, source_id, page_or_section, field_or_chunk_id,
+  quote_or_value}`; `EvidenceSnippet{source_id, section, chunk_id, quote, score}`;
+  `HandoffRecord{correlation_id, turn, supervisor_decision, reason_code, worker,
+  input_ref, output_ref, handoff_ts}`; `GroundedField{value, page, bbox, grounded:
+  bool}`. Raw VLM output never bypasses schema validation; schema changes from W1
+  carry a migration note (PRD engineering req).
 - **Grounding verifier** — per-field: locate the extracted value in the words+boxes
   layer; found → citation + bbox; not found / disagreement → UNSUPPORTED render.
   Confidence = grounding agreement (binary), never VLM self-report.
 - **Guideline corpus** — VA/DoD trio (Diabetes 2023, HTN 2020 pinned, Lipids 2025) +
   pocket cards; manifest with provenance/license/version; verbatim chunks;
-  do-not-ingest list documented (W2-R2).
+  do-not-ingest list documented (W2-R2). **Sizing (curation rule, not scraping):**
+  ingest the recommendation/management sections + pocket cards, skip evidence-review
+  and methodology appendices — the trio yields several hundred retrievable chunks
+  (the CPGs are 100+ page documents), which is small-and-applicable per the PRD
+  without being thin. Corpus size and chunk count are recorded in the manifest.
 - **Hybrid retriever + reranker** — rank-bm25 + bge-small-en-v1.5 (ONNX/FastEmbed) →
   Cohere Rerank (production key; PHI-free queries; down → un-reranked hybrid scores,
   degraded).

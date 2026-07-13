@@ -35,8 +35,11 @@
 ## W2-D3. Vision: VLM proposes, local OCR grounds — **locked**
 - Claude is the VLM. Same provider, same assumed BAA. Zero new PHI processors.
 - Tesseract OCR runs locally per page: text + word coordinates. $0, no egress.
-- Every VLM field must locate its value in the OCR layer. Found: citation + bbox.
-  Not found or disagreement: rendered UNSUPPORTED, "verify against source document."
+- VLM output validates into strict **Pydantic v2** models (`LabPdfExtraction`,
+  `IntakeFormExtraction` — PRD req 2; same stack as W1 D3); malformed = hard reject.
+- Every validated field must locate its value in the OCR/text layer. Found: citation +
+  bbox. Not found or disagreement: rendered UNSUPPORTED, "verify against source
+  document." Pydantic proves shape; grounding proves the content is on the page.
 - Confidence = grounding agreement, binary per field. VLM self-report is never trusted.
 - This is W1 verify-then-flush extended to pixels. One mechanism answers invention,
   confidence inflation, and the required overlay.

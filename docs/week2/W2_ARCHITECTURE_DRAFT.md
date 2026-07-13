@@ -207,7 +207,8 @@ recovers it — breaker state is logged and visible on the dashboard.
 
 New metrics: ingestion latency, per-field extraction pass rate, grounding-agreement
 rate, retrieval hit rate, rerank scores + model/version, routing decisions, per-worker
-latency, eval pass rate per category. New alerts: extraction failure rate, retrieval
+latency, eval pass rate per category, queue depth, and **event retries** (W1 retry
+counts carried + retry count per outbound W2 call class — a named PRD dashboard metric). New alerts: extraction failure rate, retrieval
 latency, eval-regression >5% in any category. SLOs set from measured baselines at MVP
 (W2-O2; working targets: ingestion p95 ≤ 30s/doc, retrieval p95 ≤ 2s); W2 baselines
 recorded and compared against W1's (shared-path regression check, PRD). All outbound
@@ -297,6 +298,16 @@ reproducible from repo alone (backup req; RPO 0 via git).
 - Submission host is **GitLab** (deliverable table): the GitLab mirror must be current
   at every checkpoint; README documents every required env var (incl. `COHERE_API_KEY`,
   Langfuse keys, SMART client, `OE_*`) and the W1-baseline vs W2-multimodal split.
+- **Interpretation notes (recorded so they read as decisions, not drift):** (1) the
+  engineering requirements say "extend your ARCHITECTURE.md" — written assuming one
+  continuing document; under the week-scoped convention that intent is satisfied by
+  THIS document becoming root `W2_ARCHITECTURE.md` while W1's file stays frozen.
+  (2) The p.5 "Core Deliverables" list has ten bullets, but p.4 states "a critic
+  agent is extension work, not core" and the MVP table names five items — we read
+  the first five as core and the rest as the stretch tier. Contingency if graders
+  enforce all ten: the critic agent is the first stretch item built (smallest lift —
+  it wraps the existing verifier as a graph node), click-to-source is already
+  substantially delivered by the overlay + W1 popovers.
 - W1 debt carried intentionally: token persistence across restarts lands early in W2
   build (demo reliability); /ready knee re-measured with new deps.
 
@@ -325,13 +336,18 @@ VLM page calls dominate ingestion; LLM dominates turns — verified against trac
 
 ## §9 Build order (→ /tasks-gen against checkpoints)
 
-- **MVP (Tue 11:59 PM):** schemas + fixtures → attach_and_extract (store, hash, read
-  layer) → grounding verifier → LangGraph skeleton (supervisor + workers, handoff
-  records) → corpus build + hybrid retrieval + Cohere → citation contract v2 + minimal
-  overlay → 50-case gate + hook + CI PHI check → deploy + README W1/W2 split.
+- **MVP (Tue 11:59 PM — the PRD's MVP table is the checklist):** schemas + fixtures →
+  attach_and_extract (store, hash, read layer) → grounding verifier → LangGraph
+  skeleton (supervisor + workers, handoff records) → corpus build + hybrid retrieval +
+  Cohere → citation contract v2 + minimal overlay (source-grounded UI) → 50-case gate
+  + hook + CI PHI check → deploy + README W1/W2 split → **initial latency/cost report**
+  (measured from first traces; PRD MVP row 5) → **walkthrough video** (PRD MVP row 5;
+  required content per the deliverable table: document upload, extraction, evidence
+  retrieval, citations, eval results, observability).
 - **Early (Thu):** overlay polish, follow-up question flows, W2 dashboard panels +
-  alerts, baselines vs W1, token persistence debt, Bruno + OpenAPI.
-- **Final (Sun noon):** hardening, cost/latency report from traces, demo video, cuts
+  alerts, baselines vs W1, token persistence debt, Bruno + OpenAPI, updated video.
+- **Final (Sun noon):** hardening, FULL cost/latency report (dev spend, projected
+  production cost, p50/p95, bottleneck analysis — §8a), final demo video, cuts
   documented, final live E2E.
 
 ## §10 Requirement trace matrix (every graded item → its section; nothing silently dropped)

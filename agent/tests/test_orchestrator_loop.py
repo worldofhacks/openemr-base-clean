@@ -112,6 +112,13 @@ def test_system_block_carries_cache_control():
     assert blocks[-1]["cache_control"] == {"type": "ephemeral"}  # cross-session cache breakpoint
 
 
+def test_system_prompt_guides_resolution_to_verifiable_condition_claims():
+    prompt = build_system_blocks()[0]["text"].lower()
+    assert "inactive/resolved" in prompt
+    assert "condition claim" in prompt and "present=true" in prompt
+    assert "never translate" in prompt and "cured" in prompt
+
+
 def test_patient_prefix_block_is_cached_and_question_is_separate():
     content = build_initial_user_content(_packet(), "Summarize for the visit.")
     prefix, question = content[0], content[1]

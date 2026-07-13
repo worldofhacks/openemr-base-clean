@@ -106,6 +106,19 @@ def test_fallback_is_deterministic():
     assert render_packet_fallback(packet) == render_packet_fallback(packet)
 
 
+def test_general_fallback_has_hard_record_and_character_caps():
+    packet = build_evidence_packet(PID, {"get_conditions": _ok("get_conditions", [
+        ConditionRecord(resource_id=f"c-{i}", display=f"Condition {i}", clinical_status="active")
+        for i in range(30)
+    ])})
+
+    out = render_packet_fallback(packet)
+
+    assert sum(line.startswith("- ") for line in out.splitlines()) <= 8
+    assert len(out) <= 2_500
+    assert "additional" in out.lower() and "omitted" in out.lower()
+
+
 def test_resolution_followup_fallback_is_scoped_bounded_and_honest():
     conditions = [
         ConditionRecord(

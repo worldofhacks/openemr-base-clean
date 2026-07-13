@@ -118,12 +118,29 @@ deps: Tesseract binary, ONNX runtime for bge-small. New env: `COHERE_API_KEY`.
 
 ## §3 The two lifecycles
 
-**Ingestion.** upload → hash (duplicate → return existing lineage, create nothing) →
-store source in OpenEMR → build words+boxes layer → supervisor routes to extractor →
-VLM extraction → schema validation (hard reject on violation) → per-field grounding →
-verified fields persist append-only (documents API artifact + vitals API where
-applicable) with source lineage → extraction report to physician: grounded fields cited
-+ boxed, ungrounded fields flagged UNSUPPORTED.
+**Ingestion (asynchronous job — required by the "extraction status" endpoint and the
+queue-depth dashboard metric).** `POST /documents` accepts the upload, hashes
+(duplicate → return existing lineage, create nothing), stores the source in OpenEMR,
+enqueues an extraction job, and returns `{document_id, status_url}` immediately.
+The job (in-process queue; depth exported as a metric): build words+boxes layer →
+supervisor routes to extractor → VLM extraction → Pydantic validation (hard reject on
+violation) → per-field grounding → verified fields persist append-only (documents API
+artifact + vitals API where applicable) with source lineage → status flips to
+complete/failed. `GET /documents/{id}/status` reports
+{queued | extracting | grounding | writing | complete | failed(reason)}. Extraction
+report to physician: grounded fields cited + boxed, ungrounded fields flagged
+UNSUPPORTED.
+
+**Write-interface discrepancy note (say it before graders do).** The engineering
+requirements name "FHIR writes" as an interface; the core requirement permits derived
+facts "as appropriate FHIR resources **or OpenEMR records**." This fork exposes **no
+FHIR write** for DocumentReference/Observation (validated 3-way, W2-R5: route
+enumeration, FHIR_README, FHIR_API.md:728 — `$docref` generates CCDs, it does not
+accept uploads). The EHR-write interface therefore exists exactly as required — typed
+Pydantic contract, correlation ID propagated, lineage recorded — with the standard
+REST documents/vitals API as transport (`POST /api/patient/:pid/document`,
+`POST /api/patient/:pid/encounter/:eid/vital`), which is W1 D9's documented fallback
+firing as designed (W2-D1).
 
 **Question.** physician asks ("what changed? what should I pay attention to?") →
 supervisor decides per turn: chart facts (W1 EvidencePacket path), document facts
@@ -147,6 +164,21 @@ context; UNSUPPORTED and refusal behaviors identical to W1's discipline.
 - Scope delta said plainly: read-only → read + narrow create (`api:oemr` document/vital
   scopes; verify the D14-class client-enable step at build).
 
+## §4a Data model & authority ledger (PRD: owner, lineage, access, validation per type)
+
+| Artifact | Authoritative owner | Lineage | Access | Validation |
+|---|---|---|---|---|
+| Source document (uploaded file) | **OpenEMR** (documents store) | upload event {correlation_id, uploader, content_hash, ts} | clinician via OpenEMR; agent read via API | doc_type ∈ {lab_pdf, intake_form}; size/page caps |
+| Extracted lab observations | Agent until written; **OpenEMR** after write | source document id + page + bbox per field | agent write-once; clinician review/void in OpenEMR | `LabPdfExtraction` (Pydantic) + grounding |
+| Intake facts | same as above | same | same | `IntakeFormExtraction` (Pydantic) + grounding |
+| Guideline chunks + index | **Agent service** (rebuildable from repo corpus + manifest) | manifest {source_url, license, version, ingest_date} | read-only at runtime; rebuilt by build script | verbatim-chunk rule; manifest license check |
+| Citation records | **Agent** (immutable, per response) | claim → CitationV2 → evidence id | read-only; exported in traces (PHI-free ids) | `CitationV2` (Pydantic); incomplete = no render |
+| Handoff records | **Agent** (append-only log) | correlation_id chain | ops read | `HandoffRecord` (Pydantic) |
+| Eval golden set | **Repo** (git — RPO 0) | authored fixtures, versioned | PR-reviewed changes only | case schema + boolean rubrics |
+
+No silent overwrites anywhere: every write is a create; duplicates resolve to existing
+lineage via content hash (W2-D1). One owner per type, stated above.
+
 ## §5 Failure modes (detection + recovery, PRD engineering reqs)
 
 | Failure | Behavior |
@@ -163,6 +195,14 @@ context; UNSUPPORTED and refusal behaviors identical to W1's discipline.
 | Injection text in a document | Data-not-instructions handling; schema-bound output; append-only bound; eval-cased |
 | /ready | Extended deps (doc storage, index, reranker) with degraded-not-binary status |
 
+Every failure mode above is identified by a named structured log event (inventory in
+§6) carrying the correlation_id, and its recovery action gets a W2 runbook entry
+appended to `docs/observability/runbooks.md` (living ops doc). Repeated outbound
+failures trip a **circuit breaker** per dependency (VLM, reranker): after N consecutive
+failures the dependency is marked open, calls short-circuit to the degraded path
+(D13-style for the VLM; un-reranked scores for the reranker), and a half-open probe
+recovers it — breaker state is logged and visible on the dashboard.
+
 ## §6 Observability, SLOs, ops (extends W1 §7)
 
 New metrics: ingestion latency, per-field extraction pass rate, grounding-agreement
@@ -177,6 +217,32 @@ alone. OpenAPI 3.0 spec published for new endpoints; Bruno collection extended
 (upload, extraction status, retrieval, full flow). Cost: VLM page calls capped per doc
 (~$0.005–0.01/page planning number, W2-R4), measured from traces.
 
+## §6a Structured log events, CI pipeline, privacy scrubbing (PRD engineering reqs)
+
+**Log-event inventory (extends the W1 schema — same structured format, no parallel
+convention; searchable by case_id, event_id, correlation_id; all PHI-free):**
+`doc.ingestion.started`, `doc.ingestion.completed`, `doc.ingestion.failed(reason)`,
+`extraction.field.outcome` (field name, grounded: bool — never the value),
+`extraction.schema.violation`, `retrieval.query.executed` (hit/miss, k, latency),
+`rerank.executed` (model+version, latency), `worker.handoff` (HandoffRecord),
+`writeback.created` (record type, lineage ids), `eval.run.outcome` (per category),
+`breaker.state.changed` (dependency, open/half-open/closed).
+
+**CI pipeline per PR (extends the W1 eval gate):** build → ruff lint + mypy typecheck →
+pytest with coverage → Pydantic schema-validation tests → supervisor-worker contract
+tests → extraction regression tests (fixtures + stubbed VLM) → OpenAPI contract tests
+(spec ↔ implementation) → dependency audit (pip-audit) → security scan (semgrep) →
+PHI-detection check over logs/fixtures/eval artifacts → eval gate (50 cases, category
+thresholds) → deploy on green. The PR-blocking Git Hook (committed hooksPath + setup
+doc) runs the fast subset locally; GH Actions is the enforcement graders can't bypass.
+
+**Privacy scrubbing (stated approach, verified in CI):** traces and logs carry ids,
+hashes, counts, booleans, and latencies — never patient identifiers, raw document
+text, or extracted clinical values (`extraction.field.outcome` logs the field NAME and
+grounding boolean only). The Langfuse content switch stays OFF (W1 D16). Eval fixtures
+use synthetic documents only; the cost report aggregates spend without clinical
+content. The CI PHI-detection check enforces all of this on every PR.
+
 ## §7 Eval gate v2 (the graded hard gate)
 
 50 in-repo synthetic cases (fixture documents authored from Synthea data + degraded
@@ -188,6 +254,28 @@ covers extraction (clean + degraded + disagreement), retrieval (hit + empty), ci
 refusals, missing-data, duplicate upload, injection-bearing documents. Every category
 maps to a named realistic one-line regression it catches (defense prep §8). Golden set
 reproducible from repo alone (backup req; RPO 0 via git).
+
+## §7a Testing strategy (PRD: documented four-way split; every test names its failure mode)
+
+- **Unit-tested:** Pydantic schema validators (each model), grounding matcher (found /
+  not-found / disagreement), chunker + manifest license check, citation builder
+  (incomplete-citation rejection), content-hash idempotency, breaker state machine.
+- **Integration-tested (fixtures + stubs, no live APIs in CI):** full
+  ingestion-to-answer path on fixture documents (clean scan, degraded scan,
+  born-digital, junk-text-layer, duplicate upload, injection-bearing) with stubbed
+  VLM/reranker responses; supervisor-worker contract tests; OpenAPI contract tests;
+  writeback path against a mocked documents API.
+- **Golden-set evaluated (agent behavior):** the 50 boolean-rubric cases — extraction
+  accuracy, citation presence, factual consistency, refusals, missing-data, PHI-free
+  logging.
+- **Not tested, and why:** live VLM output quality drift (nondeterministic vendor
+  surface — mitigated by grounding + evals, not unit tests); Cohere rerank internals
+  (external service — contract-tested at our boundary, stubbed in CI); OpenEMR
+  upstream behavior beyond our call contracts (W1 audit covered it; out of scope to
+  re-test a system we don't modify); true load beyond the k6 baselines (bounded
+  baseline runs only, stated in §6).
+- Every test carries a `guards:` annotation naming the failure mode it prevents (W1
+  convention, PRD requirement).
 
 ## §8 Risks & owned tradeoffs
 
@@ -201,8 +289,39 @@ reproducible from repo alone (backup req; RPO 0 via git).
   plainly (W2-D1).
 - Corpus deliberately three documents: small-and-applicable per PRD; manifest makes
   additions one-line; do-not-ingest list prevents licensing traps (W2-R2).
+- Stretch-tier positioning (PRD p.4 vs p.5 list reconciled): core = the first five
+  deliverables. **Click-to-source is substantially delivered by core work** — W1
+  citation popovers + the required bbox overlay + server-rendered page preview; any
+  polish beyond that is stretch. Critic agent, third doc type, trend chart, contextual
+  retrieval: deferred with dated cut entries unless Final-core is green early.
+- Submission host is **GitLab** (deliverable table): the GitLab mirror must be current
+  at every checkpoint; README documents every required env var (incl. `COHERE_API_KEY`,
+  Langfuse keys, SMART client, `OE_*`) and the W1-baseline vs W2-multimodal split.
 - W1 debt carried intentionally: token persistence across restarts lands early in W2
   build (demo reliability); /ready knee re-measured with new deps.
+
+## §8a Backup & recovery (PRD: automatic + manual, RPO/RTO)
+
+- **Eval golden set + corpus manifest + fixtures:** live in the repo — reproducible
+  from a clone alone (RPO 0, RTO = clone time). The vector index is a build artifact,
+  rebuilt from the corpus script (RTO minutes).
+- **Source documents + derived records:** live in OpenEMR's MySQL/documents store,
+  inheriting the deployment's Railway backup posture (documented in DEPLOYMENT.md).
+  Manual recovery if automated backup fails: re-upload source files and re-run
+  `attach_and_extract` — idempotent by content hash, so recovery cannot duplicate
+  (RPO = last backup or last upload set; RTO = re-ingestion time, minutes per doc).
+- **Traces/observability:** Langfuse Cloud retention per W1 D5 posture; loss of traces
+  never affects serving (soft dependency).
+
+**Eval-artifact deliverables named:** the dataset ships with expected behavior per
+case, boolean rubrics, **judge configuration** (pinned model + pinned boolean prompts
+for the two rubric checks that need an LLM judge; all other checks deterministic), and
+committed **results** per run.
+
+**Cost & latency report contents (Final):** actual dev spend from traces + Railway
+billing, **projected production cost** at the §9-tier volumes, measured p50/p95 for
+ingestion/extraction/retrieval/full-turn, and a **bottleneck analysis** (expected:
+VLM page calls dominate ingestion; LLM dominates turns — verified against traces).
 
 ## §9 Build order (→ /tasks-gen against checkpoints)
 
@@ -214,6 +333,38 @@ reproducible from repo alone (backup req; RPO 0 via git).
   alerts, baselines vs W1, token persistence debt, Bruno + OpenAPI.
 - **Final (Sun noon):** hardening, cost/latency report from traces, demo video, cuts
   documented, final live E2E.
+
+## §10 Requirement trace matrix (every graded item → its section; nothing silently dropped)
+
+| Requirement | Where |
+|---|---|
+| Two doc types (lab_pdf, intake_form) | §2 schemas, §3 ingestion |
+| Supervisor + 2 workers, logged handoffs | §2 graph, W2-D2 |
+| Hybrid RAG + rerank, small corpus | §2 retriever/corpus, W2-D4 |
+| 50-case golden set, boolean rubrics, judge config, results | §7, §8a |
+| PR-blocking eval CI + observable deployed demo | §6a CI, §7, §6 |
+| Citation contract shape + bbox overlay | §2 composer, W2-D6, W2-D3 |
+| Store source in OpenEMR; derived facts as FHIR **or OpenEMR records** | §3 (discrepancy note), W2-D1, W2-R5 |
+| Typed contracts every interface + migration notes + data authority | §2 (Pydantic inventory), §4a ledger |
+| SLOs, queues, retries, timeouts, circuit breakers | §3 (async job), §5 (breakers), §6 (SLOs/timeouts) |
+| Correlation ID everywhere; trace reconstructable from ID alone | §6, W2-D2 handoffs |
+| Structured logs by case/event/correlation id; event inventory; PHI-free | §6a |
+| Dashboards incl. queue depth, decision outcomes, per-category eval rate | §6 |
+| CI: build, lint/typecheck, tests, coverage, dep audit, security scan | §6a |
+| Testing strategy four-way + not-tested-and-why + failure mode per test | §7a |
+| Failure modes: identify-in-logs + recovery | §5 + §6a events + runbooks |
+| Bruno collection: upload, status, retrieval, full flow | §6 |
+| Baselines W2 vs W1 comparison | §6 |
+| /health + /ready degraded with new deps | §5 |
+| Alerts incl. eval-regression >5% w/ response actions | §6 + runbooks |
+| OpenAPI 3.0 committed + contract tests | §6, §6a |
+| Integration tests, fixtures + stubs, no live APIs in CI | §7a |
+| Data model owner/lineage/access/validation | §4a |
+| Privacy audit + scrubbing + CI PHI check | §6a |
+| Backup/recovery + RPO/RTO; golden set repo-reproducible | §8a |
+| GitLab repo + setup guide + env-var docs + deployed link | §8 note, §9 MVP |
+| Cost & latency report (dev spend, projection, p50/p95, bottlenecks) | §8a |
+| Demo video 3-5 min | §9 Final |
 
 ## Open items (→ /arch-finalize)
 

@@ -16,6 +16,12 @@
   vitals-class records. No update. No delete. Nothing clinician-authored is touchable.
 - Idempotent: content-hash on files, deterministic IDs on facts. Re-upload creates
   nothing. That is the PRD round-trip requirement.
+- Discrepancy note (owner-flagged 2026-07-13): the PRD's engineering section says
+  "FHIR writes"; its core requirement says "FHIR resources **or OpenEMR records**."
+  This fork has no FHIR write for our targets (W2-R5, 3-way validated), so the write
+  interface meets every requirement placed on "FHIR writes" (typed contract,
+  correlation ID, lineage) over the sanctioned standard-REST transport. Stated
+  explicitly in the architecture (§3 note), not silently substituted.
 - New safety claim: injection worst case is a quarantined, machine-authored,
   source-linked record a human can void. Never a silent edit. Say plainly: scopes
   widened from read-only to read + narrow create.

@@ -75,15 +75,148 @@ def _cost_details(detail: dict, model: str) -> dict[str, float] | None:
         return None
 
 
+_CONTENT_MARKER = "__copilot_marked_content_v1__"
+_CONTENT_VALUE = "value"
+_REDACTED_CONTENT = "<redacted clinical trace content>"
+_CONTENT_DETAIL_KEYS = frozenset({
+    "prompt",
+    "raw_completion",
+    "raw_submit_claims",
+    "content",
+    "claim",
+    "tool_input",
+})
+
+
+def _marked_content(value: Any) -> dict[str, Any]:
+    """Mark a value as clinical trace content so one client-level mask owns disclosure (D16).
+
+    Content is deliberately retained in the in-process RequestTrace for the synthetic demo and
+    wrapped only at the export boundary. The Langfuse mask below then makes the default-off rule
+    impossible to bypass by adding a new observation mapping without a separate redaction path.
+    """
+    return {_CONTENT_MARKER: True, _CONTENT_VALUE: value}
+
+
+def _mask_marked(value: Any, *, enabled: bool) -> Any:
+    """Recursively unwrap or redact only our marked envelopes.
+
+    Langfuse invokes its mask once for an entire input/output/metadata value, so marked content
+    can be nested beside a PHI-free summary. Exact built-in container checks avoid invoking
+    hostile mapping/sequence hooks; any exception is handled by the public mask fail-closed.
+    """
+    if type(value) is dict:
+        if value.get(_CONTENT_MARKER) is True:
+            return value.get(_CONTENT_VALUE) if enabled else _REDACTED_CONTENT
+        return {key: _mask_marked(item, enabled=enabled) for key, item in value.items()}
+    if type(value) is list:
+        return [_mask_marked(item, enabled=enabled) for item in value]
+    if type(value) is tuple:
+        return [_mask_marked(item, enabled=enabled) for item in value]
+    return value
+
+
+def _content_mask(log_content: bool):
+    """Build the Langfuse SDK mask. Only the literal boolean True opts content in (D16/D5)."""
+    enabled = log_content is True
+
+    def mask(*, data: Any, **_kwargs: Any) -> Any:
+        try:
+            return _mask_marked(data, enabled=enabled)
+        except Exception:
+            # Masking is both a safety and a soft-dependency boundary: malformed content must
+            # neither escape nor make an otherwise valid request fail.
+            return _REDACTED_CONTENT
+
+    return mask
+
+
+def _content_free_detail(detail: dict) -> dict:
+    """Keep operational metadata while preventing raw content from bypassing the SDK mask."""
+    return {key: value for key, value in detail.items() if key not in _CONTENT_DETAIL_KEYS}
+
+
+def _step_content(step: TraceStep, *, served_output: Any | None) -> tuple[Any | None, Any | None]:
+    """Map RequestTrace content contracts to marked Langfuse observation input/output fields."""
+    detail = step.detail
+    if step.name == "llm.complete":
+        generation_input = (
+            _marked_content(detail["prompt"]) if "prompt" in detail else None
+        )
+        generation_output = (
+            _marked_content(served_output) if served_output is not None else None
+        )
+        return generation_input, generation_output
+    if step.name.startswith("fhir.") and "content" in detail:
+        return None, _marked_content(detail["content"])
+    if step.name.startswith("tool."):
+        tool_input = _marked_content(detail["tool_input"]) if "tool_input" in detail else None
+        tool_output = _marked_content(detail["content"]) if "content" in detail else None
+        return tool_input, tool_output
+    if step.name == "verify" and "claim" in detail:
+        return _marked_content(detail["claim"]), None
+    return None, None
+
+
+def _step_metadata(step: TraceStep) -> dict:
+    """Operational fields plus marked raw model artifacts used only for debugging."""
+    metadata = _content_free_detail(step.detail)
+    if step.name == "llm.complete":
+        for key in ("raw_completion", "raw_submit_claims"):
+            if key in step.detail:
+                metadata[key] = _marked_content(step.detail[key])
+    return metadata
+
+
+def _verification_summary(trace: RequestTrace) -> tuple[str, list[dict[str, Any]]]:
+    """Return the PHI-free root summary and the exact D16 live-score payloads."""
+    verdicts = tuple(str(verdict).lower() for verdict in trace.verdicts)
+    submitted = len(verdicts)
+    verified = sum(1 for verdict in verdicts if verdict in {"pass", "flagged"})
+    dropped = submitted - verified
+    source = "llm" if trace.source == "llm" else "fallback"
+    drop_rate = dropped / submitted if submitted else 0.0
+    summary = (
+        f"submitted {submitted} · verified {verified} · dropped {dropped} · "
+        f"source={source}"
+    )
+    scores = [
+        {"name": "claims_submitted", "value": submitted, "data_type": "NUMERIC"},
+        {"name": "claims_verified", "value": verified, "data_type": "NUMERIC"},
+        {"name": "claims_dropped", "value": dropped, "data_type": "NUMERIC"},
+        {"name": "verification_drop_rate", "value": drop_rate, "data_type": "NUMERIC"},
+        {"name": "source", "value": source, "data_type": "CATEGORICAL"},
+        {"name": "degraded", "value": bool(trace.degraded), "data_type": "BOOLEAN"},
+    ]
+    return summary, scores
+
+
+def _emit_scores(client: Any, trace: RequestTrace, *, summary: str) -> None:
+    """Attach PHI-free trace scores; one failed score can never fail export or serving (§6)."""
+    _, scores = _verification_summary(trace)
+    for score in scores:
+        try:
+            client.score_current_trace(
+                **score,
+                metadata={"content_summary": summary},
+            )
+        except Exception:
+            # Scores are an enhancement to an already-emitted trace. Counting this as a dropped
+            # trace would be false and, more importantly, could affect the serving soft boundary.
+            continue
+
+
 class LangfuseSink:
     """Maps a RequestTrace to a real Langfuse trace (D5 system-of-record). Lazy/defensive: the
     SDK is imported and the client built on first emit; a missing credential or SDK error
     RAISES so the tracer can count the drop (§6 soft dependency — the tracer swallows)."""
 
-    def __init__(self, *, host: str | None, public_key: str | None, secret_key: str | None):
+    def __init__(self, *, host: str | None, public_key: str | None, secret_key: str | None,
+                 log_content: bool = False):
         self._host = host
         self._public_key = public_key
         self._secret_key = secret_key
+        self._log_content = log_content is True
         self._client: Any = None
 
     def _get_client(self) -> Any:
@@ -93,7 +226,11 @@ class LangfuseSink:
             from langfuse import Langfuse  # lazy: never imported unless configured
 
             self._client = Langfuse(
-                public_key=self._public_key, secret_key=self._secret_key, host=self._host)
+                public_key=self._public_key,
+                secret_key=self._secret_key,
+                host=self._host,
+                mask=_content_mask(self._log_content),
+            )
         return self._client
 
     def emit(self, trace: RequestTrace) -> None:
@@ -103,6 +240,7 @@ class LangfuseSink:
         from langfuse import propagate_attributes
 
         # PHI-minimized metadata; client_id + scopes in the clear (accountability, not PHI, F-C.1).
+        content_summary, _ = _verification_summary(trace)
         metadata = {
             "client_id": trace.client_id,
             "exercised_scopes": list(trace.exercised_scopes),
@@ -122,6 +260,7 @@ class LangfuseSink:
             # exhausted its retries; llm_calls>1 ⇒ the tool loop iterated (retried work).
             "llm_calls": sum(1 for s in trace.steps if s.name == "llm.complete"),
             "fhir_reads": sum(1 for s in trace.steps if s.name.startswith("fhir.")),
+            "content_summary": content_summary,
         }
         tags = [
             f"client:{trace.client_id}",
@@ -130,6 +269,10 @@ class LangfuseSink:
         ]
         now_ns = time.time_ns()
         total_ns = int(sum(s.latency_ms for s in trace.steps) * 1_000_000)
+        root_output: dict[str, Any] = {"summary": content_summary}
+        served_output = getattr(trace, "served_output", None)
+        if served_output is not None:
+            root_output["served_output"] = _marked_content(served_output)
         # Trace-level attributes propagate to every observation created within this context (v4).
         with propagate_attributes(user_id=trace.user_hash, session_id=trace.correlation_id,
                                   trace_name="previsit-brief", tags=tags, metadata=metadata):
@@ -137,25 +280,34 @@ class LangfuseSink:
             # request duration (the tree is built at request end, so wall-clock spans are ~0).
             with client.start_as_current_observation(
                 name="previsit-brief", as_type="span", metadata=metadata,
+                output=root_output,
                 level="ERROR" if trace.degraded else "DEFAULT",
                 status_message=trace.fallback_kind, end_on_exit=False,
             ) as root:
                 for st in trace.steps:
                     end_ns = now_ns + int(st.latency_ms * 1_000_000)
+                    observation_input, observation_output = _step_content(
+                        st, served_output=served_output)
+                    operational_detail = _step_metadata(st)
                     if st.name == "llm.complete":
                         # A native GENERATION carries model + token usage + cost, so Langfuse's
                         # native cost/latency widgets work (metadata alone cannot power them).
                         obs = client.start_observation(
                             name="llm", as_type="generation", model=trace.model,
+                            input=observation_input,
+                            output=observation_output,
                             usage_details=_usage_details(st.detail),
                             cost_details=_cost_details(st.detail, trace.model),
-                            metadata={"latency_ms": st.latency_ms, **st.detail})
+                            metadata={"latency_ms": st.latency_ms, **operational_detail})
                     else:
                         obs = client.start_observation(
                             name=st.name, as_type="span",
+                            input=observation_input,
+                            output=observation_output,
                             level="ERROR" if st.detail.get("status") == "failed" else "DEFAULT",
-                            metadata={"latency_ms": st.latency_ms, **st.detail})
+                            metadata={"latency_ms": st.latency_ms, **operational_detail})
                     obs.end(end_time=end_ns)      # give the observation its real duration
+                _emit_scores(client, trace, summary=content_summary)
             root.end(end_time=now_ns + total_ns)  # trace duration = summed step latency
         # No synchronous flush on the serving path (CXR-13, §6 latency isolation): the SDK
         # batches spans and exports them on its own background thread, so a slow or unreachable
@@ -196,7 +348,7 @@ class TraceBuilder:
         self._verdicts.append(str(verdict))
 
     def finish(self, *, model: str, source: str, degraded: bool,
-               fallback_kind: str | None) -> RequestTrace:
+               fallback_kind: str | None, served_output: str | None = None) -> RequestTrace:
         try:
             cost = estimate_cost(self._usage, model)
         except KeyError:
@@ -220,6 +372,7 @@ class TraceBuilder:
             source=source,
             degraded=degraded,
             fallback_kind=fallback_kind,
+            served_output=served_output,
         )
         self._tracer._emit(trace)
         return trace

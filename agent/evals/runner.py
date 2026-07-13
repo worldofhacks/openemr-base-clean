@@ -14,6 +14,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from evals.cases import EVAL_CASES
+from evals.langfuse_publish import publish_if_configured
 from evals.schema import EvalResult, run_case
 
 
@@ -52,6 +53,12 @@ def main() -> int:
     cats = Counter(r.category for r in results)
     print(f"\ncategories: {dict(cats)}")
     print(f"{summary['passed']}/{summary['total']} eval cases passed → {out}")
+    # D16 / §8: Langfuse is an additive soft sink. The offline summary and exit code above
+    # remain canonical even if the SDK itself fails unexpectedly outside the publisher seam.
+    try:
+        publish_if_configured(EVAL_CASES, results)
+    except Exception:
+        pass
     return 0 if summary["failed"] == 0 else 1
 
 

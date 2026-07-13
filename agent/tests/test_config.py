@@ -26,6 +26,7 @@ _ALL_KEYS = list(REQUIRED_ENV) + [
     "LANGFUSE_HOST",
     "LANGFUSE_PUBLIC_KEY",
     "LANGFUSE_SECRET_KEY",
+    "LANGFUSE_LOG_CONTENT",
 ]
 
 
@@ -46,6 +47,12 @@ def test_config_loads_when_all_required_present(monkeypatch):
     # Secrets must never leak via repr/str (no hardcoded secrets, D-secrets).
     assert "test-client-secret" not in repr(settings)
     assert "sk-ant-test" not in repr(settings)
+    assert settings.langfuse_log_content is False  # D16: production-safe default preserves D5
+
+
+def test_langfuse_content_logging_requires_explicit_opt_in(monkeypatch):
+    settings = _load_from_env(monkeypatch, {**REQUIRED_ENV, "LANGFUSE_LOG_CONTENT": "true"})
+    assert settings.langfuse_log_content is True
 
 
 @pytest.mark.parametrize("missing", sorted(REQUIRED_ENV.keys()))

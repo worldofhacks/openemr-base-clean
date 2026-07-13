@@ -6,9 +6,10 @@ ordered steps with per-step latency, tokens + cost, the verification verdicts, a
 degradation class (so fallback-rate is alertable). It is the system-of-record because
 OpenEMR's api_log omits client_id and scopes (F-C.1) and cannot be reliably joined (F-C.2).
 
-D5 PHI minimization: patient and user identifiers are stored as one-way hashes, never raw —
-`client_id` and `exercised_scopes` are accountability metadata, not PHI, and are kept in the
-clear so the trace can actually answer "which client, acting as whom, touched this record".
+D5 PHI minimization: patient and user accountability identifiers are stored as one-way hashes,
+never raw. D16 may retain synthetic clinical content inside the in-process value object, but the
+Langfuse client mask redacts it by default. `client_id` and `exercised_scopes` are accountability
+metadata, not PHI, and stay clear so the trace can answer which client exercised which scopes.
 """
 
 from __future__ import annotations
@@ -86,4 +87,7 @@ class RequestTrace:
     source: str                      # "llm" | "deterministic_fallback"
     degraded: bool
     fallback_kind: str | None = None
+    # D16 opt-in observability payload. The trace value object retains the physician-visible
+    # verified answer; LangfuseSink's centralized mask decides whether it may leave process.
+    served_output: str | None = None
     metadata: dict = field(default_factory=dict)

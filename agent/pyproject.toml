@@ -14,7 +14,7 @@ dependencies = [
     "anthropic>=0.40",
     # Observability (§7, D5-rev). Lazy-imported behind app/observability's sink seam;
     # a soft dependency — its absence/failure degrades the trace, never serving.
-    "langfuse>=2.0",
+    "langfuse>=4.13,<5",
     # Postgres session store (D-O2 / §3a). Async driver for the durable, multi-replica
     # (clinician, patient) pin; lazy-imported in the composition root so it is never a hard
     # import dependency for the route tests (which inject a fake service).

@@ -38,7 +38,8 @@ def _build_tracer(settings: Settings) -> RequestTracer:
         sink = LangfuseSink(
             host=str(settings.langfuse_host) if settings.langfuse_host else None,
             public_key=settings.langfuse_public_key.get_secret_value(),
-            secret_key=settings.langfuse_secret_key.get_secret_value())
+            secret_key=settings.langfuse_secret_key.get_secret_value(),
+            log_content=settings.langfuse_log_content)
     else:
         sink = NullTraceSink()  # observability optional (§6 soft dep) — serving is unaffected
     return RequestTracer(sink)
@@ -62,6 +63,11 @@ async def _pg_connect(dsn: str):
     import asyncpg
 
     return await asyncpg.connect(dsn)
+
+
+def _fhir_trace_content(result) -> dict:
+    """Exact typed FHIR tool result for D16 tracing; the sink mask owns disclosure policy."""
+    return result.model_dump(mode="json")
 
 
 class AgentServices:
@@ -175,10 +181,13 @@ class AgentServices:
         def _record_fhir(name: str, latency_ms: float, result) -> None:
             # One accountability span per outbound FHIR read (CXR-05): resource, latency, and
             # tri-state outcome — so the trace localizes FHIR work and every PHI read is logged,
-            # including timeouts/budget failures. No resource id is emitted (D5 PHI-minimization).
+            # including timeouts/budget failures. Operational fields remain PHI-minimized; the
+            # exact typed result is a D16-marked payload that exports only under the synthetic
+            # deployment's explicit content opt-in.
             builder.step(f"fhir.{name}", latency_ms=latency_ms,
                          status=result.status.value, records=len(result.records),
-                         missing_reason=result.missing_reason or "")
+                         missing_reason=result.missing_reason or "",
+                         content=_fhir_trace_content(result))
 
         fanout = await run_previsit_fanout(
             client, session.patient_id,

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import time
+from copy import deepcopy
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
@@ -307,7 +308,8 @@ class Orchestrator:
                     for verdict in result.verdicts:
                         builder.record_verdict(verdict)
                     builder.finish(model=self.provider.model, source=result.source,
-                                   degraded=result.degraded, fallback_kind=result.fallback_kind)
+                                   degraded=result.degraded, fallback_kind=result.fallback_kind,
+                                   served_output=result.text)
                 except Exception:  # a trace must never break the (already-decided) refusal
                     builder.tracer.dropped += 1
             return result
@@ -316,7 +318,8 @@ class Orchestrator:
         if builder is not None:
             try:
                 builder.finish(model=self.provider.model, source=result.source,
-                               degraded=result.degraded, fallback_kind=result.fallback_kind)
+                               degraded=result.degraded, fallback_kind=result.fallback_kind,
+                               served_output=result.text)
             except Exception:  # a trace must never break the answer
                 builder.tracer.dropped += 1
         return result
@@ -363,7 +366,10 @@ class Orchestrator:
 
             t0 = time.monotonic()
             try:
-                resp = await self.provider.complete(system=system, messages=messages, tools=tool_defs)
+                # Freeze the exact provider payload before later tool-loop turns append to
+                # `messages`; D16 content logging must show what this generation actually saw.
+                prompt = deepcopy({"system": system, "messages": messages, "tools": tool_defs})
+                resp = await self.provider.complete(**prompt)
             except LLMRequestTooLarge:
                 raise  # bubble up to trim-and-retry (must precede the LLMClientError clause)
             except LLMUnavailable as exc:
@@ -379,10 +385,16 @@ class Orchestrator:
             if self.cost_cap is not None:
                 self.cost_cap.record(resp.usage, self.provider.model)
             if builder is not None:
+                raw_completion = _assistant_content(resp)
+                submit_payload = next(
+                    (tu.input for tu in resp.tool_uses() if tu.name == "submit_claims"), None)
                 builder.step("llm.complete", latency_ms=(time.monotonic() - t0) * 1000,
                              input_tokens=resp.usage.input_tokens, output_tokens=resp.usage.output_tokens,
                              cache_read_tokens=resp.usage.cache_read_input_tokens,
-                             stop_reason=resp.stop_reason)
+                             stop_reason=resp.stop_reason, prompt=prompt,
+                             raw_completion=raw_completion,
+                             **({"raw_submit_claims": submit_payload}
+                                if submit_payload is not None else {}))
                 builder.record_usage(resp.usage)
 
             if resp.stop_reason != "tool_use":
@@ -396,7 +408,8 @@ class Orchestrator:
                 if builder is not None:
                     builder.record_verdict(str(result.verdict.value))
                     builder.step("verify", latency_ms=(time.monotonic() - t_claim) * 1000,
-                                 verdict=result.verdict.value, claim_type="TextClaim")
+                                 verdict=result.verdict.value, claim_type="TextClaim",
+                                 claim=claim.model_dump(mode="json"))
                 verdicts = [str(result.verdict.value)]
                 # T-E6b (2): when NOTHING verified (every claim BLOCKED/REFUSED → no verified
                 # line renders), serve the honest D13 grounded render — never an empty (or
@@ -433,7 +446,8 @@ class Orchestrator:
                             # One span per verification verdict (§7): the trace shows every §5
                             # decision — verdict + claim type — so pass/block rate is drillable.
                             builder.step("verify", latency_ms=(time.monotonic() - t_claim) * 1000,
-                                         verdict=r.verdict.value, claim_type=type(claim).__name__)
+                                         verdict=r.verdict.value, claim_type=type(claim).__name__,
+                                         claim=claim.model_dump(mode="json"))
                     verdicts = [str(r.verdict.value) for r in results_v]
                     # T-E6b (2): all claims BLOCKED/REFUSED → nothing verified → serve the honest
                     # D13 grounded render (real records, "confirm manually"), NOT an empty (or
@@ -461,7 +475,8 @@ class Orchestrator:
                 content, is_error = await tools.dispatch(tu.name, tu.input)
                 if builder is not None:
                     builder.step(f"tool.{tu.name}", latency_ms=(time.monotonic() - t_tool) * 1000,
-                                 status="error" if is_error else "ok")
+                                 status="error" if is_error else "ok",
+                                 tool_input=tu.input, content=content)
                 results.append({"type": "tool_result", "tool_use_id": tu.id,
                                 "content": content, "is_error": is_error})
             messages.append({"role": "user", "content": results})

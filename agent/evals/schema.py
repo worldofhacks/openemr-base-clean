@@ -42,7 +42,19 @@ class EvalResult:
     detail: str
 
 
-async def run_case(case: EvalCase) -> EvalResult:
+@dataclass(frozen=True)
+class EvalExecution:
+    """A case result plus its in-process outcome for optional evaluator instrumentation.
+
+    The canonical export continues to serialize only ``EvalResult``. The outcome is retained
+    solely so an additive sink can derive structured scores without changing results.json.
+    """
+
+    result: EvalResult
+    outcome: Any = None
+
+
+async def run_case_with_outcome(case: EvalCase) -> EvalExecution:
     try:
         outcome = case.run()
         if inspect.isawaitable(outcome):
@@ -50,7 +62,13 @@ async def run_case(case: EvalCase) -> EvalResult:
         passed = bool(case.check(outcome))
         detail = case.expected if passed else f"expected: {case.expected}"
     except Exception as exc:  # a case that errors is a FAIL, never a silent pass
+        outcome = None
         passed = False
         detail = f"ERROR {type(exc).__name__}: {exc}"
-    return EvalResult(case_id=case.id, category=case.category.value, guards=case.guards,
-                      passed=passed, detail=detail)
+    result = EvalResult(case_id=case.id, category=case.category.value, guards=case.guards,
+                        passed=passed, detail=detail)
+    return EvalExecution(result=result, outcome=outcome)
+
+
+async def run_case(case: EvalCase) -> EvalResult:
+    return (await run_case_with_outcome(case)).result

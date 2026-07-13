@@ -26,34 +26,87 @@
   [langgraph-supervisor-py](https://github.com/langchain-ai/langgraph-supervisor-py),
   [Langfuse LangChain callbacks](https://langfuse.com/integrations/frameworks/langchain)
 
-## W2-R2. Guideline corpus sourcing — recommendation, license-gated
+## W2-R2. Guideline corpus sourcing — DEEP-RESEARCHED 2026-07-13 (5-agent pass, live-fetched policies)
 
-- Cleanest sources are US-government works (public domain): **USPSTF recommendation
-  statements**, **CDC clinical guidance** (immunization schedules, chronic-disease
-  pages), and **VA/DoD Clinical Practice Guidelines** (diabetes, hypertension,
-  lipids — strong match to the Synthea panel and the W1 PCP user).
-- **Flag:** ADA Standards of Care and JAMA-published guideline reports are
-  copyrighted — exclude, or link-only without ingesting text. Each ingested document
-  gets a provenance + license line in the corpus manifest; license check is part of
-  corpus build, not an afterthought.
-- **Impact:** W2-D4 corpus = gov-source set; manifest with provenance committed to
-  repo; corpus rebuildable from repo (backup requirement).
+**Ingestable (with conditions), matched to the panel:**
+- **VA/DoD Clinical Practice Guidelines** (healthquality.va.gov): US-government works,
+  VA copyright policy states government-produced materials "are not copyright
+  protected." Full free PDFs verified for **Diabetes (2023), Hypertension (2020,
+  update in progress — pin the ingested version), Lipids (2025)**, plus provider
+  summaries and pocket cards (good chunking units). Best PRD fit: these literally are
+  "agreed clinical practices" an office adopts. Caveat: embedded third-party figures
+  not individually cleared — strip figures, ingest text.
+- **CDC clinical content** (adult immunization schedule, chronic-disease guidance):
+  public domain by default with named conditions — attribute ("Source: CDC"),
+  non-endorsement disclaimer, no substantive alteration, note free availability, no
+  logos, exclude non-PHIL images. Covers immunizations (USPSTF formally refers
+  immunizations to CDC/ACIP).
+- **USPSTF recommendation statements**: NOT clean public domain — AHRQ's copyright
+  notice *permits* public reproduction/redistribution "without any changes,"
+  noncommercial, with citation of the USPSTF page. Verbatim chunking is compliant
+  (and matches our quote-based citation contract, W2-D6). Use the site HTML full
+  text; **never the JAMA-branded PDFs** (AMA reserves all rights "including text and
+  data mining, AI training"). Topics verified: prediabetes/T2D screening (2021),
+  hypertension screening (2021), statin use (2022).
+- Optional: MedlinePlus **health topic summaries only** (PD subset; never A.D.A.M.
+  encyclopedia or ASHP monographs — NLM explicitly bans ingesting those into health
+  IT systems).
 
-## W2-R3. Reranker + embeddings — verified
+**DO-NOT-INGEST list (all verified all-rights-reserved):** ADA Standards of Care
+(explicitly bans "text or data mining, machine learning" without permission); AHA/ACC
+guidelines (per-item permission fees, $100–$550); JNC 8 (AMA/JAMA copyright); GINA;
+KDIGO (CC BY-NC-ND but conflicting terms + embedded AMA figures). Default posture:
+no explicit license = do not ingest.
 
-- Cohere Rerank: current per-search pricing ~$0.001–0.0025 depending on version;
-  **Trial keys are free (~1,000 calls/month) but explicitly not for production use**;
-  production keys are pay-as-you-go. Rate limits on trial tiers are real but fine for
-  demo scale. For a graded one-week demo, a trial key is defensible for development
-  with a documented production-key path; usage is tiny either way.
-- PHI posture holds: queries are condition/test terms only (W2-D4 contract), corpus
-  is public guidance — Cohere never receives PHI.
-- Embeddings: local sentence-transformers is the recommended default for the dense
-  leg — small corpus, zero vendor, zero egress question, no rate limits; hosted
-  embeddings add a vendor for no capability we need at this scale. (Owner decision
-  in the arch-draft interview.)
-- Sources: [Cohere pricing](https://cohere.com/pricing),
-  [Cohere pricing docs](https://docs.cohere.com/docs/how-does-cohere-pricing-work)
+**Impact on W2-D4:** corpus = VA/DoD CPG trio + CDC immunization/chronic guidance +
+USPSTF statements, manifest with per-document provenance/license/version committed to
+repo; repo README carries the CDC/AHRQ attribution + non-endorsement disclaimers;
+verbatim chunks only (also what the citation contract wants).
+Key sources: [AHRQ/USPSTF copyright notice](https://www.uspreventiveservicestaskforce.org/uspstf/recommendation-topics/copyright-notice),
+[CDC agency materials policy](https://www.cdc.gov/other/agencymaterials.html),
+[VA copyright policy](https://department.va.gov/copyright-policy/),
+[VA/DoD CPG index](https://www.healthquality.va.gov/),
+[ADA license page](https://diabetesjournals.org/journals/pages/license),
+[JAMA copyright](https://jamanetwork.com/pages/copyright),
+[MedlinePlus reuse](https://medlineplus.gov/about/using/usingcontent/)
+
+## W2-R3. Retrieval stack (embeddings + reranker) — DEEP-RESEARCHED 2026-07-13
+
+**Embeddings — recommendation: `BAAI/bge-small-en-v1.5` (MIT, 33M params, ~130MB),
+run via FastEmbed/ONNX (no torch) + `rank-bm25` for the sparse leg.**
+- Evidence: the BGE family significantly outperformed medical-specific models AND
+  higher-MTEB-ranked 7-8B models on clinical retrieval (Myers et al., JAMIA 2025,
+  3,488 configurations, p<0.05) — leaderboard rank does not transfer to clinical
+  text; BGE does.
+- At 50–200 clean guideline chunks, model deltas wash out; the levers that matter are
+  hybrid BM25+dense, the reranker, and chunking/query phrasing (the clinical study
+  saw ~9-point swings from query phrasing alone).
+- ONNX-without-torch keeps Railway RSS low (the torch runtime, not the weights,
+  dominates memory).
+- Rejected: jina-v3/v4 (CC-BY-NC), embeddinggemma (Gemma ToU, not MIT/Apache),
+  bge-m3 (2.2GB, overkill), hosted APIs (a vendor + egress question for no quality
+  gain at this scale — OpenAI 3-small ≈ bge-base tier).
+
+**Reranker — REVISED recommendation: local-primary.**
+- Cohere trial terms verified verbatim: free, **1,000 calls/month, Rerank 10 req/min**,
+  and "not permitted to be used for production or commercial purposes"
+  (cohere.com/pricing). A graded PoC is defensibly evaluation use, BUT our deployed
+  public app + repeated CI eval runs sit uncomfortably close to "persistently
+  hosted," and 10 req/min could throttle a 50-case eval pass.
+- Local pick: **`mixedbread-ai/mxbai-rerank-base-v1`** (Apache-2.0, 184M, DeBERTa —
+  standard architecture, no trust_remote_code, ships quantized ONNX; beats
+  bge-reranker-base on BEIR evals). CPU latency for ~30 candidates: sub-second class
+  for small/base cross-encoders.
+- Posture: local reranker in the deployed path = the PRD's "or an equivalent
+  reranker," zero vendor, zero rate-limit risk during the graded CI regression test,
+  zero egress questions. Cohere documented as the managed-production upgrade path.
+- PHI note (either path): queries are condition/test terms + corpus is public
+  guidance; no PHI leaves regardless.
+Key sources: [Cohere rate limits](https://docs.cohere.com/docs/rate-limits),
+[Cohere pricing FAQ](https://cohere.com/pricing),
+[bge-small-en-v1.5 card](https://huggingface.co/BAAI/bge-small-en-v1.5),
+[JAMIA clinical retrieval study](https://arxiv.org/html/2409.15163v1),
+[mxbai-rerank-base-v1](https://huggingface.co/mixedbread-ai/mxbai-rerank-base-v1)
 
 ## W2-R4. Extraction cost, OCR reality, SLO baselining — planning numbers
 
@@ -70,7 +123,14 @@
 - SLOs: set from first measured baselines (W2-O2); working targets ingestion p95
   ≤ 30s/doc, retrieval p95 ≤ 2s, revised at MVP with real numbers.
 
-## W2-R5. OpenEMR write surface — VERIFIED from this fork's code (decisive)
+## W2-R5. OpenEMR write surface — VALIDATED 3-way (owner challenged; re-verified 2026-07-13)
+
+Validation sources, all in-fork: (1) exhaustive write-route enumeration — POST/PUT exist
+only for Patient, Organization, Practitioner (+ `$docref` op, + bulk-status DELETE);
+(2) FHIR_README.md documents `$docref` as "Generate Clinical Summary (CCD)";
+(3) Documentation/api/FHIR_API.md:728 — "The `$docref` operation creates clinical summary
+documents (C-CDA)" — and the route handler itself calls `getAll()`. No FHIR upload path
+for DocumentReference, no FHIR Observation write, in this fork.
 
 - **FHIR write for our targets does not exist.**
   `POST /fhir/DocumentReference/$docref`

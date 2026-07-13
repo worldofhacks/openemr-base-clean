@@ -28,7 +28,7 @@ from app.middleware.correlation import correlation_id_var
 from app.observability.langfuse import LangfuseSink, NullTraceSink, RequestTracer
 from app.observability.trace import AccountabilityContext
 from app.orchestrator.loop import BriefResult, Orchestrator, ToolRegistry
-from app.session.store import InMemorySessionStore, Session
+from app.session.store import PostgresSessionStore, Session
 from app.tools.fhir_client import FhirClient
 from app.tools.fhir_tools import run_previsit_fanout
 
@@ -55,6 +55,15 @@ def _patient_header(packet) -> dict[str, str] | None:
     return header or None
 
 
+async def _pg_connect(dsn: str):
+    """Open one asyncpg connection for a single session-store operation. asyncpg is imported
+    lazily so it is never a hard import dependency for the route tests, which inject a fake
+    service and never construct AgentServices."""
+    import asyncpg
+
+    return await asyncpg.connect(dsn)
+
+
 class AgentServices:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -67,8 +76,16 @@ class AgentServices:
             fhir_base_url=str(settings.openemr_fhir_base_url).rstrip("/"),
             redirect_uri=settings.agent_callback_url,
         )
-        self.sessions = InMemorySessionStore(
+        # Durable (clinician, patient) pin in Postgres (D-O2 / §3a / CXR-07): the composition
+        # root and the /ready probe are now aligned on the SAME backend — no more serving from
+        # memory while probing an unused DB. Fails closed if unreachable (SessionStoreUnavailable).
+        self.sessions = PostgresSessionStore(
+            dsn=settings.session_store_dsn.get_secret_value(), connect=_pg_connect,
             idle_timeout_s=settings.session_idle_timeout_seconds, turn_cap=settings.session_turn_cap)
+        # The delegated token + PKCE verifier stay in-process (per-instance): the token is a
+        # bearer credential (encrypting it into the pin row is the documented next step, §5
+        # known-limitations). A restart therefore keeps the durable pin but requires a re-launch
+        # to re-mint the token — the canonical expiry/re-launch path (§3a), never a silent serve.
         self._tokens: dict[str, TokenResponse] = {}   # per-session delegated-token cache (§2)
         self._pkce: dict[str, str] = {}               # oauth state → PKCE code_verifier
         self.provider = AnthropicLLMProvider(
@@ -79,6 +96,17 @@ class AgentServices:
         self.tracer = _build_tracer(settings)
         self.orchestrator = Orchestrator(self.provider, cost_cap=self.cost_cap,
                                          max_tool_iterations=settings.llm_max_tool_iterations)
+
+    async def startup(self) -> None:
+        """Ensure the session-store schema at boot (idempotent). Best-effort: a DB-down boot must
+        not crash the app — the hard readiness probe reports it and requests fail closed (§6)."""
+        ensure = getattr(self.sessions, "ensure_schema", None)
+        if ensure is None:
+            return
+        try:
+            await ensure()
+        except Exception:  # noqa: BLE001 - startup must not crash on a transient DB outage
+            pass
 
     # --- SMART launch → pinned session ---------------------------------------
 

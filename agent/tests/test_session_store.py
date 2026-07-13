@@ -111,3 +111,67 @@ async def test_store_fails_closed_when_backend_unreachable():
                            token_expires_at=T0 + timedelta(hours=1))
     with pytest.raises(SessionStoreUnavailable):
         await store.get("any-id")
+
+
+# --- success path against a fake asyncpg backend (covers the SQL seams + release) ---------
+
+class _FakeConn:
+    """An asyncpg-shaped connection over a shared in-memory `agent_sessions` dict. Proves the
+    store passes the right columns/args to INSERT/SELECT/UPDATE and reconstructs a Session."""
+
+    _COLS = ("session_id", "clinician_sub", "patient_id", "created_at", "last_activity_at",
+             "token_expires_at", "idle_timeout_s", "turn_cap", "turns_used")
+
+    def __init__(self, table: dict) -> None:
+        self.table = table
+        self.closed = False
+
+    async def execute(self, sql: str, *args):
+        head = sql.strip().split(None, 1)[0].upper()
+        if head == "INSERT":
+            self.table[args[0]] = dict(zip(self._COLS, args))
+        elif head == "UPDATE":                      # (session_id, turns_used, last_activity_at)
+            row = self.table.get(args[0])
+            if row is not None:
+                row["turns_used"], row["last_activity_at"] = args[1], args[2]
+        # CREATE (schema DDL) → no-op
+
+    async def fetchrow(self, _sql: str, *args):
+        row = self.table.get(args[0])
+        return dict(row) if row is not None else None   # dict(row) mirrors asyncpg Record
+
+    async def close(self):
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_postgres_store_roundtrip_persists_and_enforces_lifetime():
+    table: dict = {}
+    conns: list[_FakeConn] = []
+
+    async def connect(_dsn):
+        c = _FakeConn(table)
+        conns.append(c)
+        return c
+
+    store = PostgresSessionStore(dsn="postgresql://u:p@h/db", connect=connect,
+                                 now=lambda: T0, idle_timeout_s=1800, turn_cap=2)
+    await store.ensure_schema()   # idempotent DDL flows through the seam
+
+    s = await store.create(clinician_sub="clin-A", patient_id="pat-A",
+                           token_expires_at=T0 + timedelta(hours=1))
+    # the pin survives the create call (durable across operations — the point of CXR-07)
+    got = await store.get(s.session_id)
+    assert got.clinician_sub == "clin-A" and got.patient_id == "pat-A" and got.turns_used == 0
+    got.authorize_patient("pat-A")                       # pin holds for the launched patient…
+    with pytest.raises(CrossPatientError):
+        got.authorize_patient("pat-B")                   # …and refuses any other (F-S.2/D12)
+
+    await store.record_turn(s.session_id)
+    r2 = await store.record_turn(s.session_id)
+    assert r2.turns_used == 2                             # bump persisted through the UPDATE seam
+    with pytest.raises(SessionExpiredError):              # turn cap (2) now expires the session
+        await store.get(s.session_id)
+
+    # every per-operation connection was released — connect-per-request must not leak
+    assert conns and all(c.closed for c in conns)

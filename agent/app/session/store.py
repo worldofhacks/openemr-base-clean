@@ -48,6 +48,24 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Idempotent DDL, mirrored from migrations/001_sessions.sql. Embedded so the startup
+# schema-ensure never depends on the migrations directory being packaged into the container.
+SESSIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    session_id        TEXT        PRIMARY KEY,
+    clinician_sub     TEXT        NOT NULL,
+    patient_id        TEXT        NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL,
+    last_activity_at  TIMESTAMPTZ NOT NULL,
+    token_expires_at  TIMESTAMPTZ NOT NULL,
+    idle_timeout_s    INTEGER     NOT NULL,
+    turn_cap          INTEGER     NOT NULL,
+    turns_used        INTEGER     NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_token_expires_at ON agent_sessions (token_expires_at);
+"""
+
+
 @dataclass
 class Session:
     session_id: str
@@ -154,6 +172,15 @@ class PostgresSessionStore(SessionStore):
         except Exception as exc:  # noqa: BLE001 - any backend failure ⇒ fail closed
             raise SessionStoreUnavailable("session store unreachable — refusing to serve (§6)") from exc
 
+    async def ensure_schema(self) -> None:
+        """Create the sessions table if absent (idempotent DDL). Runs at startup; fails closed
+        like any store operation, so a DB-down boot surfaces via /ready rather than crashing."""
+        conn = await self._conn()
+        try:
+            await conn.execute(SESSIONS_SCHEMA)
+        finally:
+            await self._release(conn)
+
     async def create(self, *, clinician_sub: str, patient_id: str,
                      token_expires_at: datetime) -> Session:
         now = self._now()
@@ -164,12 +191,18 @@ class PostgresSessionStore(SessionStore):
             idle_timeout_s=self._idle_timeout_s, turn_cap=self._turn_cap,
         )
         conn = await self._conn()
-        await self._insert(conn, s)
+        try:
+            await self._insert(conn, s)
+        finally:
+            await self._release(conn)
         return s
 
     async def get(self, session_id: str) -> Session:
         conn = await self._conn()
-        s = await self._fetch(conn, session_id)
+        try:
+            s = await self._fetch(conn, session_id)
+        finally:
+            await self._release(conn)
         if s is None:
             raise SessionNotFound(session_id)
         if s.is_expired(self._now()):
@@ -178,11 +211,29 @@ class PostgresSessionStore(SessionStore):
 
     async def record_turn(self, session_id: str) -> Session:
         s = await self.get(session_id)
-        conn = await self._conn()
         s.turns_used += 1
         s.last_activity_at = self._now()
-        await self._bump(conn, s)
+        conn = await self._conn()
+        try:
+            await self._bump(conn, s)
+        finally:
+            await self._release(conn)
         return s
+
+    @staticmethod
+    async def _release(conn) -> None:
+        """Close the per-operation connection (connect-per-request — leak-free and simple for a
+        single instance; a pool is the production optimization). Defensive so a fake test conn
+        without an async close never breaks the fail-closed path."""
+        close = getattr(conn, "close", None)
+        if close is None:
+            return
+        try:
+            result = close()
+            if hasattr(result, "__await__"):
+                await result
+        except Exception:  # noqa: BLE001 - releasing a connection must never surface an error
+            pass
 
     # --- backend SQL seams (wired to a real driver at provisioning time) ---
     async def _insert(self, conn, s: Session) -> None:  # pragma: no cover - needs live DB

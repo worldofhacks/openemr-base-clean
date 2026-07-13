@@ -8,6 +8,8 @@ retrofitted (§7).
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from app.config import Settings, get_settings
@@ -18,6 +20,17 @@ from app.routes.chat import router as chat_router
 from app.routes.health import router as health_router
 from app.routes.sessions import router as sessions_router
 from app.routes.ui import router as ui_router
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # At boot, let the composition root prepare itself — ensures the Postgres session-store
+    # schema (idempotent, best-effort; CXR-07/§3a). A fake service (route tests) has no
+    # `startup` and is skipped; a DB-down boot is absorbed there, never crashing the app.
+    startup = getattr(getattr(app.state, "services", None), "startup", None)
+    if startup is not None:
+        await startup()
+    yield
 
 
 def create_app(
@@ -32,6 +45,7 @@ def create_app(
     app = FastAPI(
         title="Clinical Co-Pilot Agent",
         version="0.1.0",
+        lifespan=_lifespan,
         # PHI is never in URLs or query strings; docs stay on for the API collection.
     )
     app.state.settings = settings

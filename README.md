@@ -27,8 +27,8 @@ grounded fallback is used when synthesis cannot be verified (D2/D7/D9/D13, §2/�
 
 - **OpenEMR:** https://openemr-production-cc95.up.railway.app
 - **Clinical Co-Pilot agent:** https://agent-production-9f62.up.railway.app
-- **Binding design:** [ARCHITECTURE.md](ARCHITECTURE.md)
-- **Security/data-quality audit:** [AUDIT.md](AUDIT.md)
+- **Binding design:** [ARCHITECTURE.md](docs/week1/ARCHITECTURE.md)
+- **Security/data-quality audit:** [AUDIT.md](docs/week1/AUDIT.md)
 - **Target physician and UC1–UC4:** [USERS.md](USERS.md)
 - **Deployment and rollback:** [DEPLOYMENT.md](DEPLOYMENT.md)
 - **Eval results:** [agent/evals/results.json](agent/evals/results.json)

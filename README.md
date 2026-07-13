@@ -16,7 +16,62 @@
 
 [![Backers on Open Collective](https://opencollective.com/openemr/backers/badge.svg)](#backers) [![Sponsors on Open Collective](https://opencollective.com/openemr/sponsors/badge.svg)](#sponsors)
 
-# OpenEMR
+# Clinical Co-Pilot for OpenEMR
+
+This fork adds a read-only SMART-on-FHIR sidecar that gives a primary-care clinician a
+cited pre-visit brief over synthetic Synthea charts. The model never writes to OpenEMR and
+its prose is never sent directly to the physician: it produces typed claims, a deterministic
+verifier checks each claim against cited FHIR fields, and a deterministic renderer flushes
+only verified record content. Unsupported claims are blocked; a bounded, explicitly labeled
+grounded fallback is used when synthesis cannot be verified (D2/D7/D9/D13, §2/§5/§6).
+
+- **OpenEMR:** https://openemr-production-cc95.up.railway.app
+- **Clinical Co-Pilot agent:** https://agent-production-9f62.up.railway.app
+- **Binding design:** [ARCHITECTURE.md](ARCHITECTURE.md)
+- **Security/data-quality audit:** [AUDIT.md](AUDIT.md)
+- **Target physician and UC1–UC4:** [USERS.md](USERS.md)
+- **Deployment and rollback:** [DEPLOYMENT.md](DEPLOYMENT.md)
+- **Eval results:** [agent/evals/results.json](agent/evals/results.json)
+
+```text
+OpenEMR chart --SMART launch + delegated read scopes--> Python sidecar
+                                                        | six FHIR reads
+                                                        v
+                                               typed EvidencePacket
+                                                        |
+                                              Sonnet typed claims
+                                                        |
+                                      deterministic verify-then-flush
+                                                        v
+                                           cited practitioner brief
+```
+
+All project-specific application code lives under `agent/`; the inherited PHP EHR remains
+the system of record. The demo is synthetic-data-only and intentionally has no write tools,
+OpenEMR database credentials, diagnosis/prescribing behavior, or chart-mutation path.
+
+## Agent setup
+
+Python 3.12 is required. Variable names are documented in
+[agent/.env.example](agent/.env.example); put real development values only in the gitignored
+`agent/.env`.
+
+```bash
+cd agent
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest -q
+python -m evals.runner
+uvicorn app.main:app --reload --port 8000
+```
+
+`GET /health` is process liveness. `GET /ready` performs real FHIR, Anthropic, Postgres,
+and Langfuse probes. A patient-specific brief requires a SMART launch from OpenEMR; the
+standalone synthetic-demo fallback begins at the agent's `/launch` route. The runnable
+authenticated grader flow is documented in [agent/bruno/README.md](agent/bruno/README.md).
+
+## OpenEMR foundation
 
 [OpenEMR](https://open-emr.org) is a Free and Open Source electronic health records and medical practice management application. It features fully integrated electronic health records, practice management, scheduling, electronic billing, internationalization, free support, a vibrant community, and a whole lot more. It runs on Windows, Linux, Mac OS X, and many other platforms.
 

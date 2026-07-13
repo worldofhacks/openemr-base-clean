@@ -1,9 +1,10 @@
 # Clinical Co-Pilot Langfuse dashboard
 
-> **Status (2026-07-12):** live production telemetry is validated and the manual dashboard
-> grid is partially populated. Four reusable widgets created through the public API still
-> require owner placement in the dashboard UI. This PR remains draft if F2 acceptance
-> requires every widget to be visibly rendered on the grid.
+> **Status (2026-07-13):** F2 metric definitions, live production telemetry, filters, API
+> totals, and reusable widget IDs are finalized. Six widgets are visible on the live grid;
+> four API-created widgets require the owner's one-click placement because Langfuse does not
+> expose dashboard-grid mutation through its public API. That bounded UI handoff is recorded
+> below; no computer-control workaround was used.
 >
 > **Dashboard:** [Clinical Co-Pilot / Production](https://us.cloud.langfuse.com/project/cmrie27hr0kw7ad0dpgmwsb2u/dashboards/cmrifybt80kpxad0dh10bhmln)
 >
@@ -136,13 +137,15 @@ simultaneously per generation and per request. That equivalence is specific to t
 future windows with more than one generation per trace must keep the two denominators
 separate.
 
-## Screenshot intentionally omitted
+## Rendered-grid evidence boundary
 
-The owner explicitly stopped computer-control and screenshot work. No browser/computer UI
-actions continue from this documentation task, and no dashboard image is created or added.
-This omission is intentional, not evidence that every widget renders. If F2 acceptance
-requires a rendered-grid capture, the owner must first place the four reusable widgets in
-the Langfuse UI and separately authorize a sanitized screenshot.
+The owner explicitly stopped computer-control and screenshot work and directed this Final
+pass not to drive the dashboard UI. A screenshot of the current partial grid would be stale
+the moment the four widgets are placed and would overstate completion if presented as the
+full required dashboard. The live dashboard link, exact widget IDs, calculations, filters,
+and API totals above are the durable evidence. The owner's remaining one-click action is to
+place the four existing widgets; a sanitized full-grid screenshot can then be captured by
+the owner for the submission video without exposing prompt/response bodies.
 
 ## Reproduction and ownership
 

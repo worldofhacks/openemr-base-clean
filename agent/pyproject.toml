@@ -24,6 +24,24 @@ dependencies = [
     # inside a worker node. Pre-staged on swarm/w2-wave0 so W2-M1 (container) and
     # W2-M3 (graph) keep exclusive file scopes within the wave.
     "langgraph>=1.2,<2",
+    # --- W2-M1 native/RAG dependency set (W2-R6 reader stack, W2-D3 OCR grounds,
+    # W2-D4 ONNX embedding+rerank path). NO torch anywhere in this tree (AC-2 guard
+    # test); PyMuPDF is banned (AGPL, W2-R6 locked-decision).
+    # pdfium renderer (BSD-3-Clause/Apache-2.0 bindings over Apache-2.0 pdfium).
+    "pypdfium2>=5.11,<6",
+    # words+boxes extraction, staged here for W2-M4 (MIT). Transitive deps:
+    # pdfminer.six (MIT), pillow (MIT-CMU/HPND family — ALLOWLIST: permissive,
+    # non-copyleft historical-permission license; required imaging dep of the
+    # pdfplumber/pytesseract stack, mirrors W2-M4 AC-5 allowlist entry).
+    "pdfplumber>=0.11,<0.12",
+    # Tesseract binding (Apache-2.0); the tesseract BINARY + eng traineddata are
+    # installed at the image layer (Dockerfile: tesseract-ocr, tesseract-ocr-eng).
+    "pytesseract>=0.3.13",
+    # ONNX embeddings + local cross-encoder reranker (Apache-2.0); brings
+    # onnxruntime (MIT) — the torch-free execution path (W2-D4). Transitive
+    # tqdm is "MPL-2.0 AND MIT" — ALLOWLIST: dual-licensed, file-level weak
+    # copyleft only, unmodified upstream wheel; not GPL/AGPL (W2-M1 DoD).
+    "fastembed>=0.8,<0.9",
 ]
 
 [project.optional-dependencies]

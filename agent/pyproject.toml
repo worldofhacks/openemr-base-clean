@@ -38,9 +38,18 @@ dependencies = [
     # installed at the image layer (Dockerfile: tesseract-ocr, tesseract-ocr-eng).
     "pytesseract>=0.3.13",
     # ONNX embeddings + local cross-encoder reranker (Apache-2.0); brings
-    # onnxruntime (MIT) — the torch-free execution path (W2-D4). Transitive
-    # tqdm is "MPL-2.0 AND MIT" — ALLOWLIST: dual-licensed, file-level weak
-    # copyleft only, unmodified upstream wheel; not GPL/AGPL (W2-M1 DoD).
+    # onnxruntime (MIT) — the torch-free execution path (W2-D4). Several TRANSITIVE
+    # runtime deps carry a non-permissive identifier that is non-infecting and
+    # ACCEPTED under an owner-granted documented exception (2026-07-14, W2 Wave 0)
+    # by this criterion: file-level weak copyleft (MPL-2.0) on an unmodified wheel,
+    # or a runtime-library GPL exception, is accepted; AGPL / viral copyleft never.
+    # Enumerated (importlib.metadata scan): MPL-2.0 unmodified wheels — tqdm
+    # ("MPL-2.0 AND MIT", via fastembed), certifi ("MPL-2.0", via httpx), orjson
+    # ("MPL-2.0 AND (Apache-2.0 OR MIT)", via langgraph); and libgfortran bundled
+    # in the Linux numpy wheel ("GPL-3.0-or-later WITH GCC-exception-3.1" — the GCC
+    # Runtime Library Exception, no GPL copyleft on our work). See the W2-M1 report
+    # (License verification) and .tdd-swarm/gates.md Tier-2 Dependency check.
+    # AGPL stays hard-banned at every level (PyMuPDF); no torch anywhere.
     "fastembed>=0.8,<0.9",
 ]
 

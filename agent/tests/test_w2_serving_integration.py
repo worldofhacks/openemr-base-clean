@@ -17,9 +17,16 @@ from fastapi.testclient import TestClient
 from app.auth.smart_client import TokenResponse
 from app.llm.provider import Usage
 from app.orchestrator.graph import GraphTurnResult
+from app.orchestrator.composer import (
+    BBoxOverlay,
+    RenderedClaim,
+    VerifiedComposition,
+)
 from app.orchestrator.loop import BriefResult
 from app.orchestrator.refs import TurnRefRegistry
 from app.orchestrator.workers.evidence_retriever import build_evidence_worker
+from app.schemas.citations import CitationSourceType, CitationV2
+from app.schemas.extraction import NormBBox
 from app.schemas.retrieval import EvidenceSearchRequest
 from app.schemas.workers import WorkerInput
 from app.session.store import Session
@@ -54,14 +61,17 @@ def _brief(text: str) -> BriefResult:
 
 
 class _GraphAwareServices:
-    def __init__(self) -> None:
+    def __init__(self, composition: VerifiedComposition | None = None) -> None:
         self.graph_calls = 0
         self.direct_calls = 0
+        self.composition = composition or VerifiedComposition()
 
     async def resolve_session(self, _session_id: str) -> Session:
         return _session()
 
-    async def run_brief(self, _session: Session, _message: str, *, request_url: str) -> BriefResult:
+    async def run_brief(
+        self, _session: Session, _message: str, *, request_url: str
+    ) -> BriefResult:
         self.direct_calls += 1
         return _brief("direct verified brief")
 
@@ -69,7 +79,11 @@ class _GraphAwareServices:
         self, _session: Session, _message: str, *, request_url: str
     ) -> GraphTurnResult:
         self.graph_calls += 1
-        return GraphTurnResult(brief=_brief("graph verified brief"), handoffs=())
+        return GraphTurnResult(
+            brief=_brief("graph verified brief"),
+            handoffs=(),
+            composition=self.composition,
+        )
 
 
 def _client(services: object):
@@ -86,11 +100,18 @@ def test_graph_flag_routes_json_and_sse_through_services_without_changing_envelo
     client = _client(services)
 
     json_response = client.post(
-        "/chat", json={"session_id": "synthetic-session", "message": "type 2 diabetes; HbA1c"}
+        "/chat",
+        json={"session_id": "synthetic-session", "message": "type 2 diabetes; HbA1c"},
     )
     assert json_response.status_code == 200
     assert set(json_response.json()) == {
-        "brief", "source", "degraded", "verdicts", "citations", "patient", "correlation_id"
+        "brief",
+        "source",
+        "degraded",
+        "verdicts",
+        "citations",
+        "patient",
+        "correlation_id",
     }
     assert json_response.json()["brief"] == "graph verified brief"
 
@@ -111,13 +132,76 @@ def test_graph_flag_off_never_calls_service_graph(complete_env, monkeypatch):
     services = _GraphAwareServices()
 
     response = _client(services).post(
-        "/chat", json={"session_id": "synthetic-session", "message": "type 2 diabetes; HbA1c"}
+        "/chat",
+        json={"session_id": "synthetic-session", "message": "type 2 diabetes; HbA1c"},
     )
 
     assert response.status_code == 200
     assert response.json()["brief"] == "direct verified brief"
     assert services.graph_calls == 0
     assert services.direct_calls == 1
+
+
+def test_graph_serving_renders_verified_source_classes_and_document_overlay(
+    complete_env, monkeypatch
+):
+    """W2-D3/D6/\u00a75: only composer-approved claims reach JSON/SSE surfaces."""
+
+    monkeypatch.setenv("W2_GRAPH_ENABLED", "1")
+    bbox = NormBBox(x0=0.1, y0=0.2, x1=0.3, y1=0.4)
+    document_citation = CitationV2(
+        source_type="uploaded_document",
+        source_id="document:synthetic",
+        page_or_section="1",
+        field_or_chunk_id="results.0.value",
+        quote_or_value="92",
+    )
+    guideline_citation = CitationV2(
+        source_type="guideline",
+        source_id="vadod-diabetes@" + "a" * 64,
+        page_or_section="Glycemic Targets",
+        field_or_chunk_id="vadod-diabetes-targets-001",
+        quote_or_value="Use individualized glycemic targets.",
+    )
+    composition = VerifiedComposition(
+        claims=(
+            RenderedClaim(
+                text="results.0.value: 92",
+                citation=document_citation,
+                source_class=CitationSourceType.UPLOADED_DOCUMENT,
+                overlay=BBoxOverlay(source_id="document:synthetic", page=1, bbox=bbox),
+            ),
+            RenderedClaim(
+                text="Use individualized glycemic targets.",
+                citation=guideline_citation,
+                source_class=CitationSourceType.GUIDELINE,
+            ),
+        )
+    )
+    client = _client(_GraphAwareServices(composition))
+
+    response = client.post(
+        "/chat",
+        json={"session_id": "synthetic-session", "message": "type 2 diabetes; HbA1c"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert "Uploaded document" in body["brief"]
+    assert "Guideline evidence" in body["brief"]
+    assert any(
+        isinstance(citation, dict) and citation["source_type"] == "uploaded_document"
+        for citation in body["citations"]
+    )
+
+    stream = client.post(
+        "/chat",
+        json={"session_id": "synthetic-session", "message": "type 2 diabetes; HbA1c"},
+        headers={"Accept": "text/event-stream"},
+    )
+    assert stream.status_code == 200
+    assert '"source_class": "uploaded_document"' in stream.text
+    assert '"page": 1' in stream.text
+    assert '"bbox"' in stream.text
 
 
 class _FixtureRetriever:
@@ -154,11 +238,24 @@ def test_evidence_router_is_mounted_and_uses_service_lazy_factory(complete_env):
     client = _client(services)
     assert services.factory_calls == 0
 
-    response = client.post("/evidence/search", json={"query": "type 2 diabetes; HbA1c", "k": 1})
+    response = client.post(
+        "/evidence/search", json={"query": "type 2 diabetes; HbA1c", "k": 1}
+    )
 
     assert response.status_code == 200
     assert response.json()["items"][0]["chunk_id"] == "vadod-diabetes-targets-001"
     assert services.factory_calls == 1
+
+
+def test_documents_router_is_mounted_on_the_application(complete_env):
+    """W2-D9/\u00a72a: the typed upload surface is part of the deployed app."""
+
+    paths = set(_client(_EvidenceServices()).get("/openapi.json").json()["paths"])
+
+    assert "/documents" in paths
+    assert "/documents/{document_id}/status" in paths
+    assert "/documents/{document_id}/retry" in paths
+    assert "/documents/{document_id}/pages/{page_number}" in paths
 
 
 def test_agent_services_builds_one_shared_retriever_lazily(monkeypatch, tmp_path):
@@ -199,11 +296,15 @@ def test_agent_services_passes_real_retrieval_worker_and_ref_registry(monkeypatc
             patient="synthetic-patient",
         )
     }
-    services.settings = type("SettingsStub", (), {"smart_client_id": "synthetic-client"})()
+    services.settings = type(
+        "SettingsStub", (), {"smart_client_id": "synthetic-client"}
+    )()
     services.tracer = object()
     services.get_evidence_retriever = lambda: _FixtureRetriever()
     services.run_brief = lambda *_args, **_kwargs: None
-    monkeypatch.setattr(service_module.orchestrator_graph, "run_graph_turn", fake_graph_turn)
+    monkeypatch.setattr(
+        service_module.orchestrator_graph, "run_graph_turn", fake_graph_turn
+    )
 
     result = asyncio.run(
         services.run_graph_turn(
@@ -246,7 +347,9 @@ def test_graph_retrieval_unavailable_is_distinct_degradation_not_a_failed_hop():
     assert output.citation_refs == []
 
 
-def test_retrieval_index_readiness_is_soft_and_integrity_bound(complete_env, monkeypatch, tmp_path):
+def test_retrieval_index_readiness_is_soft_and_integrity_bound(
+    complete_env, monkeypatch, tmp_path
+):
     from app.config import get_settings
     from app.health import probe_retrieval_index
 

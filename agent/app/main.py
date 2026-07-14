@@ -16,6 +16,7 @@ from app.config import Settings, get_settings
 from app.health import Probe, default_readiness_checks
 from app.middleware.correlation import CorrelationIdMiddleware
 from app.routes.chat import router as chat_router
+from app.routes.documents import router as documents_router
 from app.routes.evidence import router as evidence_router
 from app.routes.health import router as health_router
 from app.routes.sessions import router as sessions_router
@@ -58,6 +59,7 @@ def create_app(
     # without live OpenEMR / Anthropic; built from config otherwise.
     if services is None:
         from app.service import AgentServices
+
         services = AgentServices(settings)
     app.state.services = services
     # One lazy retrieval instance is shared by the graph worker and the public evidence
@@ -72,6 +74,7 @@ def create_app(
     app.include_router(health_router)
     app.include_router(sessions_router)
     app.include_router(chat_router)
+    app.include_router(documents_router)
     app.include_router(evidence_router)
     app.include_router(ui_router)
 

@@ -144,3 +144,34 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
   percentile definition frozen (documented choice).
 - Orchestrator re-ran suites + spec-lint in all three worktrees and verified changed-file sets are
   exactly the declared test files. Statuses -> tests-written. Impl agents may NOT touch agent/tests/**.
+
+## Phase 3 — wave 0a GREEN (all three DONE; orchestrator re-verified, trust-nothing)
+- W2-M1 @ 497a7ed: gates ALL PASS re-run by orchestrator (243P/6S). Frozen tests byte-identical since
+  cdeed28. Scope clean (Dockerfile, pyproject, ops/spike_rss.py, report; railway.json not needed).
+  MEASURED: Railway plan limit 32 GB -> W2_WAVE0_RSS_CEILING_MB=24414; concurrent peak RSS 2494 MB
+  (cold 22 MB) -> PASS ~9.8x headroom, ladder NOT invoked; local-reranker stack UNBLOCKED.
+  Image 369->809 MB (models fetched at startup, not baked; bge 2.4s + fp32 reranker 7.4s load);
+  deploy-to-healthy ~61s; Railway builder GREEN first try; /health 200 throughout (orchestrator
+  re-checked live: 200 alive). SPIKE FINDINGS: mxbai-rerank-base-v1 absent from fastembed builtins but
+  loads torch-free via TextCrossEncoder.add_custom_model() (HF repo Apache-2.0, own ONNX artifacts) —
+  feature tracks must add the registration call at composition root (W2-D4 rev impact); fp32 reranker
+  ~2.3 GB resident (quantized 244 MB on disk / 2068 MB peak) — fine at 32 GB, would need ladder step 2
+  if plan ever <=2 GB (W2-O1 note). tqdm MPL-2.0-AND-MIT allowlist -> handed to Reviewer.
+  INFRA STATE CHANGE: Railway SSH key 'w2m1-spike-key' (host id_ed25519.pub) registered for
+  railway ssh, left registered — Security agent to assess; surfaced for owner go/no-go.
+- W2-M3 @ f1765c7: gates ALL PASS re-run (252P/6S). Frozen tests intact since d88b234. Scope clean
+  (orchestrator/{graph,state,workers/*}, chat.py, report). loop.py untouched. AC-7 REAL Langfuse
+  nesting VERIFIED via API readback (trace 52c7bfaf75d3b116d5fe080e7b417cb4, supervisor⊃worker via
+  parentObservationId chains). AC-8 SSE VERDICT: §2a fallback INVOKED — stream final composer stage
+  only; cause is the §5 verify-then-flush contract + non-streaming provider.complete(), NOT a LangGraph
+  limit; TTFE/total=1.00 (no perceived-latency win today; graph overhead ~3.2ms/turn). SPIKE FINDINGS
+  for feature tracks: late-bind graph entrypoints (import-order tripwire hazard); LangfuseSink needs a
+  public nested-trace API (spike drives sink._get_client() read-only — reviewer to adjudicate);
+  LangGraph recursion_limit must exceed the semantic step budget (used 2*8+4).
+- W2-M24 @ 81b044c: gates ALL PASS re-run (266P/6S). Frozen tests intact since 849cbcc. Scope clean
+  (ops/spike_tier2.py, docs/week2/W2_TIER2_CI_POLICY.md, report). MEASURED (claude-sonnet-4-6, LOCAL
+  key — W2-OA2 substitution noted): 50-case Tier-2 run = $0.345 and ~9.3 min (160 provider calls,
+  50,250 in + 12,950 out tokens @ $3/$15 per MTok) — VIABLE as a required PR gate; ~12x below the
+  retired $4 claim. Policy doc with all six frozen clauses committed.
+- Secret scan on all three diffs: clean; no .env committed anywhere. Live /health re-verified 200.
+- Review + Security panel (6 independent agents) dispatched.

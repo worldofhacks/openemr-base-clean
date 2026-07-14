@@ -39,8 +39,11 @@ dependencies = [
     "pytesseract>=0.3.13",
     # ONNX embeddings + local cross-encoder reranker (Apache-2.0); brings
     # onnxruntime (MIT) — the torch-free execution path (W2-D4). Transitive
-    # tqdm is "MPL-2.0 AND MIT" — ALLOWLIST: dual-licensed, file-level weak
-    # copyleft only, unmodified upstream wheel; not GPL/AGPL (W2-M1 DoD).
+    # tqdm is the combined expression "MPL-2.0 AND MIT", not a dual-choice
+    # permissive license. The Linux numpy wheel also bundles libgfortran under
+    # GPL-3.0-or-later WITH GCC-exception-3.1. Both are required transitively by
+    # fastembed; the binding permissive/no-GPL-identifier DoD needs an owner
+    # exception (recorded in the W2-M1 implementation report).
     "fastembed>=0.8,<0.9",
 ]
 

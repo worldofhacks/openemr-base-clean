@@ -5,31 +5,35 @@ Date: 2026-07-14 (all times UTC)
 
 ## Verdict summary — the go/no-go table
 
-**Repair status:** capacity certification is **PENDING an orchestrator-run live
-remeasure after redeploying the repaired probe**. The prior run measured only the
-short-lived probe process's `/proc/self/status` VmHWM, not the container cgroup peak;
-its old PASS claim is withdrawn. No replacement live numbers are asserted here.
+**Capacity status: PASS.** The repaired probe was deployed and remeasured against the
+container-wide cgroup v2 peak. **Overall DoD status remains BLOCKED only on the binding
+license contract pending an owner exception**; see License verification.
 
 | Measure | Value | Source |
 |---|---|---|
 | Railway plan memory limit (measured, cgroup v2 `memory.max`) | **32,000,000,000 bytes = 30,518 MB (~32 GB)** | in-container `railway ssh`, deployed service `agent` |
 | **W2_WAVE0_RSS_CEILING_MB** = floor(0.8 × limit) | **24,414 MB** | computed by `ops/spike_rss.py` in-container |
+| Cold container memory | **89 MB** | cgroup v2 `memory.current`, before workload |
+| Post-workload container memory | **3,322 MB** | cgroup v2 `memory.current` |
+| **Container peak — full concurrent pinned stack** | **3,360 MB** | cgroup v2 `memory.peak`; canonical capacity metric |
+| Process peak — current repaired run | 2,499 MB | `/proc/self/status` VmHWM; diagnostic only |
 | Historical cold RSS (probe process, before models) | 22 MB | old Railway process-only run; diagnostic, not capacity evidence |
 | **Historical process peak — full concurrent load, fp32 reranker** | **2,494 MB** | old `/proc/self/status` VmHWM; **process-only, not container-wide** |
 | Historical process peak — quantized reranker variant | 2,068 MB | old process-only `--quantized` run; diagnostic only |
-| **Ceiling verdict** | **PENDING LIVE REMEASUREMENT** — repaired probe must compare cgroup `memory.peak` with 24,414 MB | old process-only PASS withdrawn |
+| **Ceiling verdict** | **PASS — 3,360 MB < 24,414 MB; no ladder step invoked** | repaired cgroup-wide probe |
 | Image size delta (local builds, arm64) | 369 MB → **809 MB (+440 MB)** — no models baked | `docker images` w1-baseline vs w2m1-spike |
-| Cold-start (`railway up` → first `/health` 200) | **~61 s** (07:19:10.5 upload → 07:20:11.9 healthy); container-start → serving ≈ **1 s** | Railway deploy logs (timestamped) |
-| Railway builder verdict | **GREEN** — no dep rejected; healthcheck succeeded on attempt 1/1 | build log, deployment `990a5064` SUCCESS |
-| Rollback | **Not needed** — service never left `/health` green | repeated curl checks |
+| Historical cold-start baseline | **~61 s** deploy-to-healthy; container-start → serving ≈ **1 s** | prior Railway deploy logs; no replacement timing claimed |
+| Railway builder/deployment verdict | **GREEN / SUCCESS** | deployment `52516801-61b3-4052-8cdf-cce3520a417a` |
+| Health / rollback | `/health` green before deploy and 3× after; rollback not needed | orchestrator live checks |
 
 ## What changed (file scopes only)
 
 - **`agent/pyproject.toml`** — added `pypdfium2>=5.11,<6`, `pdfplumber>=0.11,<0.12`,
   `pytesseract>=0.3.13`, `fastembed>=0.8,<0.9` (brings `onnxruntime` 1.27, MIT). The
-  pre-staged `langgraph` line untouched. License allowlist justification comments added
-  for pillow (`MIT-CMU`/HPND family, via pdfplumber) and tqdm (`MPL-2.0 AND MIT` dual,
-  via fastembed). `rank-bm25` NOT added — the probe's BM25 index is stdlib-only.
+  pre-staged `langgraph` line untouched. The license comment records pillow's permissive
+  `MIT-CMU`/HPND-family case and accurately flags tqdm's combined `MPL-2.0 AND MIT` plus
+  NumPy/libgfortran's GPL-with-GCC-exception case as owner-exception blockers.
+  `rank-bm25` NOT added — the probe's BM25 index is stdlib-only.
 - **`agent/Dockerfile`** — apt layer `tesseract-ocr` + `tesseract-ocr-eng`
   (`--no-install-recommends`, apt lists cleaned); ships the probe
   (`COPY ops/__init__.py ops/spike_rss.py ./ops/` — not `ops/tests`). W1 boot CMD
@@ -70,27 +74,28 @@ its old PASS claim is withdrawn. No replacement live numbers are asserted here.
    reranker seam lands) must call `add_custom_model()` at composition-root init before
    constructing `TextCrossEncoder` — a registration step the architecture text does not
    currently mention. No plan change beyond that one line. The historical run used the
-   canonical model name but did not lock the Hugging Face branch to an immutable commit;
-   the repair pins both model snapshots, so a new live run is required before capacity is
-   certified.
+   canonical model name but did not lock the Hugging Face branch to an immutable commit.
+   The repaired live run loaded both approved immutable revisions and now certifies the
+   pinned stack.
 2. **Historical process-only diagnostic:** the fp32 reranker made the probe process
    resident set grow substantially (`after_reranker` 258 → 2,329 MB on Railway; 2,414
    MB locally), and the old process VmHWM values were 2,494 MB fp32 and 2,068 MB
    quantized. These values do **not** include the serving app and other cgroup consumers
    and therefore cannot establish ceiling headroom or ladder sufficiency. They are
-   retained only as historical process diagnostics pending the repaired live run.
+   retained only as historical diagnostics; the repaired run separately recorded a
+   2,499 MB process peak and a 3,360 MB container cgroup peak.
 3. **Railway plan limit is 32 GB (Pro), not a small hobby limit** — the architecture's
-   80% rule computes a 24,414 MB ceiling from that measured limit. Actual headroom is
-   **not yet certified**, because it must be based on the repaired probe's container-wide
-   cgroup peak. The quantize→raise-memory→externalize ladder remains the locked failure
-   path if that remeasurement breaches the ceiling.
+   80% rule computes a 24,414 MB ceiling from that measured limit. The repaired
+   container-wide 3,360 MB peak is below the ceiling, so capacity **PASSes** and the
+   quantize→raise-memory→externalize ladder was not invoked.
 4. **Railway builder accepted every native dep first try** (pdfium manylinux wheel,
    onnxruntime, apt tesseract layer) — the "builder rejects the image" risk in the ticket
    did not materialize. Build ~59 s, healthcheck attempt 1.
 5. **Historical unpinned model download timing:** bge-small was ~2.4 s cold-inclusive
    and the fp32 reranker fetch+load was 7.4 s in the old Railway run. Those timings remain
-   planning context only; pinned-snapshot load timing is pending the repaired live run.
-   Models remain runtime-downloaded rather than baked into the image.
+   planning context only; the repaired run proved the pinned snapshots load but did not
+   record replacement per-model timings. Models remain runtime-downloaded rather than
+   baked into the image.
 
 ## Decisions
 
@@ -110,79 +115,71 @@ its old PASS claim is withdrawn. No replacement live numbers are asserted here.
 - **BM25 side of the probe index is stdlib-only** — `rank-bm25` was pre-authorized but
   not needed; no new dep.
 - **Reranker registered via `add_custom_model`, fp32 `onnx/model.onnx` as the canonical
-  artifact** (it is the architecture-pinned model's default artifact). Historical
-  process-only evidence exists for fp32 and `--quantized`; repaired container-wide
-  measurements remain pending.
-- **SSH key registered with Railway** (`w2m1-spike-key`, the host's existing
-  `id_ed25519.pub`) — required for `railway ssh`; left registered for future ops use.
+  artifact** (it is the architecture-pinned model's default artifact). The repaired
+  container-wide measurement used fp32; the older fp32 and `--quantized` process-only
+  numbers remain historical diagnostics.
+- **Temporary Railway SSH access cleaned up:** the live-measure key was removed after
+  evidence collection; no SSH keys remain registered.
 
 ## AC-by-AC evidence
 
 ### AC-1 / AC-2 (frozen tests)
 All 11 W2-M1 frozen cases green; suite `247 passed, 6 skipped` (baseline 238/5 — the 6th
 skip is the opt-in playwright UI smoke self-deselecting in this venv, present pre-impl).
-`pip check` clean in venv AND deployed container; torch absent in venv AND deployed
-container (checked live: `importlib.util.find_spec('torch') is None`).
+`pip check` clean in venv and current-head image; torch absent in both environments.
 
 ### AC-3 [live-measure] — builds + deploy + health
-- Local: `docker build -t w2m1-spike agent/` → success (arm64 host).
+- Current head: `docker build -t w2m1-spike agent/` → success (arm64 host); image remains
+  809 MB.
 - **Plan-trace substitution note (required by ticket):** the plan's "CI build stage
   passes with the new image" cannot run under the never-push rule — AC-3's local
   `docker build agent/` + the Railway builder verdict substitutes for it (gates.md
   Tier-2 "Container build").
-- Railway: `railway up -d -y` from `agent/` at 07:19:10Z → deployment
-  `990a5064-b1cd-44c9-b7d2-c2b0cc2a92fc` status SUCCESS. Build log shows
-  `[6/7] RUN pip install` installing all W2 deps (no torch anywhere in the resolved
-  set) and `[7/7] COPY ops/...`; healthcheck `[1/1] Healthcheck succeeded!`.
-- `/health` green repeatedly post-deploy and again post-probe (5× then 3× HTTP 200);
-  body `{"status":"alive"}`. Prior good deployment `2be68f43-…` recorded for rollback;
-  rollback never needed.
+- Railway deployment `52516801-61b3-4052-8cdf-cce3520a417a` reached **SUCCESS**.
+  `/health` was green before deployment and returned HTTP 200 three times afterward;
+  rollback was not needed. The temporary SSH key was removed and no keys remain.
+- Current-head image checks: `pip check` clean; Tesseract/English data available; torch
+  absent; PyMuPDF absent; quick probe green.
 
 ### AC-4 [live-measure] — in-container dep checks (via `railway ssh`)
 - `tesseract --version` → `tesseract 5.5.0 / leptonica-1.84.1`.
 - `tesseract --list-langs` → `eng`, `osd`.
-- pypdfium2 renders a fresh page at 200 DPI → `(1700, 2200) RGB`.
-- Historical bge-small check: loads under fastembed and embeds → `dim=384`, 2.4 s
-  cold-inclusive. This predates the immutable revision repair; pinned live verification
-  is part of the orchestrator follow-up above.
+- Historical pdfium check rendered a fresh page at 200 DPI → `(1700, 2200) RGB`.
+- The repaired full probe loaded and exercised bge plus the reranker at the exact
+  immutable revisions recorded below.
 
-### AC-5 [live-measure] — repaired probe pending live remeasurement
+### AC-5 [live-measure] — repaired container-wide capacity run: PASS
 
-The previously recorded Railway output below is retained as **historical
-process-only evidence**, not as a current AC-5 verdict:
+Deployment `52516801-61b3-4052-8cdf-cce3520a417a` produced:
 
 ```
-plan_memory_limit_mb: 30518        (cgroup v2 memory.max = 32000000000)
+plan_memory_limit_mb: 30518                    source: cgroup_v2.memory.max
 W2_WAVE0_RSS_CEILING_MB: 24414
-cold_rss_mb: 22                    (historical probe-process diagnostic)
-peak_rss_mb: 2494                  (historical /proc/self VmHWM; NOT cgroup peak)
-stage_rss_mb: bm25 38 → +embed model 258 → +reranker 2329 (process RSS)
-concurrent: http_status 200, ocr_chars 1951 (200-DPI page), rerank_top1 ok
-errors: []                         OLD PASS WITHDRAWN
+cold_container_memory_current_mb: 89           source: cgroup_v2.memory.current
+container_memory_current_mb: 3322              source: cgroup_v2.memory.current
+container_peak_memory_mb / peak_rss_mb: 3360   source: cgroup_v2.memory.peak
+process_peak_rss_mb: 2499                       diagnostic_only_not_used_for_capacity_verdict
+embedding: qdrant/bge-small-en-v1.5-onnx-q@52398278842ec682c6f32300af41344b1c0b0bb2
+reranker: mixedbread-ai/mxbai-rerank-base-v1@800f24c113213a187e65bde9db00c15a2bb12738
+concurrent: http_status 200, rerank completed, ocr_chars 1951
+errors: []
+VERDICT: PASS
 ```
 
-The repair reads cgroup v2 `memory.current`/`memory.peak`, with cgroup v1
-`memory.usage_in_bytes`/`memory.max_usage_in_bytes` fallback, and uses that container
-peak for the ceiling comparison. Process VmRSS/VmHWM is emitted separately as
-diagnostic-only. An unknown limit or unavailable cgroup peak emits `NO-VERDICT` and
-exits nonzero. The report also emits immutable source repo/revision fields for both
-FastEmbed models. Deterministic review tests cover these behaviors, but they do not
-replace AC-5's required in-container measurement.
-
-**Orchestrator follow-up required:** redeploy this repair, run
-`railway ssh -- sh -c "cd /app && python -m ops.spike_rss"`, record the repaired
-container peak and provenance fields, and then set PASS/FAIL. On FAIL, invoke the locked
-quantize → raise Railway memory → externalize index ladder. No new live number or
-verdict is claimed by this repair commit.
+The 3,360 MB container peak is below the 24,414 MB ceiling, so no ladder step was
+invoked. Process VmHWM remains diagnostic only. For historical continuity, the prior
+unrepaired runs recorded process-only peaks of **2,494 MB** fp32 and **2,068 MB**
+quantized; neither is used for the current PASS.
 
 ### AC-6 [live-measure] — image size + cold start
-- New image 809 MB vs W1-baseline 369 MB → **+440 MB** (apt tesseract layer + ONNX/
+- Current-head image 809 MB vs W1-baseline 369 MB → **+440 MB** (apt tesseract layer + ONNX/
   imaging wheels; zero model weights). Comparison source: the prior Railway image is not
   retained locally, so the baseline was built from the freeze commit's
   Dockerfile/pyproject/app (`git archive cdeed28`) on the same host/arch — an
   apples-to-apples local pair; Railway does not expose compressed image size via CLI.
-- Cold start: upload 07:19:10Z → deployment created 07:19:11.5Z → container start
-  07:20:10.9Z → app serving + first `/health` 200 at 07:20:11.9Z. **Deploy-to-healthy
+- Historical pre-repair cold start: upload 07:19:10Z → deployment created
+  07:19:11.5Z → container start 07:20:10.9Z → app serving + first `/health` 200 at
+  07:20:11.9Z. **Deploy-to-healthy
   ≈ 61 s; container-boot-to-serving ≈ 1 s** (unchanged from W1 behavior — models not
   loaded at boot).
 
@@ -190,15 +187,27 @@ verdict is claimed by this repair commit.
 
 pypdfium2 `BSD-3-Clause, Apache-2.0` · pdfplumber MIT · pdfminer.six MIT · pytesseract
 Apache-2.0 · fastembed Apache-2.0 · onnxruntime MIT · tokenizers Apache-2.0 ·
-huggingface-hub Apache-2.0 · numpy BSD-3 (+0BSD/MIT/Zlib/CC0 components) · loguru MIT ·
-mmh3 MIT · py-rust-stemmers MIT (LICENSE file + upstream repo; wheel metadata field
-empty) · cffi MIT-0 · pycparser BSD-3 · cryptography Apache-2.0 OR BSD-3 · filelock MIT ·
-fsspec BSD-3 · flatbuffers Apache-2.0 · hf-xet Apache-2.0 · protobuf BSD-3.
-**Allowlisted with justification comments in pyproject:** pillow 12.3.0 `MIT-CMU`
-(HPND family, per ticket DoD example); tqdm `MPL-2.0 AND MIT` (dual-licensed, file-level
-weak copyleft, unmodified wheel). Debian layer: tesseract-ocr/tesseract-ocr-eng
-Apache-2.0, leptonica Leptonica-License (permissive). **No GPL/AGPL anywhere; PyMuPDF
-absent; no torch** (frozen guard + live container check).
+huggingface-hub Apache-2.0 · loguru MIT · mmh3 MIT · py-rust-stemmers MIT · cffi
+MIT-0 · pycparser BSD-3 · cryptography Apache-2.0 OR BSD-3 · filelock MIT · fsspec
+BSD-3 · flatbuffers Apache-2.0 · hf-xet Apache-2.0 · protobuf BSD-3. Pillow
+12.3.0 is `MIT-CMU` (HPND family, the ticket's explicit permissive-equivalent example).
+Debian tesseract-ocr/tesseract-ocr-eng are Apache-2.0 and leptonica uses its permissive
+Leptonica license.
+
+**Binding license DoD: BLOCKED pending owner exception.** Two earlier claims were
+incorrect and are withdrawn:
+
+- tqdm's metadata expression is combined `MPL-2.0 AND MIT`, not a dual-choice
+  permissive license; the distribution contains MPL-2.0-covered code.
+- The Linux NumPy wheel includes bundled libgfortran under
+  `GPL-3.0-or-later WITH GCC-exception-3.1`. The GCC Runtime Library Exception permits
+  qualifying use/distribution, but the literal binding requirement says no GPL
+  identifier anywhere.
+
+These transitive dependencies cannot truthfully satisfy the current permissive-only /
+no-GPL-identifier wording without an explicit owner exception or contract change.
+Separately, the locked W2-R6 and execution-path invariants are satisfied: **PyMuPDF and
+AGPL are absent, and torch is absent** in the current-head image.
 
 ## Gates
 

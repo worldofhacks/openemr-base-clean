@@ -37,3 +37,10 @@ Baseline: `agent/` pytest = 238 passed, 5 skipped (main @ c3e0804). Gates:
   `docs/week1/`, W1 root docs, binding W2 docs, or `W2_DEVLOG.md` (orchestrator-owned);
   no OpenEMR PHP/routes/schema; no OpenEMR write enablement; PyMuPDF banned (AGPL);
   synthetic non-clinical data only; secrets from env only; never push, never touch main.
+- Plan-review fixes (2026-07-14): W2-M24's frozen tests live at
+  `agent/tests/test_tier2_spike.py` — pytest `testpaths = ["tests"]` collects only
+  `agent/tests/`, so `agent/ops/tests/` is never collected by the binding gate command
+  and must not host frozen tests. `agent/evals/fixtures/documents/` is a W2-M4 FILE
+  scope (implementer-authored fixtures + generator; not frozen tests). License gate
+  wording is "permissive (Apache/BSD/MIT family) with explicit allowlist for
+  permissive-equivalents (e.g. pillow's HPND)" across W2-M1/W2-M4/gates.md.

@@ -1,7 +1,10 @@
 # Gate command mapping — epic W2 Wave 0 (swarm/w2-wave0)
 
-Scope: this epic writes ONLY under `agent/` (+ `docs/week2/W2_DEVLOG.md` measured
-aggregates at integration, `.tdd-swarm/`, `tickets/`). The OpenEMR PHP toolchain
+Scope: this epic writes ONLY under `agent/` (+ the named new-doc exception
+`docs/week2/W2_TIER2_CI_POLICY.md` — a W2-M24 file scope, per TICKETS.md —
+`.tdd-swarm/`, `tickets/`). `docs/week2/W2_DEVLOG.md` is ORCHESTRATOR-ONLY, written at
+wave integration from ticket reports — it is in NO ticket's file_scopes and no ticket
+may touch it. The OpenEMR PHP toolchain
 gates (phpstan/phpcs/rector) are OUT of scope for this epic — no PHP file may be
 touched (W2-D2/W2-D9); the integration gate greps the wave diff to enforce that.
 
@@ -33,7 +36,7 @@ RUN_LIVE/[ui] extra).
 |---|---|
 | Full suite ≥ baseline | fresh venv in integration worktree; `pytest -q` count ≥ 238 passed |
 | Container build | `docker build agent/` succeeds locally (W2-M1 adds native deps); Railway build green (M1 evidence) |
-| Dependency check | `pip check` clean; new deps license-verified Apache/BSD/MIT (W2-R6 — **PyMuPDF banned/AGPL**); no torch in lockfile (W2-M1) |
+| Dependency check | `pip check` clean; new deps license-verified permissive — Apache/BSD/MIT family, with permissive-equivalent identifiers (e.g. pillow's HPND, introduced by W2-M1 via pdfplumber) acceptable only via an explicit allowlist entry + justification (mirrors W2-M4 AC-5 / W2-M1 DoD); no GPL/AGPL (W2-R6 — **PyMuPDF banned/AGPL**); no torch in lockfile (W2-M1) |
 | Secret scan | `gitleaks detect` (if installed) else `git diff main...HEAD` grep for key patterns (sk-ant-, api key literals, Bearer); `.env` files never committed |
 | PHI check | wave diff + fixtures are synthetic/non-clinical only; no PHI in logs/traces/fixtures |
 | Write-surface freeze | wave diff contains NO OpenEMR PHP/routes/schema file and NO OpenEMR write-path enablement (W2-D2/D9; W2-M8/M11 out of scope) |

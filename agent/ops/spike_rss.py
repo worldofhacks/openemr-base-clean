@@ -15,13 +15,15 @@ cgroup v1 fallback), then CONCURRENTLY holds:
   (d) one 200-DPI Tesseract OCR page over a synthetic generated image,
 
 while exercising one HTTP request against the local app, sampling cold RSS and
-peak RSS (Linux: /proc/self/status VmRSS/VmHWM; macOS fallback:
-resource.getrusage high-water mark only). The report prints the measured plan
-limit, W2_WAVE0_RSS_CEILING_MB = floor(0.8 * limit), cold/peak RSS, and a
+container-wide memory from cgroup v2 ``memory.current``/``memory.peak`` (with
+cgroup v1 usage/max-usage fallback). Process RSS remains a diagnostic only. The
+report prints the measured plan limit, W2_WAVE0_RSS_CEILING_MB = floor(0.8 *
+limit), container peak, metric sources, immutable model provenance, and a
 PASS/FAIL verdict against the ceiling (locked-decision, W2_ARCHITECTURE.md §6
-W2-O1). On FAIL the ladder applies in order: quantize ONNX models -> raise
-Railway service memory -> externalize the index (this probe never implements
-the ladder; ``--quantized`` exists purely to MEASURE ladder step 1).
+W2-O1). Unknown limit or container peak fails closed with a nonzero exit. On
+FAIL the ladder applies in order: quantize ONNX models -> raise Railway service
+memory -> externalize the index (this probe never implements the ladder;
+``--quantized`` exists purely to MEASURE ladder step 1).
 
 All probe data is synthetic and non-clinical. No secrets are read or printed.
 """
@@ -40,17 +42,35 @@ import time
 import urllib.request
 from dataclasses import dataclass, field
 
+from huggingface_hub import snapshot_download
+
 CGROUP_V2_LIMIT = "/sys/fs/cgroup/memory.max"
+CGROUP_V2_CURRENT = "/sys/fs/cgroup/memory.current"
+CGROUP_V2_PEAK = "/sys/fs/cgroup/memory.peak"
 CGROUP_V1_LIMIT = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
+CGROUP_V1_CURRENT = "/sys/fs/cgroup/memory/memory.usage_in_bytes"
+CGROUP_V1_PEAK = "/sys/fs/cgroup/memory/memory.max_usage_in_bytes"
 # cgroup v1 reports "no limit" as a huge page-aligned number; treat anything
 # above 4 TiB as unlimited.
 UNLIMITED_SENTINEL_BYTES = 4 * 1024**4
 
 EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+EMBED_SOURCE_REPO = "qdrant/bge-small-en-v1.5-onnx-q"
+EMBED_REVISION = "52398278842ec682c6f32300af41344b1c0b0bb2"
+EMBED_ONNX = "model_optimized.onnx"
 EMBED_DIM = 384
 RERANK_MODEL = "mixedbread-ai/mxbai-rerank-base-v1"
+RERANK_REVISION = "800f24c113213a187e65bde9db00c15a2bb12738"
 RERANK_ONNX_FP32 = "onnx/model.onnx"
 RERANK_ONNX_QUANTIZED = "onnx/model_quantized.onnx"
+
+_HF_COMMON_FILES = (
+    "config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "preprocessor_config.json",
+)
 
 # Synthetic, deliberately non-clinical vocabulary (no names, no dates, no PHI).
 _VOCAB = (
@@ -71,23 +91,75 @@ def log(msg: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def read_memory_limit_bytes() -> int | None:
-    """Container memory limit: cgroup v2 first, cgroup v1 fallback, else None."""
-    for path in (CGROUP_V2_LIMIT, CGROUP_V1_LIMIT):
+def _read_cgroup_int(path: str) -> int | None:
+    """Read one non-negative numeric cgroup value, or ``None`` if unavailable."""
+    try:
+        raw = open(path, encoding="ascii").read().strip()
+    except OSError:
+        return None
+    if raw == "max":
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value >= 0 else None
+
+
+def read_memory_limit_measurement() -> tuple[int | None, str | None]:
+    """Container limit and source: cgroup v2 first, then cgroup v1."""
+    for path, source in (
+        (CGROUP_V2_LIMIT, "cgroup_v2.memory.max"),
+        (CGROUP_V1_LIMIT, "cgroup_v1.memory.limit_in_bytes"),
+    ):
         try:
             raw = open(path, encoding="ascii").read().strip()
         except OSError:
             continue
         if raw == "max":
-            return None
+            continue
         try:
             value = int(raw)
         except ValueError:
             continue
         if value <= 0 or value >= UNLIMITED_SENTINEL_BYTES:
-            return None
-        return value
-    return None
+            continue
+        return value, source
+    return None, None
+
+
+def read_memory_limit_bytes() -> int | None:
+    """Backward-compatible value-only view of the container memory limit."""
+    return read_memory_limit_measurement()[0]
+
+
+def read_container_memory_measurement() -> tuple[
+    int | None, int | None, str | None, str | None
+]:
+    """Read container current/peak bytes and their cgroup metric sources.
+
+    A cgroup-v2 controller is selected if either v2 usage metric exists. The
+    v1 memory controller is consulted only when v2 usage metrics are absent, so
+    values from different controller hierarchies are never mixed.
+    """
+    current = _read_cgroup_int(CGROUP_V2_CURRENT)
+    peak = _read_cgroup_int(CGROUP_V2_PEAK)
+    if current is not None or peak is not None:
+        return (
+            current,
+            peak,
+            "cgroup_v2.memory.current" if current is not None else None,
+            "cgroup_v2.memory.peak" if peak is not None else None,
+        )
+
+    current = _read_cgroup_int(CGROUP_V1_CURRENT)
+    peak = _read_cgroup_int(CGROUP_V1_PEAK)
+    return (
+        current,
+        peak,
+        "cgroup_v1.memory.usage_in_bytes" if current is not None else None,
+        "cgroup_v1.memory.max_usage_in_bytes" if peak is not None else None,
+    )
 
 
 def _proc_status_kb(key: str) -> int | None:
@@ -218,6 +290,18 @@ def run_ocr(img) -> str:
 # ---------------------------------------------------------------------------
 
 
+def download_pinned_model(
+    repo_id: str, revision: str, cache_dir: str, model_file: str
+) -> str:
+    """Download exactly one approved Hugging Face snapshot for FastEmbed."""
+    return snapshot_download(
+        repo_id=repo_id,
+        revision=revision,
+        cache_dir=cache_dir,
+        allow_patterns=[*_HF_COMMON_FILES, model_file],
+    )
+
+
 def register_reranker(quantized: bool) -> None:
     from fastembed.common.model_description import ModelSource
     from fastembed.rerank.cross_encoder import TextCrossEncoder
@@ -266,13 +350,25 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    limit_bytes = read_memory_limit_bytes()
+    limit_bytes, limit_source = read_memory_limit_measurement()
     limit_mb = limit_bytes / (1024.0**2) if limit_bytes is not None else None
     ceiling_mb = math.floor(0.8 * limit_mb) if limit_mb is not None else None
-    cold = best_rss_mb()
+    cold_process_rss = best_rss_mb()
+    (
+        cold_container_current_bytes,
+        _cold_container_peak_bytes,
+        cold_container_current_source,
+        _cold_container_peak_source,
+    ) = read_container_memory_measurement()
     log(f"mode={'quick' if args.quick else 'full'} quantized={args.quantized}")
-    log(f"memory limit: {f'{limit_mb:.0f} MB' if limit_mb else 'UNKNOWN (no cgroup limit)'}")
-    log(f"cold RSS: {f'{cold:.0f} MB' if cold is not None else 'unavailable'}")
+    log(
+        "memory limit: "
+        + (f"{limit_mb:.0f} MB ({limit_source})" if limit_mb is not None else "UNKNOWN")
+    )
+    log(
+        "cold process RSS (diagnostic only): "
+        + (f"{cold_process_rss:.0f} MB" if cold_process_rss is not None else "unavailable")
+    )
 
     import numpy as np
 
@@ -296,10 +392,24 @@ def main(argv: list[str] | None = None) -> int:
         from fastembed import TextEmbedding
         from fastembed.rerank.cross_encoder import TextCrossEncoder
 
-        # (a) bge-small embeddings — embed the real corpus for the matrix.
+        # (a) bge-small embeddings — pin the exact HF snapshot, then pass its
+        # directory through FastEmbed's supported specific_model_path seam.
         t0 = time.time()
-        embedder = TextEmbedding(EMBED_MODEL, cache_dir=args.cache_dir)
-        log(f"{EMBED_MODEL} loaded in {time.time() - t0:.1f}s")
+        embed_model_path = download_pinned_model(
+            EMBED_SOURCE_REPO,
+            EMBED_REVISION,
+            args.cache_dir,
+            EMBED_ONNX,
+        )
+        embedder = TextEmbedding(
+            EMBED_MODEL,
+            cache_dir=args.cache_dir,
+            specific_model_path=embed_model_path,
+        )
+        log(
+            f"{EMBED_MODEL} ({EMBED_SOURCE_REPO}@{EMBED_REVISION}) "
+            f"loaded in {time.time() - t0:.1f}s"
+        )
         stages["after_embed_model"] = best_rss_mb()
         t0 = time.time()
         matrix = np.asarray(list(embedder.embed(texts)), dtype=np.float32)
@@ -308,9 +418,22 @@ def main(argv: list[str] | None = None) -> int:
         # (b) the local reranker.
         register_reranker(args.quantized)
         t0 = time.time()
-        reranker = TextCrossEncoder(RERANK_MODEL, cache_dir=args.cache_dir)
         artifact = RERANK_ONNX_QUANTIZED if args.quantized else RERANK_ONNX_FP32
-        log(f"{RERANK_MODEL} ({artifact}) loaded in {time.time() - t0:.1f}s")
+        rerank_model_path = download_pinned_model(
+            RERANK_MODEL,
+            RERANK_REVISION,
+            args.cache_dir,
+            artifact,
+        )
+        reranker = TextCrossEncoder(
+            RERANK_MODEL,
+            cache_dir=args.cache_dir,
+            specific_model_path=rerank_model_path,
+        )
+        log(
+            f"{RERANK_MODEL}@{RERANK_REVISION} ({artifact}) "
+            f"loaded in {time.time() - t0:.1f}s"
+        )
         stages["after_reranker"] = best_rss_mb()
     stages["after_index_matrix"] = best_rss_mb()
     log(f"hybrid index held: matrix {matrix.shape}, bm25 vocab {len(bm25.doc_freq)}")
@@ -379,27 +502,91 @@ def main(argv: list[str] | None = None) -> int:
     sampler_thread.join()
     log(f"concurrent phase done in {time.time() - t0:.1f}s: {results}")
 
-    peak = peak_rss_mb()
-    if peak is None or (sampled_peak and sampled_peak > peak):
-        peak = sampled_peak or peak
+    process_peak = peak_rss_mb()
+    if process_peak is None or (sampled_peak and sampled_peak > process_peak):
+        process_peak = sampled_peak or process_peak
 
-    verdict = "NO-VERDICT (memory limit unknown)"
-    ok = not errors
-    if ceiling_mb is not None and peak is not None:
-        under = peak < ceiling_mb
-        verdict = "PASS" if under else "FAIL"
-        ok = ok and under
+    (
+        container_current_bytes,
+        container_peak_bytes,
+        container_current_source,
+        container_peak_source,
+    ) = read_container_memory_measurement()
+    container_current_mb = (
+        container_current_bytes / (1024.0**2)
+        if container_current_bytes is not None
+        else None
+    )
+    container_peak_mb = (
+        container_peak_bytes / (1024.0**2) if container_peak_bytes is not None else None
+    )
+
+    missing: list[str] = []
+    if limit_mb is None:
+        missing.append("memory limit")
+    if container_peak_mb is None:
+        missing.append("container cgroup peak")
+
+    if missing:
+        verdict = f"NO-VERDICT ({' and '.join(missing)} unavailable)"
+    elif errors:
+        verdict = "FAIL (probe workload errors)"
+    else:
+        verdict = "PASS" if container_peak_mb < ceiling_mb else "FAIL"
+    ok = verdict == "PASS"
 
     report = {
         "mode": "quick" if args.quick else "full",
         "reranker_artifact": (
             None if args.quick else (RERANK_ONNX_QUANTIZED if args.quantized else RERANK_ONNX_FP32)
         ),
+        "model_provenance": {
+            "embedding": {
+                "model": EMBED_MODEL,
+                "source_repo": EMBED_SOURCE_REPO,
+                "revision": EMBED_REVISION,
+            },
+            "reranker": {
+                "model": RERANK_MODEL,
+                "source_repo": RERANK_MODEL,
+                "revision": RERANK_REVISION,
+            },
+        },
         "chunks": args.chunks,
         "plan_memory_limit_mb": round(limit_mb) if limit_mb is not None else None,
+        "plan_memory_limit_source": limit_source,
         "W2_WAVE0_RSS_CEILING_MB": ceiling_mb,
-        "cold_rss_mb": round(cold) if cold is not None else None,
-        "peak_rss_mb": round(peak) if peak is not None else None,
+        "capacity_metric_scope": "container_cgroup",
+        "capacity_metric_source": container_peak_source,
+        "cold_container_memory_current_mb": (
+            round(cold_container_current_bytes / (1024.0**2))
+            if cold_container_current_bytes is not None
+            else None
+        ),
+        "cold_container_memory_current_source": cold_container_current_source,
+        "container_memory_current_mb": (
+            round(container_current_mb) if container_current_mb is not None else None
+        ),
+        "container_memory_current_source": container_current_source,
+        "container_peak_memory_mb": (
+            round(container_peak_mb) if container_peak_mb is not None else None
+        ),
+        "container_peak_memory_source": container_peak_source,
+        # Kept for operator/report compatibility; unlike the historical
+        # implementation this now carries the container cgroup peak.
+        "peak_rss_mb": round(container_peak_mb) if container_peak_mb is not None else None,
+        "cold_rss_mb": (
+            round(cold_process_rss) if cold_process_rss is not None else None
+        ),
+        "process_peak_rss_mb": (
+            round(process_peak) if process_peak is not None else None
+        ),
+        "process_rss_metric_source": (
+            "/proc/self/status VmRSS/VmHWM"
+            if sys.platform != "darwin"
+            else "resource.getrusage(RUSAGE_SELF).ru_maxrss"
+        ),
+        "process_rss_role": "diagnostic_only_not_used_for_capacity_verdict",
         "stage_rss_mb": {k: (round(v) if v is not None else None) for k, v in stages.items()},
         "concurrent_results": results,
         "errors": errors,

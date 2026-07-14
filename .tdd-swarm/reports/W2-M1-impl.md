@@ -1,18 +1,23 @@
 # W2-M1 implementation report — Day-1 container spike
 
-Ticket: `tickets/W2-M1.md` · Branch: `ticket/w2-m1-container-spike` · Freeze: `cdeed28`
+Ticket: `tickets/W2-M1.md` · Branch: `ticket/w2-m1-container-spike` · Freeze: `836f500`
 Date: 2026-07-14 (all times UTC)
 
 ## Verdict summary — the go/no-go table
+
+**Repair status:** capacity certification is **PENDING an orchestrator-run live
+remeasure after redeploying the repaired probe**. The prior run measured only the
+short-lived probe process's `/proc/self/status` VmHWM, not the container cgroup peak;
+its old PASS claim is withdrawn. No replacement live numbers are asserted here.
 
 | Measure | Value | Source |
 |---|---|---|
 | Railway plan memory limit (measured, cgroup v2 `memory.max`) | **32,000,000,000 bytes = 30,518 MB (~32 GB)** | in-container `railway ssh`, deployed service `agent` |
 | **W2_WAVE0_RSS_CEILING_MB** = floor(0.8 × limit) | **24,414 MB** | computed by `ops/spike_rss.py` in-container |
-| Cold RSS (probe process, before models) | 22 MB | Railway full-probe run |
-| **Peak RSS — full concurrent load, fp32 reranker** | **2,494 MB** | Railway full-probe run (canonical) |
-| Peak RSS — quantized reranker variant (ladder step 1 reference) | 2,068 MB | Railway `--quantized` run |
-| **Ceiling verdict** | **PASS** (2,494 < 24,414; ~9.8× headroom) — **no ladder step invoked** | probe verdict line |
+| Historical cold RSS (probe process, before models) | 22 MB | old Railway process-only run; diagnostic, not capacity evidence |
+| **Historical process peak — full concurrent load, fp32 reranker** | **2,494 MB** | old `/proc/self/status` VmHWM; **process-only, not container-wide** |
+| Historical process peak — quantized reranker variant | 2,068 MB | old process-only `--quantized` run; diagnostic only |
+| **Ceiling verdict** | **PENDING LIVE REMEASUREMENT** — repaired probe must compare cgroup `memory.peak` with 24,414 MB | old process-only PASS withdrawn |
 | Image size delta (local builds, arm64) | 369 MB → **809 MB (+440 MB)** — no models baked | `docker images` w1-baseline vs w2m1-spike |
 | Cold-start (`railway up` → first `/health` 200) | **~61 s** (07:19:10.5 upload → 07:20:11.9 healthy); container-start → serving ≈ **1 s** | Railway deploy logs (timestamped) |
 | Railway builder verdict | **GREEN** — no dep rejected; healthcheck succeeded on attempt 1/1 | build log, deployment `990a5064` SUCCESS |
@@ -30,14 +35,21 @@ Date: 2026-07-14 (all times UTC)
   (`COPY ops/__init__.py ops/spike_rss.py ./ops/` — not `ops/tests`). W1 boot CMD
   untouched. **Bake-vs-download decision: models are NOT baked** — see Decisions.
 - **`agent/ops/spike_rss.py`** (NEW) — operator CLI capacity probe (ops may print per
-  gates.md). Reads cgroup v2 `memory.max` (v1 fallback), then concurrently holds
+  gates.md). Reads cgroup v2 `memory.max`, `memory.current`, and `memory.peak` (v1
+  limit/usage/max-usage fallback), then concurrently holds
   (a) bge-small-en-v1.5 under fastembed, (b) mxbai-rerank-base-v1 (custom ONNX
   registration), (c) a synthetic non-PHI hybrid index (600 chunks: float32 600×384
   embedding matrix + stdlib BM25 token index), (d) one 200-DPI Tesseract OCR page on a
-  generated synthetic image — while issuing one HTTP request to the local app — sampling
-  cold RSS and peak RSS (`/proc/self/status` VmRSS/VmHWM; macOS `getrusage` fallback).
-  Flags: `--quick` (no downloads/HTTP — docker smoke), `--quantized` (measures ladder
-  step 1 only; does not implement it), `--chunks`, `--app-url`, `--cache-dir`.
+  generated synthetic image — while issuing one HTTP request to the local app. The
+  capacity verdict now uses only the container cgroup peak and fails closed if the limit
+  or peak is unavailable; `/proc/self/status` VmRSS/VmHWM remains labeled diagnostic.
+  Report fields identify the limit/peak sources and exact model provenance. Before
+  FastEmbed construction, pinned Hugging Face snapshots are downloaded at
+  `qdrant/bge-small-en-v1.5-onnx-q@52398278842ec682c6f32300af41344b1c0b0bb2` and
+  `mixedbread-ai/mxbai-rerank-base-v1@800f24c113213a187e65bde9db00c15a2bb12738`,
+  then passed via FastEmbed's `specific_model_path`. Flags: `--quick` (no
+  downloads/HTTP — docker smoke), `--quantized` (measures ladder step 1 only; does not
+  implement it), `--chunks`, `--app-url`, `--cache-dir`.
 - **`agent/railway.json`** — unchanged (healthcheck config still correct; boot path
   unchanged so no timeout adjustment needed).
 - `.tdd-swarm/reports/W2-M1-impl.md` — this report.
@@ -48,7 +60,8 @@ Date: 2026-07-14 (all times UTC)
    `TextCrossEncoder.list_supported_models()` offers only Xenova/ms-marco-MiniLM-L-6/12-v2
    (Apache-2.0), BAAI/bge-reranker-base (MIT), jina-reranker-v1-tiny/turbo (Apache-2.0),
    jina-reranker-v2-base-multilingual (CC-BY-NC — non-permissive, unusable).
-   **However, the pinned model IS shippable torch-free with no substitution**: the HF repo
+   **However, the architecture-selected model IS shippable torch-free with no
+   substitution**: the HF repo
    `mixedbread-ai/mxbai-rerank-base-v1` is Apache-2.0 and ships its own ONNX artifacts
    (`onnx/model.onnx` 738 MB fp32; `onnx/model_quantized.onnx` 244 MB), and fastembed
    0.8.0 exposes `TextCrossEncoder.add_custom_model()` which loads it (verified: loads +
@@ -56,27 +69,28 @@ Date: 2026-07-14 (all times UTC)
    **W2-D4 rev impact:** the retrieval feature track (W2-M5/W2-M6 or wherever the
    reranker seam lands) must call `add_custom_model()` at composition-root init before
    constructing `TextCrossEncoder` — a registration step the architecture text does not
-   currently mention. No plan change beyond that one line; capacity was measured with the
-   REAL pinned model, not a stand-in.
-2. **fp32 reranker RSS is ~2.3 GB resident — 3× its on-disk size.** `after_reranker`
-   RSS jumps 258 → 2,329 MB on Railway (2,414 MB locally). Fine under a 32 GB plan
-   (PASS, 9.8× headroom), but this number is the one to watch if the plan is ever
-   downsized: on a 2 GB plan the fp32 artifact ALONE would breach the 80% ceiling, and
-   ladder step 1 (quantized artifact, measured peak 2,068 MB, `after_reranker` 1,897 MB)
-   would NOT be sufficient — step 2 (raise memory) would be immediate. Record for W2-O1.
+   currently mention. No plan change beyond that one line. The historical run used the
+   canonical model name but did not lock the Hugging Face branch to an immutable commit;
+   the repair pins both model snapshots, so a new live run is required before capacity is
+   certified.
+2. **Historical process-only diagnostic:** the fp32 reranker made the probe process
+   resident set grow substantially (`after_reranker` 258 → 2,329 MB on Railway; 2,414
+   MB locally), and the old process VmHWM values were 2,494 MB fp32 and 2,068 MB
+   quantized. These values do **not** include the serving app and other cgroup consumers
+   and therefore cannot establish ceiling headroom or ladder sufficiency. They are
+   retained only as historical process diagnostics pending the repaired live run.
 3. **Railway plan limit is 32 GB (Pro), not a small hobby limit** — the architecture's
-   memory-budget anxiety (§6 W2-O1) has enormous slack today: ceiling 24,414 MB vs
-   6,000–8,000 MB projected W2 worst case. The quantize→raise-memory→externalize ladder
-   exists but nothing on the measured curve approaches it.
+   80% rule computes a 24,414 MB ceiling from that measured limit. Actual headroom is
+   **not yet certified**, because it must be based on the repaired probe's container-wide
+   cgroup peak. The quantize→raise-memory→externalize ladder remains the locked failure
+   path if that remeasurement breaches the ceiling.
 4. **Railway builder accepted every native dep first try** (pdfium manylinux wheel,
    onnxruntime, apt tesseract layer) — the "builder rejects the image" risk in the ticket
    did not materialize. Build ~59 s, healthcheck attempt 1.
-5. **Model download at first use is fast in-region on Railway**: bge-small ~2.4 s
-   cold-inclusive; fp32 reranker fetch+load 7.4 s. Baking models into the image is not
-   needed for cold-start reasons at current sizes (it WOULD add ~1 GB image and slow
-   every deploy). Revisit only if HF availability becomes a serving-path dependency
-   concern in the W2-D4 feature wave (an image-bake or volume cache are the obvious
-   options; decision deferred, current choice recorded below).
+5. **Historical unpinned model download timing:** bge-small was ~2.4 s cold-inclusive
+   and the fp32 reranker fetch+load was 7.4 s in the old Railway run. Those timings remain
+   planning context only; pinned-snapshot load timing is pending the repaired live run.
+   Models remain runtime-downloaded rather than baked into the image.
 
 ## Decisions
 
@@ -87,18 +101,25 @@ Date: 2026-07-14 (all times UTC)
   fresh container pays a one-time download (seconds on Railway network) and depends on HF
   availability — feature waves should init models at startup (not per-request) and may
   revisit bake/volume-cache.
+- **Both runtime downloads are immutable:** bge resolves from
+  `qdrant/bge-small-en-v1.5-onnx-q@52398278842ec682c6f32300af41344b1c0b0bb2`; the
+  reranker resolves from
+  `mixedbread-ai/mxbai-rerank-base-v1@800f24c113213a187e65bde9db00c15a2bb12738`.
+  Each pinned snapshot path is passed to the canonical FastEmbed constructor via
+  `specific_model_path`; the report emits both revisions.
 - **BM25 side of the probe index is stdlib-only** — `rank-bm25` was pre-authorized but
   not needed; no new dep.
 - **Reranker registered via `add_custom_model`, fp32 `onnx/model.onnx` as the canonical
-  measured artifact** (it is the architecture-pinned model's default artifact);
-  `--quantized` measured as ladder-step-1 evidence only.
+  artifact** (it is the architecture-pinned model's default artifact). Historical
+  process-only evidence exists for fp32 and `--quantized`; repaired container-wide
+  measurements remain pending.
 - **SSH key registered with Railway** (`w2m1-spike-key`, the host's existing
   `id_ed25519.pub`) — required for `railway ssh`; left registered for future ops use.
 
 ## AC-by-AC evidence
 
 ### AC-1 / AC-2 (frozen tests)
-All 7 new frozen tests green; suite `243 passed, 6 skipped` (baseline 238/5 — the 6th
+All 11 W2-M1 frozen cases green; suite `247 passed, 6 skipped` (baseline 238/5 — the 6th
 skip is the opt-in playwright UI smoke self-deselecting in this venv, present pre-impl).
 `pip check` clean in venv AND deployed container; torch absent in venv AND deployed
 container (checked live: `importlib.util.find_spec('torch') is None`).
@@ -121,25 +142,38 @@ container (checked live: `importlib.util.find_spec('torch') is None`).
 - `tesseract --version` → `tesseract 5.5.0 / leptonica-1.84.1`.
 - `tesseract --list-langs` → `eng`, `osd`.
 - pypdfium2 renders a fresh page at 200 DPI → `(1700, 2200) RGB`.
-- bge-small loads under fastembed and embeds → `dim=384`, 2.4 s cold-inclusive.
+- Historical bge-small check: loads under fastembed and embeds → `dim=384`, 2.4 s
+  cold-inclusive. This predates the immutable revision repair; pinned live verification
+  is part of the orchestrator follow-up above.
 
-### AC-5 [live-measure] — capacity probe (canonical Railway run)
-`railway ssh -- sh -c "cd /app && python -m ops.spike_rss"`:
+### AC-5 [live-measure] — repaired probe pending live remeasurement
+
+The previously recorded Railway output below is retained as **historical
+process-only evidence**, not as a current AC-5 verdict:
 
 ```
 plan_memory_limit_mb: 30518        (cgroup v2 memory.max = 32000000000)
 W2_WAVE0_RSS_CEILING_MB: 24414
-cold_rss_mb: 22
-peak_rss_mb: 2494                  (fp32 onnx/model.onnx)
-stage_rss_mb: bm25 38 → +embed model 258 → +reranker 2329
+cold_rss_mb: 22                    (historical probe-process diagnostic)
+peak_rss_mb: 2494                  (historical /proc/self VmHWM; NOT cgroup peak)
+stage_rss_mb: bm25 38 → +embed model 258 → +reranker 2329 (process RSS)
 concurrent: http_status 200, ocr_chars 1951 (200-DPI page), rerank_top1 ok
-errors: []                         VERDICT: PASS
+errors: []                         OLD PASS WITHDRAWN
 ```
-Quantized variant (ladder step 1 reference, measured not implemented): peak 2,068 MB,
-`after_reranker` 1,897 MB, PASS. Local docker cross-check (4 GB limit, arm64): fp32 peak
-2,582 MB PASS; quick mode under `--memory 512m` read the 512 MB limit and PASSed at
-51 MB peak. Failure path (not invoked): quantize → raise Railway memory → externalize
-index.
+
+The repair reads cgroup v2 `memory.current`/`memory.peak`, with cgroup v1
+`memory.usage_in_bytes`/`memory.max_usage_in_bytes` fallback, and uses that container
+peak for the ceiling comparison. Process VmRSS/VmHWM is emitted separately as
+diagnostic-only. An unknown limit or unavailable cgroup peak emits `NO-VERDICT` and
+exits nonzero. The report also emits immutable source repo/revision fields for both
+FastEmbed models. Deterministic review tests cover these behaviors, but they do not
+replace AC-5's required in-container measurement.
+
+**Orchestrator follow-up required:** redeploy this repair, run
+`railway ssh -- sh -c "cd /app && python -m ops.spike_rss"`, record the repaired
+container peak and provenance fields, and then set PASS/FAIL. On FAIL, invoke the locked
+quantize → raise Railway memory → externalize index ladder. No new live number or
+verdict is claimed by this repair commit.
 
 ### AC-6 [live-measure] — image size + cold start
 - New image 809 MB vs W1-baseline 369 MB → **+440 MB** (apt tesseract layer + ONNX/
@@ -168,10 +202,10 @@ absent; no torch** (frozen guard + live container check).
 
 ## Gates
 
-`bash .tdd-swarm/run-local-gates.sh tickets/W2-M1.md cdeed28` — ALL GATES PASS
-(syntax, unit-tests 243 passed/6 skipped, frozen-tests, spec-lint with AC-3..6 exempt as
+`bash .tdd-swarm/run-local-gates.sh tickets/W2-M1.md 836f500` — ALL GATES PASS
+(syntax, unit-tests 247 passed/6 skipped, frozen-tests, spec-lint with AC-3..6 exempt as
 live-measure, no-todos, no-debug, no-skip-markers). Frozen test files untouched since
-`cdeed28` (`git diff cdeed28..HEAD -- agent/tests/` empty).
+`836f500` (`git diff 836f500..HEAD -- agent/tests/` empty).
 
 ## Secrets / PHI
 

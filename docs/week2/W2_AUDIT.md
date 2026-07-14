@@ -69,6 +69,62 @@ assumption that it uploads documents (it generates CCDs — W2-F1 evidence).
 *Impact:* recorded so no build agent "discovers" and uses it as an upload path;
 also useful defense material (we verified rather than assumed).
 
+## W2-F1 independent verification (2026-07-13/14 — repo + local live + deployed read-only)
+
+**Verdict: W2-F1 CONFIRMED and strengthened.** Authenticated `POST /fhir/DocumentReference`
+and `POST /fhir/Observation` against the local stack returned route-level **404 "Route
+not found"** with a token whose JWT scopes included the maximal (unadvertised) legacy
+write strings — decisively "no route," not "insufficient scope." Controller depth agrees:
+all mapped DocumentReference/Observation services use `FhirServiceBaseEmptyTrait`, whose
+insert/update return null (src/Services/FHIR/Traits/FhirServiceBaseEmptyTrait.php:37).
+No module registers runtime routes (RestApiCreateEvent exists; zero active listeners).
+Production was not written to.
+
+**New findings from the verification:**
+- **W2-F7 — CapabilityStatement over-declares DocumentReference.create (both local AND
+  deployed, byte-identical metadata).** The generator mechanically maps every POST route
+  to a `create` interaction (src/RestControllers/RestControllerHelper.php:445), so the
+  `$docref` operation route manufactures a false create declaration. Same class as W1
+  F-D.1: the fork's self-description cannot be trusted; probe everything. (Also:
+  OperationDefinition.delete declared from the bulk-status DELETE.)
+- **W2-F8 — $docref DOES write internally** (generates + persists a CCD document + ccda
+  row). Precision correction: "no client-supplied FHIR create path" is the true claim;
+  "no /fhir endpoint ever writes" would be false.
+- **W2-F9 — Documents upload contract differs from assumption:** POST returns **200 with
+  body `true`** (not 201) and **no document id**
+  (src/RestControllers/DocumentRestController.php:120); id discovery = collection GET by
+  unique filename/content-hash. Upload/list verified; **FHIR read-back verified
+  byte-exact** (DocumentReference/uuid → Binary/uuid, SHA-256 match on a 603-byte test
+  PDF). The standard REST download companion **returns 500** in this stack (CSRF-key
+  defect via DocumentService::getFile → C_Document) — known local defect; the FHIR
+  Binary path is the reliable read-back.
+- **W2-F10 — Vitals path fully validated end-to-end:** POST vital → 201 {vid} → standard
+  GET returns values → **FHIR `Observation?category=vital-signs` surfaces 15 Observation
+  resources** (BP panel, HR, SpO2, temp, height, weight, respiration). The PRD's
+  "derived observations round-trip through OpenEMR" is proven across both API surfaces.
+- **W2-F11 — Scope/discovery drift (multiple instances):** SMART v2 discovery advertises
+  only `.rs` for our targets; a validator defect accepts unadvertised legacy
+  `user/DocumentReference.write`/`user/Observation.write` at registration; several
+  advertised scope letters have no matching routes (appointment update, transaction
+  delete); repo docs claim write scopes that conflict with discovery AND routing.
+  Pattern finding: registration/discovery/docs/routes are four surfaces that disagree.
+- **W2-F4 RESOLVED — provisioning verified live.** Minimum W2 write/read scope surface:
+  `api:oemr user/document.crs user/vital.crus user/Observation.rs` (+
+  `user/DocumentReference.rs user/Binary.read` for document read-back verification).
+  Registration → created DISABLED → admin enable via Administration → System → API
+  Clients (verified sequence recorded). Staff ACLs must independently permit
+  patients/docs write. **Critical constraint: existing clients cannot gain scopes
+  post-registration and the admin screen cannot edit scope sets — W1's client cannot be
+  extended; W2 requires a REPLACEMENT registration** (union of W1+W2 scopes,
+  auth-code+refresh grants, swap SMART_CLIENT_ID/SECRET, then disable the old client —
+  W1's E9 duplicate-launcher lesson applies to the cutover).
+
+**MVP design corrections fed to the binding doc/plan:** upload success = 200 `true`; id
+via list-by-hash; FHIR DocumentReference→Binary is the round-trip read-back (dodges the
+500); `$docref` described as "server-generated CCD persistence"; vitals unchanged.
+Verification client: local-only, password-grant (pre-enabled locally; NOT for
+production), to be disabled post-audit.
+
 ## Gate verdict
 
 The W2 integration mechanism is sound with the corrected transport: uploads and

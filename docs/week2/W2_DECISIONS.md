@@ -14,6 +14,16 @@
   enable step).
 - The agent gets exactly two write capabilities: create documents, create
   vitals-class records. No update. No delete. Nothing clinician-authored is touchable.
+- **Addendum (2026-07-14, W2-F1 live verification):** mechanism confirmed end-to-end
+  with corrections. Upload returns **200 `true` with no id** (id via collection GET by
+  content hash); the reliable read-back is the **FHIR projection**
+  (DocumentReference/uuid → Binary/uuid, byte-exact) since the standard download 500s
+  in this stack; vitals round-trip fully proven through to FHIR Observation reads.
+  Minimum scope surface: `api:oemr user/document.crs user/vital.crus
+  user/Observation.rs` (+ DocumentReference.rs/Binary.read for read-back). **Clients
+  cannot gain scopes post-registration → MVP requires a REPLACEMENT SMART client
+  registration** (W1+W2 scope union, auth-code+refresh, swap credentials, disable the
+  old client after cutover — E9 lesson). Staff ACLs must permit patients/docs write.
 - Idempotent: content-hash on files, deterministic IDs on facts. Re-upload creates
   nothing. That is the PRD round-trip requirement.
 - Discrepancy note (owner-flagged 2026-07-13): the PRD's engineering section says

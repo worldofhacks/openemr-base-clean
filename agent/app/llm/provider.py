@@ -40,6 +40,10 @@ class LLMUnavailable(LLMError):
     Genuine graceful degradation → the orchestrator renders the deterministic D13 fallback."""
 
 
+class LLMTimeout(LLMUnavailable):
+    """TRANSIENT provider timeout, retained as a distinct subtype for VLM jobs."""
+
+
 class LLMClientError(LLMError):
     """PERSISTENT client-side error (a 4xx that recurs on retry): a bug, misconfig, or bad
     request. Carries the HTTP status so E7 alerts on it as a defect, not normal degradation."""
@@ -59,6 +63,8 @@ def classify_llm_error(exc: BaseException) -> LLMError:
     (not subclass-name-driven) so it is robust across anthropic SDK versions."""
     status = getattr(exc, "status_code", None)
     label = f"{type(exc).__name__}: {exc}"
+    if isinstance(exc, (anthropic.APITimeoutError, TimeoutError)):
+        return LLMTimeout(label)
     if status == 413:
         return LLMRequestTooLarge(label, status=413)
     if status is not None and 400 <= status < 500 and status != 429:
@@ -161,8 +167,14 @@ class AnthropicLLMProvider:
         self._client = client or anthropic.AsyncAnthropic(
             api_key=api_key, timeout=timeout, max_retries=max_retries)
 
-    async def complete(self, *, system: list[dict], messages: list[dict],
-                       tools: list[dict]) -> LLMResponse:
+    async def complete(
+        self,
+        *,
+        system: list[dict],
+        messages: list[dict],
+        tools: list[dict],
+        tool_choice: dict[str, Any] | None = None,
+    ) -> LLMResponse:
         kwargs: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
@@ -172,10 +184,15 @@ class AnthropicLLMProvider:
             kwargs["system"] = system  # cache_control breakpoints forwarded verbatim (R1)
         if tools:
             kwargs["tools"] = tools
+            if tool_choice is not None:
+                # W2-D3 document extraction supplies an explicit single-tool choice and
+                # disables parallel tool use. The VLM boundary validates that exactly one
+                # matching call came back before returning any proposed field.
+                kwargs["tool_choice"] = tool_choice
             # UC1: when the ONLY tool is submit_claims (the packet is pre-built, no FHIR reads
             # to make), force it — the model must answer in typed claims, not prose, or verify-
             # then-flush has nothing structured to verify and serves an empty brief.
-            if len(tools) == 1 and tools[0].get("name") == "submit_claims":
+            elif len(tools) == 1 and tools[0].get("name") == "submit_claims":
                 kwargs["tool_choice"] = {"type": "tool", "name": "submit_claims"}
         try:
             raw = await self._client.messages.create(**kwargs)

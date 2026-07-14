@@ -1,0 +1,71 @@
+meta {
+  name: VA/DoD guideline evidence search
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{agent_base_url}}/evidence/search
+  body: json
+  auth: none
+}
+
+headers {
+  accept: application/json
+  content-type: application/json
+}
+
+body:json {
+  {
+    "query": "type 2 diabetes; HbA1c",
+    "k": 5
+  }
+}
+
+tests {
+  test("evidence search returns its typed response", function () {
+    expect(res.getStatus()).to.equal(200);
+
+    const body = res.getBody();
+    expect(Object.keys(body).sort()).to.deep.equal([
+      "corpus_version",
+      "items",
+      "correlation_id"
+    ].sort());
+    expect(body.items).to.be.an("array").and.to.have.length.at.most(10);
+    expect(body.corpus_version).to.match(/^.+@[0-9a-f]{64}$/);
+    expect(body.correlation_id).to.be.a("string").and.not.be.empty;
+  });
+
+  test("each snippet matches EvidenceSnippet and the response corpus version", function () {
+    const body = res.getBody();
+
+    body.items.forEach(function (item) {
+      expect(Object.keys(item).sort()).to.deep.equal([
+        "source_id",
+        "section",
+        "chunk_id",
+        "quote",
+        "score",
+        "corpus_version"
+      ].sort());
+      expect(item.source_id).to.match(/^.+@[0-9a-f]{64}$/);
+      expect(item.section).to.be.a("string").and.not.be.empty;
+      expect(item.chunk_id).to.be.a("string").and.not.be.empty;
+      expect(item.quote).to.be.a("string").and.not.be.empty;
+      expect(item.score).to.be.a("number").and.within(0, 1);
+      expect(item.corpus_version).to.equal(body.corpus_version);
+    });
+  });
+
+  test("body and response header carry the same correlation id", function () {
+    expect(res.getBody().correlation_id).to.equal(
+      res.getHeader("x-copilot-request-id")
+    );
+  });
+}
+
+settings {
+  encodeUrl: true
+  timeout: 180000
+}

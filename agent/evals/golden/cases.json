@@ -1,0 +1,4395 @@
+[
+  {
+    "case_id": "lab-clean-glucose",
+    "category": "boundary",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-clean-glucose.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "Glucose",
+          "value": "92",
+          "unit": "mg/dL",
+          "reference_range": "70-99",
+          "collection_date": "2026-06-01",
+          "abnormal_flag": "N"
+        }
+      ],
+      "source_document_id": "fixture:lab-clean-glucose"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-glucose",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "Glucose"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-glucose",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "92"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-glucose",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "mg/dL"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-glucose",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "70-99"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-glucose",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-06-01"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-glucose",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "N"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Clean born-digital lab output drifting from the frozen LabResult field inventory.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "The clean text-layer PDF validates as one complete LabResult."
+    ],
+    "maps_to": "schema_valid"
+  },
+  {
+    "case_id": "lab-clean-hba1c-high",
+    "category": "boundary",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-clean-hba1c-high.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "Hemoglobin A1c",
+          "value": "8.1",
+          "unit": "%",
+          "reference_range": "4.0-5.6",
+          "collection_date": "2026-06-02",
+          "abnormal_flag": "H"
+        }
+      ],
+      "source_document_id": "fixture:lab-clean-hba1c-high"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-hba1c-high",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "Hemoglobin A1c"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-hba1c-high",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "8.1"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-hba1c-high",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "%"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-hba1c-high",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "4.0-5.6"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-hba1c-high",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-06-02"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-hba1c-high",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "H"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "High HbA1c value or abnormal flag being normalized away.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "The value remains 8.1 and abnormal_flag remains H."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "lab-clean-potassium-low",
+    "category": "boundary",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-clean-potassium-low.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "Potassium",
+          "value": "3.2",
+          "unit": "mmol/L",
+          "reference_range": "3.5-5.1",
+          "collection_date": "2026-06-03",
+          "abnormal_flag": "L"
+        }
+      ],
+      "source_document_id": "fixture:lab-clean-potassium-low"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-potassium-low",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "Potassium"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-potassium-low",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "3.2"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-potassium-low",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "mmol/L"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-potassium-low",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "3.5-5.1"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-potassium-low",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-06-03"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-potassium-low",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "L"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Low potassium being copied with the wrong flag or unit.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "The low result preserves both mmol/L and the L flag."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "lab-clean-creatinine-decimal",
+    "category": "boundary",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-clean-creatinine-decimal.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "Creatinine",
+          "value": "0.89",
+          "unit": "mg/dL",
+          "reference_range": "0.60-1.20",
+          "collection_date": "2026-06-04",
+          "abnormal_flag": "N"
+        }
+      ],
+      "source_document_id": "fixture:lab-clean-creatinine-decimal"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-creatinine-decimal",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "Creatinine"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-creatinine-decimal",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "0.89"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-creatinine-decimal",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "mg/dL"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-creatinine-decimal",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "0.60-1.20"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-creatinine-decimal",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-06-04"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-creatinine-decimal",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "N"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Leading zero or decimal precision loss in lab values.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "The string value remains exactly 0.89."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "lab-clean-ldl-less-than-range",
+    "category": "boundary",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-clean-ldl-less-than-range.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "LDL Cholesterol",
+          "value": "176",
+          "unit": "mg/dL",
+          "reference_range": "<100",
+          "collection_date": "2026-06-05",
+          "abnormal_flag": "H"
+        }
+      ],
+      "source_document_id": "fixture:lab-clean-ldl-less-than-range"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-ldl-less-than-range",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "LDL Cholesterol"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-ldl-less-than-range",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "176"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-ldl-less-than-range",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "mg/dL"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-ldl-less-than-range",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "<100"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-ldl-less-than-range",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-06-05"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-clean-ldl-less-than-range",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "H"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Comparator loss from a one-sided reference range.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "The reference range retains the literal less-than comparator."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "lab-multi-cmp-all-results",
+    "category": "invariant",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-multi-cmp-all-results.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "Glucose",
+          "value": "110",
+          "unit": "mg/dL",
+          "reference_range": "70-99",
+          "collection_date": "2026-06-06",
+          "abnormal_flag": "H"
+        },
+        {
+          "test_name": "Sodium",
+          "value": "139",
+          "unit": "mmol/L",
+          "reference_range": "136-145",
+          "collection_date": "2026-06-06",
+          "abnormal_flag": "N"
+        },
+        {
+          "test_name": "Potassium",
+          "value": "4.1",
+          "unit": "mmol/L",
+          "reference_range": "3.5-5.1",
+          "collection_date": "2026-06-06",
+          "abnormal_flag": "N"
+        },
+        {
+          "test_name": "Creatinine",
+          "value": "0.94",
+          "unit": "mg/dL",
+          "reference_range": "0.60-1.20",
+          "collection_date": "2026-06-06",
+          "abnormal_flag": "N"
+        }
+      ],
+      "source_document_id": "fixture:lab-multi-cmp-all-results"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "Glucose"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "110"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "mg/dL"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "70-99"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-06-06"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "H"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].test_name",
+        "quote_or_value": "Sodium"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].value",
+        "quote_or_value": "139"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].unit",
+        "quote_or_value": "mmol/L"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].reference_range",
+        "quote_or_value": "136-145"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].collection_date",
+        "quote_or_value": "2026-06-06"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].abnormal_flag",
+        "quote_or_value": "N"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[2].test_name",
+        "quote_or_value": "Potassium"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[2].value",
+        "quote_or_value": "4.1"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[2].unit",
+        "quote_or_value": "mmol/L"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[2].reference_range",
+        "quote_or_value": "3.5-5.1"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[2].collection_date",
+        "quote_or_value": "2026-06-06"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[2].abnormal_flag",
+        "quote_or_value": "N"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[3].test_name",
+        "quote_or_value": "Creatinine"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[3].value",
+        "quote_or_value": "0.94"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[3].unit",
+        "quote_or_value": "mg/dL"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[3].reference_range",
+        "quote_or_value": "0.60-1.20"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[3].collection_date",
+        "quote_or_value": "2026-06-06"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-cmp-all-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[3].abnormal_flag",
+        "quote_or_value": "N"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "A multi-result report collapsing to only the first laboratory row.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "All four ordered CMP results validate independently."
+    ],
+    "maps_to": "schema_valid"
+  },
+  {
+    "case_id": "lab-multi-lipid-panel",
+    "category": "invariant",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-multi-lipid-panel.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "Total Cholesterol",
+          "value": "242",
+          "unit": "mg/dL",
+          "reference_range": "<200",
+          "collection_date": "2026-06-07",
+          "abnormal_flag": "H"
+        },
+        {
+          "test_name": "HDL Cholesterol",
+          "value": "38",
+          "unit": "mg/dL",
+          "reference_range": ">=40",
+          "collection_date": "2026-06-07",
+          "abnormal_flag": "L"
+        },
+        {
+          "test_name": "LDL Cholesterol",
+          "value": "165",
+          "unit": "mg/dL",
+          "reference_range": "<100",
+          "collection_date": "2026-06-07",
+          "abnormal_flag": "H"
+        },
+        {
+          "test_name": "Triglycerides",
+          "value": "195",
+          "unit": "mg/dL",
+          "reference_range": "<150",
+          "collection_date": "2026-06-07",
+          "abnormal_flag": "H"
+        }
+      ],
+      "source_document_id": "fixture:lab-multi-lipid-panel"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "Total Cholesterol"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "242"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "mg/dL"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "<200"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-06-07"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "H"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].test_name",
+        "quote_or_value": "HDL Cholesterol"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].value",
+        "quote_or_value": "38"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].unit",
+        "quote_or_value": "mg/dL"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].reference_range",
+        "quote_or_value": ">=40"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].collection_date",
+        "quote_or_value": "2026-06-07"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].abnormal_flag",
+        "quote_or_value": "L"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[2].test_name",
+        "quote_or_value": "LDL Cholesterol"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[2].value",
+        "quote_or_value": "165"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[2].unit",
+        "quote_or_value": "mg/dL"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[2].reference_range",
+        "quote_or_value": "<100"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[2].collection_date",
+        "quote_or_value": "2026-06-07"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[2].abnormal_flag",
+        "quote_or_value": "H"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[3].test_name",
+        "quote_or_value": "Triglycerides"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[3].value",
+        "quote_or_value": "195"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[3].unit",
+        "quote_or_value": "mg/dL"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[3].reference_range",
+        "quote_or_value": "<150"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[3].collection_date",
+        "quote_or_value": "2026-06-07"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multi-lipid-panel",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[3].abnormal_flag",
+        "quote_or_value": "H"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Lipid panel row loss or comparator corruption.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "All four lipid rows and one-sided ranges are preserved."
+    ],
+    "maps_to": "schema_valid"
+  },
+  {
+    "case_id": "lab-repeat-test-two-results",
+    "category": "regression",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-repeat-test-two-results.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "Hemoglobin A1c",
+          "value": "7.2",
+          "unit": "%",
+          "reference_range": "4.0-5.6",
+          "collection_date": "2026-03-10",
+          "abnormal_flag": "H"
+        },
+        {
+          "test_name": "Hemoglobin A1c",
+          "value": "6.8",
+          "unit": "%",
+          "reference_range": "4.0-5.6",
+          "collection_date": "2026-06-10",
+          "abnormal_flag": "H"
+        }
+      ],
+      "source_document_id": "fixture:lab-repeat-test-two-results"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-repeat-test-two-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "Hemoglobin A1c"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-repeat-test-two-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "7.2"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-repeat-test-two-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "%"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-repeat-test-two-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "4.0-5.6"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-repeat-test-two-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-03-10"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-repeat-test-two-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "H"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-repeat-test-two-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].test_name",
+        "quote_or_value": "Hemoglobin A1c"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-repeat-test-two-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].value",
+        "quote_or_value": "6.8"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-repeat-test-two-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].unit",
+        "quote_or_value": "%"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-repeat-test-two-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].reference_range",
+        "quote_or_value": "4.0-5.6"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-repeat-test-two-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].collection_date",
+        "quote_or_value": "2026-06-10"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-repeat-test-two-results",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].abnormal_flag",
+        "quote_or_value": "H"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Repeated test names being deduplicated across distinct collection dates.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "Both dated HbA1c rows survive in source order."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "lab-result-level-distinct-dates",
+    "category": "regression",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-result-level-distinct-dates.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "Potassium",
+          "value": "4.0",
+          "unit": "mmol/L",
+          "reference_range": "3.5-5.1",
+          "collection_date": "2026-05-01",
+          "abnormal_flag": "N"
+        },
+        {
+          "test_name": "Creatinine",
+          "value": "0.92",
+          "unit": "mg/dL",
+          "reference_range": "0.60-1.20",
+          "collection_date": "2026-05-02",
+          "abnormal_flag": "N"
+        }
+      ],
+      "source_document_id": "fixture:lab-result-level-distinct-dates"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-result-level-distinct-dates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "Potassium"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-result-level-distinct-dates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "4.0"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-result-level-distinct-dates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "mmol/L"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-result-level-distinct-dates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "3.5-5.1"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-result-level-distinct-dates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-05-01"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-result-level-distinct-dates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "N"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-result-level-distinct-dates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].test_name",
+        "quote_or_value": "Creatinine"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-result-level-distinct-dates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].value",
+        "quote_or_value": "0.92"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-result-level-distinct-dates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].unit",
+        "quote_or_value": "mg/dL"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-result-level-distinct-dates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].reference_range",
+        "quote_or_value": "0.60-1.20"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-result-level-distinct-dates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].collection_date",
+        "quote_or_value": "2026-05-02"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-result-level-distinct-dates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[1].abnormal_flag",
+        "quote_or_value": "N"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Reintroducing the superseded report-level collection date.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "Each result retains its own distinct collection_date."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "lab-unit-preserved-mmol",
+    "category": "regression",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-unit-preserved-mmol.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "Glucose",
+          "value": "5.4",
+          "unit": "mmol/L",
+          "reference_range": "3.9-5.5",
+          "collection_date": "2026-06-11",
+          "abnormal_flag": "N"
+        }
+      ],
+      "source_document_id": "fixture:lab-unit-preserved-mmol"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-unit-preserved-mmol",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "Glucose"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-unit-preserved-mmol",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "5.4"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-unit-preserved-mmol",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "mmol/L"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-unit-preserved-mmol",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "3.9-5.5"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-unit-preserved-mmol",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-06-11"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-unit-preserved-mmol",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "N"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Silent conversion of source lab units.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "The source unit remains mmol/L; no mg/dL conversion occurs."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "lab-missing-reference-range",
+    "category": "invariant",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-missing-reference-range.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "TSH",
+          "value": "2.10",
+          "unit": "mIU/L",
+          "reference_range": null,
+          "collection_date": "2026-06-12",
+          "abnormal_flag": "N"
+        }
+      ],
+      "source_document_id": "fixture:lab-missing-reference-range"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-reference-range",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "TSH"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-reference-range",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "2.10"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-reference-range",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "mIU/L"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-reference-range",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-06-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-reference-range",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "N"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Guessing a reference range absent from the source document.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "reference_range is null and has no citation."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "lab-missing-unit",
+    "category": "invariant",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-missing-unit.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "Vitamin D",
+          "value": "31",
+          "unit": null,
+          "reference_range": "30-100",
+          "collection_date": "2026-06-13",
+          "abnormal_flag": "N"
+        }
+      ],
+      "source_document_id": "fixture:lab-missing-unit"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-unit",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "Vitamin D"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-unit",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "31"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-unit",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "30-100"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-unit",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-06-13"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-unit",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "N"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Guessing a unit absent from the source document.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "unit is null and has no citation."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "lab-missing-collection-date",
+    "category": "invariant",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-missing-collection-date.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "Ferritin",
+          "value": "56",
+          "unit": "ng/mL",
+          "reference_range": "15-150",
+          "collection_date": null,
+          "abnormal_flag": "N"
+        }
+      ],
+      "source_document_id": "fixture:lab-missing-collection-date"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-collection-date",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "Ferritin"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-collection-date",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "56"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-collection-date",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "ng/mL"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-collection-date",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "15-150"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-collection-date",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "N"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Inventing a collection date when none is reported.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "collection_date is null and has no citation."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "lab-missing-abnormal-flag",
+    "category": "invariant",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-missing-abnormal-flag.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "Vitamin B12",
+          "value": "540",
+          "unit": "pg/mL",
+          "reference_range": "200-900",
+          "collection_date": "2026-06-14",
+          "abnormal_flag": null
+        }
+      ],
+      "source_document_id": "fixture:lab-missing-abnormal-flag"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-abnormal-flag",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "Vitamin B12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-abnormal-flag",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "540"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-abnormal-flag",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "pg/mL"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-abnormal-flag",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "200-900"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-missing-abnormal-flag",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-06-14"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Inferring a normal flag instead of honoring missing source data.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "abnormal_flag is null even though a range is visible."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "lab-degraded-scan-readable",
+    "category": "boundary",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-degraded-scan-readable.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "ALT",
+          "value": "67",
+          "unit": "U/L",
+          "reference_range": "7-56",
+          "collection_date": "2026-06-15",
+          "abnormal_flag": "H"
+        }
+      ],
+      "source_document_id": "fixture:lab-degraded-scan-readable"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-degraded-scan-readable",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "ALT"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-degraded-scan-readable",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "67"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-degraded-scan-readable",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "U/L"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-degraded-scan-readable",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "7-56"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-degraded-scan-readable",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-06-15"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-degraded-scan-readable",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "H"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Readable image-only lab scans being treated as empty documents.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "OCR recovers the visible ALT result from the degraded raster page."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "lab-degraded-scan-unreadable-value",
+    "category": "invariant",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-degraded-scan-unreadable-value.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "AST",
+          "value": null,
+          "unit": "U/L",
+          "reference_range": "10-40",
+          "collection_date": "2026-06-16",
+          "abnormal_flag": "H"
+        }
+      ],
+      "source_document_id": "fixture:lab-degraded-scan-unreadable-value"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-degraded-scan-unreadable-value",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "AST"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-degraded-scan-unreadable-value",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "U/L"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-degraded-scan-unreadable-value",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "10-40"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-degraded-scan-unreadable-value",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-06-16"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-degraded-scan-unreadable-value",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "H"
+      }
+    ],
+    "expected_verdict": "unsupported_field",
+    "guards": "Guessing a laboratory value hidden by scan damage.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "The obscured value remains unsupported while the other visible leaves may ground."
+    ],
+    "maps_to": "safe_refusal"
+  },
+  {
+    "case_id": "lab-multipage-page2-citations",
+    "category": "regression",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-multipage-page2-citations.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "Magnesium",
+          "value": "1.6",
+          "unit": "mg/dL",
+          "reference_range": "1.7-2.2",
+          "collection_date": "2026-06-17",
+          "abnormal_flag": "L"
+        }
+      ],
+      "source_document_id": "fixture:lab-multipage-page2-citations"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multipage-page2-citations",
+        "page_or_section": "page 2",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "Magnesium"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multipage-page2-citations",
+        "page_or_section": "page 2",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "1.6"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multipage-page2-citations",
+        "page_or_section": "page 2",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "mg/dL"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multipage-page2-citations",
+        "page_or_section": "page 2",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "1.7-2.2"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multipage-page2-citations",
+        "page_or_section": "page 2",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-06-17"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-multipage-page2-citations",
+        "page_or_section": "page 2",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "L"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Citations defaulting to page 1 for a result found on page 2.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "Every LabResult citation names page 2."
+    ],
+    "maps_to": "citation_present"
+  },
+  {
+    "case_id": "lab-duplicate-upload-first",
+    "category": "boundary",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-duplicate-upload-first.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "WBC",
+          "value": "6.4",
+          "unit": "10^3/uL",
+          "reference_range": "4.0-11.0",
+          "collection_date": "2026-06-18",
+          "abnormal_flag": "N"
+        }
+      ],
+      "source_document_id": "fixture:lab-duplicate-upload-first"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-duplicate-upload-first",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "WBC"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-duplicate-upload-first",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "6.4"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-duplicate-upload-first",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "10^3/uL"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-duplicate-upload-first",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "4.0-11.0"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-duplicate-upload-first",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-06-18"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-duplicate-upload-first",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "N"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "The first member of an idempotency pair failing ordinary extraction.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "The first upload produces one valid extraction lineage."
+    ],
+    "maps_to": "schema_valid"
+  },
+  {
+    "case_id": "lab-duplicate-upload-noop",
+    "category": "regression",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-duplicate-upload-noop.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "WBC",
+          "value": "6.4",
+          "unit": "10^3/uL",
+          "reference_range": "4.0-11.0",
+          "collection_date": "2026-06-18",
+          "abnormal_flag": "N"
+        }
+      ],
+      "source_document_id": "fixture:lab-duplicate-upload-first"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-duplicate-upload-first",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "WBC"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-duplicate-upload-first",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "6.4"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-duplicate-upload-first",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "10^3/uL"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-duplicate-upload-first",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "4.0-11.0"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-duplicate-upload-first",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2026-06-18"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-duplicate-upload-first",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "N"
+      }
+    ],
+    "expected_verdict": "duplicate_noop",
+    "guards": "Byte-identical re-upload creating a second extraction or write lineage.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "This PDF is byte-identical to the first upload and resolves to its existing source_document_id."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "lab-decade-stale-date-flag",
+    "category": "regression",
+    "doc_type": "lab_pdf",
+    "fixture_path": "agent/evals/fixtures/golden/lab-decade-stale-date-flag.pdf",
+    "expected_fields": {
+      "results": [
+        {
+          "test_name": "TSH",
+          "value": "1.82",
+          "unit": "mIU/L",
+          "reference_range": "0.40-4.50",
+          "collection_date": "2015-06-15",
+          "abnormal_flag": "N"
+        }
+      ],
+      "source_document_id": "fixture:lab-decade-stale-date-flag"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-decade-stale-date-flag",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].test_name",
+        "quote_or_value": "TSH"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-decade-stale-date-flag",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].value",
+        "quote_or_value": "1.82"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-decade-stale-date-flag",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].unit",
+        "quote_or_value": "mIU/L"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-decade-stale-date-flag",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].reference_range",
+        "quote_or_value": "0.40-4.50"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-decade-stale-date-flag",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].collection_date",
+        "quote_or_value": "2015-06-15"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:lab-decade-stale-date-flag",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "results[0].abnormal_flag",
+        "quote_or_value": "N"
+      }
+    ],
+    "expected_verdict": "extract_with_stale_flag",
+    "guards": "A decade-old result being presented as current evidence.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "The extracted result is retained but the consumer marks it stale."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "intake-full-valid",
+    "category": "boundary",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-full-valid.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-full-valid",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Recurring morning headaches.",
+      "current_medications": [
+        "Lisinopril 10 mg daily",
+        "Metformin 500 mg twice daily"
+      ],
+      "allergies": [
+        "Penicillin - rash"
+      ],
+      "family_history": "Father: type 2 diabetes. Mother: hypertension.",
+      "vitals": {
+        "bps": {
+          "value": 138,
+          "unit": "mmHg",
+          "measurement_date": "2026-06-20T09:15:00Z"
+        },
+        "bpd": {
+          "value": 88,
+          "unit": "mmHg",
+          "measurement_date": "2026-06-20T09:15:00Z"
+        },
+        "weight": {
+          "value": 185.6,
+          "unit": "lb",
+          "measurement_date": "2026-06-20T09:15:00Z"
+        },
+        "height": {
+          "value": 66,
+          "unit": "in",
+          "measurement_date": "2026-06-20T09:15:00Z"
+        },
+        "temperature": {
+          "value": 98.8,
+          "unit": "deg F",
+          "measurement_date": "2026-06-20T09:15:00Z"
+        },
+        "pulse": {
+          "value": 78,
+          "unit": "/min",
+          "measurement_date": "2026-06-20T09:15:00Z"
+        },
+        "respiration": {
+          "value": 16,
+          "unit": "/min",
+          "measurement_date": "2026-06-20T09:15:00Z"
+        },
+        "oxygen_saturation": {
+          "value": 98,
+          "unit": "%",
+          "measurement_date": "2026-06-20T09:15:00Z"
+        }
+      },
+      "source_document_id": "fixture:intake-full-valid"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-full-valid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Recurring morning headaches."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Lisinopril 10 mg daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[1]",
+        "quote_or_value": "Metformin 500 mg twice daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Penicillin - rash"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Father: type 2 diabetes. Mother: hypertension."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bps.value",
+        "quote_or_value": "138"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bps.unit",
+        "quote_or_value": "mmHg"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bps.measurement_date",
+        "quote_or_value": "2026-06-20T09:15:00Z"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bpd.value",
+        "quote_or_value": "88"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bpd.unit",
+        "quote_or_value": "mmHg"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bpd.measurement_date",
+        "quote_or_value": "2026-06-20T09:15:00Z"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.weight.value",
+        "quote_or_value": "185.6"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.weight.unit",
+        "quote_or_value": "lb"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.weight.measurement_date",
+        "quote_or_value": "2026-06-20T09:15:00Z"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.height.value",
+        "quote_or_value": "66"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.height.unit",
+        "quote_or_value": "in"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.height.measurement_date",
+        "quote_or_value": "2026-06-20T09:15:00Z"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.temperature.value",
+        "quote_or_value": "98.8"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.temperature.unit",
+        "quote_or_value": "deg F"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.temperature.measurement_date",
+        "quote_or_value": "2026-06-20T09:15:00Z"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.pulse.value",
+        "quote_or_value": "78"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.pulse.unit",
+        "quote_or_value": "/min"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.pulse.measurement_date",
+        "quote_or_value": "2026-06-20T09:15:00Z"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.respiration.value",
+        "quote_or_value": "16"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.respiration.unit",
+        "quote_or_value": "/min"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.respiration.measurement_date",
+        "quote_or_value": "2026-06-20T09:15:00Z"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.oxygen_saturation.value",
+        "quote_or_value": "98"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.oxygen_saturation.unit",
+        "quote_or_value": "%"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-full-valid",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.oxygen_saturation.measurement_date",
+        "quote_or_value": "2026-06-20T09:15:00Z"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "A complete intake form failing the frozen IntakeFormExtraction contract.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "All eight grounded vital candidates and every intake section validate."
+    ],
+    "maps_to": "schema_valid"
+  },
+  {
+    "case_id": "intake-demographics-leaf-citations",
+    "category": "regression",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-demographics-leaf-citations.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-demographics-leaf-citations",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [
+        "Vitamin D 1000 IU daily"
+      ],
+      "allergies": [
+        "Latex - contact rash"
+      ],
+      "family_history": "Sibling: asthma.",
+      "vitals": {
+        "bps": null,
+        "bpd": null,
+        "weight": null,
+        "height": null,
+        "temperature": null,
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": null
+      },
+      "source_document_id": "fixture:intake-demographics-leaf-citations"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-demographics-leaf-citations",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-demographics-leaf-citations"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-demographics-leaf-citations",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-demographics-leaf-citations",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-demographics-leaf-citations",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-demographics-leaf-citations",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-demographics-leaf-citations",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Vitamin D 1000 IU daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-demographics-leaf-citations",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Latex - contact rash"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-demographics-leaf-citations",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Sibling: asthma."
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Demographic leaves sharing an incomplete or report-level citation.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "Each populated demographic leaf has its own complete CitationV2."
+    ],
+    "maps_to": "citation_present"
+  },
+  {
+    "case_id": "intake-chief-concern-verbatim",
+    "category": "boundary",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-chief-concern-verbatim.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-chief-concern-verbatim",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Persistent dry cough for two weeks.",
+      "current_medications": [
+        "Vitamin D 1000 IU daily"
+      ],
+      "allergies": [
+        "Latex - contact rash"
+      ],
+      "family_history": "Sibling: asthma.",
+      "vitals": {
+        "bps": null,
+        "bpd": null,
+        "weight": null,
+        "height": null,
+        "temperature": null,
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": null
+      },
+      "source_document_id": "fixture:intake-chief-concern-verbatim"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-chief-concern-verbatim",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-chief-concern-verbatim"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-chief-concern-verbatim",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-chief-concern-verbatim",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-chief-concern-verbatim",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-chief-concern-verbatim",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Persistent dry cough for two weeks."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-chief-concern-verbatim",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Vitamin D 1000 IU daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-chief-concern-verbatim",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Latex - contact rash"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-chief-concern-verbatim",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Sibling: asthma."
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Chief concern paraphrasing that cannot be grounded to the document.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "The concern remains verbatim and cites its visible source text."
+    ],
+    "maps_to": "citation_present"
+  },
+  {
+    "case_id": "intake-medication-list-order",
+    "category": "invariant",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-medication-list-order.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-medication-list-order",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [
+        "Amlodipine 5 mg each morning",
+        "Atorvastatin 20 mg nightly"
+      ],
+      "allergies": [
+        "Latex - contact rash"
+      ],
+      "family_history": "Sibling: asthma.",
+      "vitals": {
+        "bps": null,
+        "bpd": null,
+        "weight": null,
+        "height": null,
+        "temperature": null,
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": null
+      },
+      "source_document_id": "fixture:intake-medication-list-order"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-medication-list-order",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-medication-list-order"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-medication-list-order",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-medication-list-order",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-medication-list-order",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-medication-list-order",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-medication-list-order",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Amlodipine 5 mg each morning"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-medication-list-order",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[1]",
+        "quote_or_value": "Atorvastatin 20 mg nightly"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-medication-list-order",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Latex - contact rash"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-medication-list-order",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Sibling: asthma."
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Medication list reordering or merging during extraction.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "Both medication strings remain separate and in source order."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "intake-explicit-allergy",
+    "category": "boundary",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-explicit-allergy.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-explicit-allergy",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [
+        "Vitamin D 1000 IU daily"
+      ],
+      "allergies": [
+        "Sulfonamide antibiotics - hives"
+      ],
+      "family_history": "Sibling: asthma.",
+      "vitals": {
+        "bps": null,
+        "bpd": null,
+        "weight": null,
+        "height": null,
+        "temperature": null,
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": null
+      },
+      "source_document_id": "fixture:intake-explicit-allergy"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-explicit-allergy",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-explicit-allergy"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-explicit-allergy",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-explicit-allergy",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-explicit-allergy",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-explicit-allergy",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-explicit-allergy",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Vitamin D 1000 IU daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-explicit-allergy",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Sulfonamide antibiotics - hives"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-explicit-allergy",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Sibling: asthma."
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "An explicitly documented allergy being converted to NKDA or omitted.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "The allergy and reaction are preserved verbatim."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "intake-family-history",
+    "category": "boundary",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-family-history.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-family-history",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [
+        "Vitamin D 1000 IU daily"
+      ],
+      "allergies": [
+        "Latex - contact rash"
+      ],
+      "family_history": "Father: type 2 diabetes. Mother: hypertension.",
+      "vitals": {
+        "bps": null,
+        "bpd": null,
+        "weight": null,
+        "height": null,
+        "temperature": null,
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": null
+      },
+      "source_document_id": "fixture:intake-family-history"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-family-history",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-family-history"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-family-history",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-family-history",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-family-history",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-family-history",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-family-history",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Vitamin D 1000 IU daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-family-history",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Latex - contact rash"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-family-history",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Father: type 2 diabetes. Mother: hypertension."
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Family-history relationships or conditions being dropped.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "Both relatives and their conditions remain in family_history."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "intake-bp-separate-candidates",
+    "category": "invariant",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-bp-separate-candidates.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-bp-separate-candidates",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [
+        "Vitamin D 1000 IU daily"
+      ],
+      "allergies": [
+        "Latex - contact rash"
+      ],
+      "family_history": "Sibling: asthma.",
+      "vitals": {
+        "bps": {
+          "value": 146,
+          "unit": "mmHg",
+          "measurement_date": "2026-06-20T09:15:00Z"
+        },
+        "bpd": {
+          "value": 92,
+          "unit": "mmHg",
+          "measurement_date": "2026-06-20T09:15:00Z"
+        },
+        "weight": null,
+        "height": null,
+        "temperature": null,
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": null
+      },
+      "source_document_id": "fixture:intake-bp-separate-candidates"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bp-separate-candidates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-bp-separate-candidates"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bp-separate-candidates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bp-separate-candidates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bp-separate-candidates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bp-separate-candidates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bp-separate-candidates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Vitamin D 1000 IU daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bp-separate-candidates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Latex - contact rash"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bp-separate-candidates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Sibling: asthma."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bp-separate-candidates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bps.value",
+        "quote_or_value": "146"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bp-separate-candidates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bps.unit",
+        "quote_or_value": "mmHg"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bp-separate-candidates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bps.measurement_date",
+        "quote_or_value": "2026-06-20T09:15:00Z"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bp-separate-candidates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bpd.value",
+        "quote_or_value": "92"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bp-separate-candidates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bpd.unit",
+        "quote_or_value": "mmHg"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bp-separate-candidates",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bpd.measurement_date",
+        "quote_or_value": "2026-06-20T09:15:00Z"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Blood pressure being represented as one untyped combined string.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "bps and bpd are distinct VitalCandidate objects with leaf citations."
+    ],
+    "maps_to": "citation_present"
+  },
+  {
+    "case_id": "intake-other-vitals-us-units",
+    "category": "boundary",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-other-vitals-us-units.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-other-vitals-us-units",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [
+        "Vitamin D 1000 IU daily"
+      ],
+      "allergies": [
+        "Latex - contact rash"
+      ],
+      "family_history": "Sibling: asthma.",
+      "vitals": {
+        "bps": null,
+        "bpd": null,
+        "weight": {
+          "value": 160,
+          "unit": "lb",
+          "measurement_date": "2026-06-21T10:30:00Z"
+        },
+        "height": {
+          "value": 69,
+          "unit": "in",
+          "measurement_date": "2026-06-21T10:30:00Z"
+        },
+        "temperature": {
+          "value": 98.2,
+          "unit": "deg F",
+          "measurement_date": "2026-06-21T10:30:00Z"
+        },
+        "pulse": {
+          "value": 68,
+          "unit": "/min",
+          "measurement_date": "2026-06-21T10:30:00Z"
+        },
+        "respiration": {
+          "value": 14,
+          "unit": "/min",
+          "measurement_date": "2026-06-21T10:30:00Z"
+        },
+        "oxygen_saturation": {
+          "value": 99,
+          "unit": "%",
+          "measurement_date": "2026-06-21T10:30:00Z"
+        }
+      },
+      "source_document_id": "fixture:intake-other-vitals-us-units"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-other-vitals-us-units"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Vitamin D 1000 IU daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Latex - contact rash"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Sibling: asthma."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.weight.value",
+        "quote_or_value": "160"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.weight.unit",
+        "quote_or_value": "lb"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.weight.measurement_date",
+        "quote_or_value": "2026-06-21T10:30:00Z"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.height.value",
+        "quote_or_value": "69"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.height.unit",
+        "quote_or_value": "in"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.height.measurement_date",
+        "quote_or_value": "2026-06-21T10:30:00Z"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.temperature.value",
+        "quote_or_value": "98.2"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.temperature.unit",
+        "quote_or_value": "deg F"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.temperature.measurement_date",
+        "quote_or_value": "2026-06-21T10:30:00Z"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.pulse.value",
+        "quote_or_value": "68"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.pulse.unit",
+        "quote_or_value": "/min"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.pulse.measurement_date",
+        "quote_or_value": "2026-06-21T10:30:00Z"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.respiration.value",
+        "quote_or_value": "14"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.respiration.unit",
+        "quote_or_value": "/min"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.respiration.measurement_date",
+        "quote_or_value": "2026-06-21T10:30:00Z"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.oxygen_saturation.value",
+        "quote_or_value": "99"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.oxygen_saturation.unit",
+        "quote_or_value": "%"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-other-vitals-us-units",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.oxygen_saturation.measurement_date",
+        "quote_or_value": "2026-06-21T10:30:00Z"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Non-BP intake vitals being dropped or silently unit-converted.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "All six non-BP vital candidates preserve their source units."
+    ],
+    "maps_to": "schema_valid"
+  },
+  {
+    "case_id": "intake-missing-contact-honesty",
+    "category": "invariant",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-missing-contact-honesty.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-missing-contact-honesty",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": null
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [
+        "Vitamin D 1000 IU daily"
+      ],
+      "allergies": [
+        "Latex - contact rash"
+      ],
+      "family_history": "Sibling: asthma.",
+      "vitals": {
+        "bps": null,
+        "bpd": null,
+        "weight": null,
+        "height": null,
+        "temperature": null,
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": null
+      },
+      "source_document_id": "fixture:intake-missing-contact-honesty"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-missing-contact-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-missing-contact-honesty"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-missing-contact-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-missing-contact-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-missing-contact-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-missing-contact-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Vitamin D 1000 IU daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-missing-contact-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Latex - contact rash"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-missing-contact-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Sibling: asthma."
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "A missing contact field being synthesized from other demographics.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "demographics.contact is null and uncited."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "intake-missing-dob-honesty",
+    "category": "invariant",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-missing-dob-honesty.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-missing-dob-honesty",
+        "dob": null,
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [
+        "Vitamin D 1000 IU daily"
+      ],
+      "allergies": [
+        "Latex - contact rash"
+      ],
+      "family_history": "Sibling: asthma.",
+      "vitals": {
+        "bps": null,
+        "bpd": null,
+        "weight": null,
+        "height": null,
+        "temperature": null,
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": null
+      },
+      "source_document_id": "fixture:intake-missing-dob-honesty"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-missing-dob-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-missing-dob-honesty"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-missing-dob-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-missing-dob-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-missing-dob-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-missing-dob-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Vitamin D 1000 IU daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-missing-dob-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Latex - contact rash"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-missing-dob-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Sibling: asthma."
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "A missing date of birth being guessed from unrelated context.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "demographics.dob is null and uncited."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "intake-empty-allergy-confirm-not-nkda",
+    "category": "regression",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-empty-allergy-confirm-not-nkda.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-empty-allergy-confirm-not-nkda",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [
+        "Vitamin D 1000 IU daily"
+      ],
+      "allergies": [],
+      "family_history": "Sibling: asthma.",
+      "vitals": {
+        "bps": null,
+        "bpd": null,
+        "weight": null,
+        "height": null,
+        "temperature": null,
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": null
+      },
+      "source_document_id": "fixture:intake-empty-allergy-confirm-not-nkda"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-allergy-confirm-not-nkda",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-empty-allergy-confirm-not-nkda"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-allergy-confirm-not-nkda",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-allergy-confirm-not-nkda",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-allergy-confirm-not-nkda",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-allergy-confirm-not-nkda",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-allergy-confirm-not-nkda",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Vitamin D 1000 IU daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-allergy-confirm-not-nkda",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Sibling: asthma."
+      }
+    ],
+    "expected_verdict": "confirm_with_patient",
+    "guards": "An empty allergy section being rendered as NKDA.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "The output says confirm with patient and never asserts NKDA."
+    ],
+    "maps_to": "safe_refusal"
+  },
+  {
+    "case_id": "intake-empty-medications-honesty",
+    "category": "invariant",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-empty-medications-honesty.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-empty-medications-honesty",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [],
+      "allergies": [
+        "Latex - contact rash"
+      ],
+      "family_history": "Sibling: asthma.",
+      "vitals": {
+        "bps": null,
+        "bpd": null,
+        "weight": null,
+        "height": null,
+        "temperature": null,
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": null
+      },
+      "source_document_id": "fixture:intake-empty-medications-honesty"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-medications-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-empty-medications-honesty"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-medications-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-medications-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-medications-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-medications-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-medications-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Latex - contact rash"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-medications-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Sibling: asthma."
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "A blank medication section being converted to an affirmative no-medications claim.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "current_medications is an empty list without an invented medication."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "intake-empty-family-history-honesty",
+    "category": "invariant",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-empty-family-history-honesty.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-empty-family-history-honesty",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [
+        "Vitamin D 1000 IU daily"
+      ],
+      "allergies": [
+        "Latex - contact rash"
+      ],
+      "family_history": null,
+      "vitals": {
+        "bps": null,
+        "bpd": null,
+        "weight": null,
+        "height": null,
+        "temperature": null,
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": null
+      },
+      "source_document_id": "fixture:intake-empty-family-history-honesty"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-family-history-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-empty-family-history-honesty"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-family-history-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-family-history-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-family-history-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-family-history-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-family-history-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Vitamin D 1000 IU daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-empty-family-history-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Latex - contact rash"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "A blank family-history section being converted to a negative history claim.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "family_history is null and uncited."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "intake-bps-out-of-range-skipped",
+    "category": "regression",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-bps-out-of-range-skipped.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-bps-out-of-range-skipped",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [
+        "Vitamin D 1000 IU daily"
+      ],
+      "allergies": [
+        "Latex - contact rash"
+      ],
+      "family_history": "Sibling: asthma.",
+      "vitals": {
+        "bps": {
+          "value": 401,
+          "unit": "mmHg",
+          "measurement_date": "2026-06-22T08:00:00Z"
+        },
+        "bpd": {
+          "value": 82,
+          "unit": "mmHg",
+          "measurement_date": "2026-06-22T08:00:00Z"
+        },
+        "weight": null,
+        "height": null,
+        "temperature": null,
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": null
+      },
+      "source_document_id": "fixture:intake-bps-out-of-range-skipped"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bps-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-bps-out-of-range-skipped"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bps-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bps-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bps-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bps-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bps-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Vitamin D 1000 IU daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bps-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Latex - contact rash"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bps-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Sibling: asthma."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bps-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bps.value",
+        "quote_or_value": "401"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bps-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bps.unit",
+        "quote_or_value": "mmHg"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bps-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bps.measurement_date",
+        "quote_or_value": "2026-06-22T08:00:00Z"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bps-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bpd.value",
+        "quote_or_value": "82"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bps-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bpd.unit",
+        "quote_or_value": "mmHg"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bps-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bpd.measurement_date",
+        "quote_or_value": "2026-06-22T08:00:00Z"
+      }
+    ],
+    "expected_verdict": "artifact_only_skip",
+    "guards": "An out-of-range systolic pressure reaching the vitals write leg.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "bps 401 remains artifact-only and is skipped; the valid bpd is not discarded."
+    ],
+    "maps_to": "safe_refusal"
+  },
+  {
+    "case_id": "intake-bpd-out-of-range-skipped",
+    "category": "regression",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-bpd-out-of-range-skipped.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-bpd-out-of-range-skipped",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [
+        "Vitamin D 1000 IU daily"
+      ],
+      "allergies": [
+        "Latex - contact rash"
+      ],
+      "family_history": "Sibling: asthma.",
+      "vitals": {
+        "bps": {
+          "value": 120,
+          "unit": "mmHg",
+          "measurement_date": "2026-06-22T08:30:00Z"
+        },
+        "bpd": {
+          "value": 301,
+          "unit": "mmHg",
+          "measurement_date": "2026-06-22T08:30:00Z"
+        },
+        "weight": null,
+        "height": null,
+        "temperature": null,
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": null
+      },
+      "source_document_id": "fixture:intake-bpd-out-of-range-skipped"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bpd-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-bpd-out-of-range-skipped"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bpd-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bpd-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bpd-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bpd-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bpd-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Vitamin D 1000 IU daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bpd-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Latex - contact rash"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bpd-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Sibling: asthma."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bpd-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bps.value",
+        "quote_or_value": "120"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bpd-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bps.unit",
+        "quote_or_value": "mmHg"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bpd-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bps.measurement_date",
+        "quote_or_value": "2026-06-22T08:30:00Z"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bpd-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bpd.value",
+        "quote_or_value": "301"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bpd-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bpd.unit",
+        "quote_or_value": "mmHg"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-bpd-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bpd.measurement_date",
+        "quote_or_value": "2026-06-22T08:30:00Z"
+      }
+    ],
+    "expected_verdict": "artifact_only_skip",
+    "guards": "An out-of-range diastolic pressure reaching the vitals write leg.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "bpd 301 remains artifact-only and is skipped; the valid bps is not discarded."
+    ],
+    "maps_to": "safe_refusal"
+  },
+  {
+    "case_id": "intake-temperature-out-of-range-skipped",
+    "category": "boundary",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-temperature-out-of-range-skipped.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-temperature-out-of-range-skipped",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [
+        "Vitamin D 1000 IU daily"
+      ],
+      "allergies": [
+        "Latex - contact rash"
+      ],
+      "family_history": "Sibling: asthma.",
+      "vitals": {
+        "bps": null,
+        "bpd": null,
+        "weight": null,
+        "height": null,
+        "temperature": {
+          "value": 121,
+          "unit": "deg F",
+          "measurement_date": "2026-06-23T07:45:00Z"
+        },
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": null
+      },
+      "source_document_id": "fixture:intake-temperature-out-of-range-skipped"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-temperature-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-temperature-out-of-range-skipped"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-temperature-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-temperature-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-temperature-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-temperature-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-temperature-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Vitamin D 1000 IU daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-temperature-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Latex - contact rash"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-temperature-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Sibling: asthma."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-temperature-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.temperature.value",
+        "quote_or_value": "121"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-temperature-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.temperature.unit",
+        "quote_or_value": "deg F"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-temperature-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.temperature.measurement_date",
+        "quote_or_value": "2026-06-23T07:45:00Z"
+      }
+    ],
+    "expected_verdict": "artifact_only_skip",
+    "guards": "A temperature above the frozen bound reaching the vitals write leg.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "121 deg F remains artifact-only and is skipped with range_violation."
+    ],
+    "maps_to": "safe_refusal"
+  },
+  {
+    "case_id": "intake-spo2-out-of-range-skipped",
+    "category": "boundary",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-spo2-out-of-range-skipped.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-spo2-out-of-range-skipped",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [
+        "Vitamin D 1000 IU daily"
+      ],
+      "allergies": [
+        "Latex - contact rash"
+      ],
+      "family_history": "Sibling: asthma.",
+      "vitals": {
+        "bps": null,
+        "bpd": null,
+        "weight": null,
+        "height": null,
+        "temperature": null,
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": {
+          "value": 104,
+          "unit": "%",
+          "measurement_date": "2026-06-23T08:00:00Z"
+        }
+      },
+      "source_document_id": "fixture:intake-spo2-out-of-range-skipped"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-spo2-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-spo2-out-of-range-skipped"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-spo2-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-spo2-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-spo2-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-spo2-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-spo2-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Vitamin D 1000 IU daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-spo2-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Latex - contact rash"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-spo2-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Sibling: asthma."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-spo2-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.oxygen_saturation.value",
+        "quote_or_value": "104"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-spo2-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.oxygen_saturation.unit",
+        "quote_or_value": "%"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-spo2-out-of-range-skipped",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.oxygen_saturation.measurement_date",
+        "quote_or_value": "2026-06-23T08:00:00Z"
+      }
+    ],
+    "expected_verdict": "artifact_only_skip",
+    "guards": "An oxygen saturation above 100 reaching the vitals write leg.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "oxygen_saturation 104 remains artifact-only and is skipped with range_violation."
+    ],
+    "maps_to": "safe_refusal"
+  },
+  {
+    "case_id": "intake-vital-missing-measurement-date",
+    "category": "invariant",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-vital-missing-measurement-date.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-vital-missing-measurement-date",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [
+        "Vitamin D 1000 IU daily"
+      ],
+      "allergies": [
+        "Latex - contact rash"
+      ],
+      "family_history": "Sibling: asthma.",
+      "vitals": {
+        "bps": {
+          "value": 128,
+          "unit": "mmHg",
+          "measurement_date": null
+        },
+        "bpd": {
+          "value": 76,
+          "unit": "mmHg",
+          "measurement_date": null
+        },
+        "weight": null,
+        "height": null,
+        "temperature": null,
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": null
+      },
+      "source_document_id": "fixture:intake-vital-missing-measurement-date"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-vital-missing-measurement-date",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-vital-missing-measurement-date"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-vital-missing-measurement-date",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-vital-missing-measurement-date",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-vital-missing-measurement-date",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-vital-missing-measurement-date",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-vital-missing-measurement-date",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Vitamin D 1000 IU daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-vital-missing-measurement-date",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Latex - contact rash"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-vital-missing-measurement-date",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Sibling: asthma."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-vital-missing-measurement-date",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bps.value",
+        "quote_or_value": "128"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-vital-missing-measurement-date",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bps.unit",
+        "quote_or_value": "mmHg"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-vital-missing-measurement-date",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bpd.value",
+        "quote_or_value": "76"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-vital-missing-measurement-date",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "vitals.bpd.unit",
+        "quote_or_value": "mmHg"
+      }
+    ],
+    "expected_verdict": "artifact_only_skip",
+    "guards": "Undated vital candidates being written with an invented current timestamp.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "Both BP values remain artifact-only because measurement_date is null."
+    ],
+    "maps_to": "safe_refusal"
+  },
+  {
+    "case_id": "intake-multipage-vital-page2-citations",
+    "category": "regression",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-multipage-vital-page2-citations.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-multipage-vital-page2-citations",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [
+        "Vitamin D 1000 IU daily"
+      ],
+      "allergies": [
+        "Latex - contact rash"
+      ],
+      "family_history": "Sibling: asthma.",
+      "vitals": {
+        "bps": null,
+        "bpd": null,
+        "weight": {
+          "value": 174,
+          "unit": "lb",
+          "measurement_date": "2026-06-24T11:20:00Z"
+        },
+        "height": null,
+        "temperature": null,
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": null
+      },
+      "source_document_id": "fixture:intake-multipage-vital-page2-citations"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-multipage-vital-page2-citations",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-multipage-vital-page2-citations"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-multipage-vital-page2-citations",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-multipage-vital-page2-citations",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-multipage-vital-page2-citations",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-multipage-vital-page2-citations",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-multipage-vital-page2-citations",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Vitamin D 1000 IU daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-multipage-vital-page2-citations",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Latex - contact rash"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-multipage-vital-page2-citations",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Sibling: asthma."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-multipage-vital-page2-citations",
+        "page_or_section": "page 2",
+        "field_or_chunk_id": "vitals.weight.value",
+        "quote_or_value": "174"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-multipage-vital-page2-citations",
+        "page_or_section": "page 2",
+        "field_or_chunk_id": "vitals.weight.unit",
+        "quote_or_value": "lb"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-multipage-vital-page2-citations",
+        "page_or_section": "page 2",
+        "field_or_chunk_id": "vitals.weight.measurement_date",
+        "quote_or_value": "2026-06-24T11:20:00Z"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "A page-2 intake vital receiving a page-1 citation.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "Every weight VitalCandidate citation names page 2."
+    ],
+    "maps_to": "citation_present"
+  },
+  {
+    "case_id": "intake-no-vitals-honesty",
+    "category": "invariant",
+    "doc_type": "intake_form",
+    "fixture_path": "agent/evals/fixtures/golden/intake-no-vitals-honesty.pdf",
+    "expected_fields": {
+      "demographics": {
+        "name": "ZZPHI-intake-no-vitals-honesty",
+        "dob": "1987-04-12",
+        "sex": "X",
+        "contact": "synthetic-contact@example.invalid"
+      },
+      "chief_concern": "Routine intake review.",
+      "current_medications": [
+        "Vitamin D 1000 IU daily"
+      ],
+      "allergies": [
+        "Latex - contact rash"
+      ],
+      "family_history": "Sibling: asthma.",
+      "vitals": {
+        "bps": null,
+        "bpd": null,
+        "weight": null,
+        "height": null,
+        "temperature": null,
+        "pulse": null,
+        "respiration": null,
+        "oxygen_saturation": null
+      },
+      "source_document_id": "fixture:intake-no-vitals-honesty"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-no-vitals-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.name",
+        "quote_or_value": "ZZPHI-intake-no-vitals-honesty"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-no-vitals-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.dob",
+        "quote_or_value": "1987-04-12"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-no-vitals-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.sex",
+        "quote_or_value": "X"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-no-vitals-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "demographics.contact",
+        "quote_or_value": "synthetic-contact@example.invalid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-no-vitals-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "Routine intake review."
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-no-vitals-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "current_medications[0]",
+        "quote_or_value": "Vitamin D 1000 IU daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-no-vitals-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "allergies[0]",
+        "quote_or_value": "Latex - contact rash"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:intake-no-vitals-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "family_history",
+        "quote_or_value": "Sibling: asthma."
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "A form with no vital observations producing default numeric values.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "All eight IntakeVitals keys are null and uncited."
+    ],
+    "maps_to": "factually_consistent"
+  }
+]

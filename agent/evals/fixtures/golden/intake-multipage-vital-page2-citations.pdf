@@ -1,0 +1,124 @@
+%PDF-1.4
+% Synthetic Week 2 fixture
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 849 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+14 TL
+(SYNTHETIC TEST RECORD - NOT FOR CLINICAL USE) Tj
+T*
+(WEEK 2 GOLDEN INTAKE FORM) Tj
+T*
+(MRN: MRN-SYN-intake-multipage-vital-page2-citations) Tj
+T*
+(Source document ID: fixture:intake-multipage-vital-page2-citations) Tj
+T*
+(CANARY SENTENCE: Synthetic record intake-multipage-vital-page2-citations; no real) Tj
+T*
+(  person.) Tj
+T*
+() Tj
+T*
+(DEMOGRAPHICS) Tj
+T*
+(Name: ZZPHI-intake-multipage-vital-page2-citations) Tj
+T*
+(DOB: 1987-04-12) Tj
+T*
+(Sex: X) Tj
+T*
+(Contact: synthetic-contact@example.invalid) Tj
+T*
+() Tj
+T*
+(CHIEF CONCERN) Tj
+T*
+(Routine intake review.) Tj
+T*
+() Tj
+T*
+(CURRENT MEDICATIONS) Tj
+T*
+(1. Vitamin D 1000 IU daily) Tj
+T*
+() Tj
+T*
+(ALLERGIES) Tj
+T*
+(1. Latex - contact rash) Tj
+T*
+() Tj
+T*
+(FAMILY HISTORY) Tj
+T*
+(Sibling: asthma.) Tj
+T*
+() Tj
+T*
+(VITALS) Tj
+T*
+(Vitals continue on page 2.) Tj
+T*
+ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 349 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+14 TL
+(SYNTHETIC TEST RECORD - NOT FOR CLINICAL USE) Tj
+T*
+(WEEK 2 GOLDEN INTAKE FORM - PAGE 2) Tj
+T*
+(Source document ID: fixture:intake-multipage-vital-page2-citations) Tj
+T*
+() Tj
+T*
+(VITALS) Tj
+T*
+(Weight: 174 lb) Tj
+T*
+(Weight measurement date: 2026-06-24T11:20:00Z) Tj
+T*
+() Tj
+T*
+(END OF SYNTHETIC INTAKE FORM) Tj
+T*
+ET
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000036 00000 n 
+0000000085 00000 n 
+0000000148 00000 n 
+0000000218 00000 n 
+0000000344 00000 n 
+0000001244 00000 n 
+0000001370 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+1770
+%%EOF

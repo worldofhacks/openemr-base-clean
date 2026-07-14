@@ -125,10 +125,161 @@ via list-by-hash; FHIR DocumentReference→Binary is the round-trip read-back (d
 Verification client: local-only, password-grant (pre-enabled locally; NOT for
 production), to be disabled post-audit.
 
+## Adversarial audit review (2026-07-13 — read-only static analysis; findings W2-F12..F23)
+
+> A SEPARATE read-only agent adversarially re-checked the whole write/upload surface
+> against the code (static analysis only; no live probes — live claims assessed for
+> code-consistency). Full evidence with file:line is in `W2_AUDIT_REVIEW_RAW.md`; this
+> section is the distilled record. **Verdict counts:** W2-F1..F11 → 7 CONFIRMED, 0
+> false-positive, 4 IMPRECISE; 12 new findings (W2-F12..F23); 183 literal routes checked;
+> 0 active module route listeners. Four of the new findings were spot-verified against the
+> code in this pass (W2-F12 ScopeEntity.php:156-161; W2-F13/F16 EncounterService.php:580-595;
+> W2-F15 EncounterService.php:657-676; W2-F20 — the listener lives at
+> `src/RestControllers/Subscriber/ApiResponseLoggerListener.php:83-85`, a directory
+> correction to the raw review's path; line content matches). **Owner's two load-bearing
+> calls on this review (see W2-D9):** (1) the **W2-D1 transport decision survives** — no
+> client-supplied FHIR CRUD exists; standard documents + vitals APIs remain the sanctioned
+> transport, not reopened; (2) the earlier **"no finding blocks the architecture" gate
+> verdict is retired** — the blocking items below are now MANDATORY agent-side controls
+> that must land before writes are enabled (transport still sound).
+
+**Imprecise corrections to earlier findings (dated 2026-07-13; originals stand, refined):**
+- **W2-F1 → IMPRECISE (thrust holds).** "No client-supplied target CRUD" is exact; "no
+  FHIR write path" is too broad — `$docref`, `$export`, expired-Binary reads, and UUID
+  backfills can mutate DB state (see W2-F8, W2-F21). All mapped DocumentReference/
+  Observation persistence is empty (`FhirServiceBaseEmptyTrait.php:37-50`).
+- **W2-F4 → IMPRECISE (replacement still required).** No supported client-scope edit path
+  exists → the W1 client still needs replacement for `api:oemr`, `user/document`,
+  `user/vital`. But a missing `api:oemr` yields **403, not the unconditional 401** the
+  earlier note implied (`BearerTokenAuthorizationStrategy.php:365-378`); and registered
+  scope is **not an effective ceiling** (W2-F12).
+- **W2-F9 → IMPRECISE (contract holds; cause wrong).** Upload 200 `true`/no-id CONFIRMED;
+  the download **500 is real but NOT a "CSRF-key defect"** — the controller authorizes raw
+  retrieval and passes raw bytes as `BinaryFileResponse`'s filename
+  (`DocumentRestController.php:156-171`, `C_Document.class.php:574-637`). FHIR
+  DocumentReference→Binary read-back remains the reliable byte-exact path.
+- **W2-F11 → IMPRECISE (broader than stated).** Discovery advertises legacy `.read` **plus**
+  v2 `.rs` (not "only `.rs`"); the validator can accept same-key `.write/.cud/.cruds` and
+  ignore constraints (`ServerScopeListEntity.php:72-347`, `ScopeEntity.php:140-178`).
+
+**New findings (W2-F12..F23):**
+- **W2-F12 — HIGH — Same-resource OAuth scope escalation + constraint stripping.**
+  `ScopeEntity::containsScope` returns the *requested* scope's legacy read/write flag
+  without consulting the registered permission (`ScopeEntity.php:140-178`, esp. 155-161);
+  constrained scopes can be requested unconstrained. A read-registered client can
+  statically pass finalization for same-resource write scopes. **Registration scope is not
+  a trustworthy ceiling.** W1→W2 replacement still holds (W1 lacks `api:oemr`, lowercase
+  `document`/`vital`). *Affects: W2-F4, W2-F11, least-privilege, provisioning (W2-OA3).*
+- **W2-F13 — HIGH — Native document/vital creates trust caller-supplied pid/eid.** Routes
+  accept `pid`/`eid` directly (`_rest_routes_standard.inc.php:140-152,496-502`); authz
+  checks resource permission, not launch-patient equality (`AuthorizationListener.php:169-194`);
+  the server patient-access check is a stub (`BearerTokenAuthorizationStrategy.php:473-485`);
+  vital create stamps supplied pid/eid without validating the encounter
+  (`EncounterService.php:580-595`); `documents.encounter_id` has no FK. A sufficiently
+  scoped token can target another patient / a nonexistent encounter. **The agent's
+  patient-pin + encounter-ownership preflight is load-bearing, not defense-in-depth.**
+  *Affects: W2-D1, W2-M8, W2-M11.*
+- **W2-F14 — HIGH — Document category validation can yield uncategorized docs / bypass
+  category ACL.** Route authz checks only the generic patients/docs ACL;
+  `DocumentService::isValidPath` can return true for an unresolved one-component path
+  (`DocumentService.php:52-94`); category-aware `Document::can_access` is not called on
+  upload; docs with no categories are treated accessible (`Document.class.php:361-364`).
+  *Affects: W2-D1 fixed category, provisioning, ACL (W2-OA3, W2-M11).*
+- **W2-F15 — HIGH — REST vital creation bypasses the physiological range validator.** The
+  REST validator checks only numeric/string shape (`EncounterService.php:657-676`); the
+  real range validator (`FormVitals.php:470-510`, `VitalsFieldRanges.php:22-90`) is **not
+  called** — negative/impossible values persist. **Range sanity is the agent's job.**
+  *Affects: W2-D1 vital mapping, extraction verifier, bounded-write policy (W2-M11).*
+- **W2-F16 — HIGH — Vital clinical author absent or caller-controlled.** `insertVital`
+  overwrites id/eid/pid/authorized but **not** user/group (`EncounterService.php:580-588`);
+  `FormVitals` accepts arbitrary user/groupname (`FormVitals.php:173-192`); FHIR performer
+  emitted only when user joins to a UUID+NPI. Omitting user → author absent; supplying
+  another username → spoofed performer. **The agent must never send caller user/group and
+  must decide provenance representation.** *Affects: W1 F-S.5, W2 lineage/attribution
+  (W2-M11).*
+- **W2-F17 — HIGH — Client disable is weaker than the runbook assumes.** Existing access
+  tokens survive client disable (only `is_enabled` flips — `ClientAdminController.php:360-371`
+  TODO-to-revoke; never re-checked at `BearerTokenAuthorizationStrategy.php:141-211`);
+  token lifetime 1h; JWT/`client_credentials` paths bypass the enablement check. **"Disable
+  the old client" is not immediate retirement.** *Affects: W2-OA3 cutover, W2-F4.*
+- **W2-F18 — MEDIUM — Native document upload is non-idempotent.** Every successful POST
+  allocates a new UUID; the content hash is computed after creation and never used for
+  dedup; no patient+hash uniqueness (`DocumentService.php:151-159`,
+  `Document.class.php:1109-1125`, `sql/database.sql:1391-1432`). **The agent-side
+  UNIQUE(patient_id, content_hash) ledger is mandatory, not defense-in-depth.**
+  *Affects: W2-D1 idempotency (W2-M8, W2-M11).*
+- **W2-F19 — MEDIUM/HIGH — Native upload controls + failure contract incomplete.**
+  `DocumentService` does not check `$_FILES` error, declared size, `is_uploaded_file`, PDF
+  page count, W2's 10 MB limit, or exact type (`DocumentService.php:127-160`); a rejected
+  upload returns false → an empty **404, not the documented 400**
+  (`RestControllerHelper.php:156-168`). **The agent must enforce size/page/MIME/error
+  validation before the native upload.** *Affects: W2-D3 upload policy (W2-M8).*
+- **W2-F20 — MEDIUM (conditional HIGH leak) — W2 write logging differs from the assumed
+  model.** `api_log` copies the JSON **response** into both `request_body` and `response`
+  (`src/RestControllers/Subscriber/ApiResponseLoggerListener.php:83-85`) — so the uploaded
+  PDF is **NOT** duplicated into `api_log` and posted vital values are **NOT** stored as a
+  request body (the earlier F-S.4-style hypothesis is FALSE). But FHIR Observation JSON
+  readback still hits W1 F-S.4, and **FHIR Binary readback passes decrypted document bytes
+  to a debug logger when `system_error_logging=DEBUG`** (`BaseDocumentDownloader.php:58-69`;
+  default WARNING). *Affects: W1 F-S.4, log config, document readback (W2-M11, W2-M8).*
+- **W2-F21 — MEDIUM — HTTP GET does not imply DB-read-only.** `GET $export` creates
+  export_job + Document/Binary artifacts; a `GET` on an expired Binary can soft-delete the
+  document; DocumentReference/Observation **service construction and capability-metadata
+  GETs invoke UUID backfills** that do table UPDATEs + `uuid_registry` INSERTs
+  (`UuidRegistry.php:411-426`, `RestControllerHelper.php:504-510`). **A metadata GET can
+  conditionally write the production DB.** *Affects: any "read-only" wording (W2-M2 note,
+  Phase-3 W2-1).*
+- **W2-F22 — MEDIUM — Self-description ≠ complete runtime/auth surface.** CapabilityStatement
+  reads the static route file, not the route finder (`FhirMetaDataRestController.php:49-77`);
+  SMART discovery disagrees with OAuth discovery on grants/auth methods. **Metadata/discovery
+  cannot independently prove route or provisioning behavior.** *Affects: W2-F7, W2-F11.*
+- **W2-F23 — HIGH, adjacent (not part of W2-D1) — SOAP-note PUT ownership gap.** PUT
+  `.../soap_note/:sid` updates solely by `sid`, ignoring eid and overwriting pid, and
+  lacks the pid/eid ownership check present in vital update (`EncounterService.php:535-557`
+  vs `:560-577`). Broader standard-REST write-surface risk; **the agent touches no
+  soap_note route** — recorded so no build agent adds one; merits a separate synthetic
+  IDOR probe.
+
+**W1 carry-over findings in W2 context:**
+- **F-D.5 — CONFIRMED** — allergy mapper maps stored records only, no NKDA synthesis
+  (`FhirAllergyIntoleranceService.php:101-255`); empty bundle = ambiguous absence (carried
+  as UC-W2-2's "confirm with patient", never "NKDA").
+- **F-S.5 — CONFIRMED with a W2 provenance caveat** — delegated auth-code tokens establish
+  the actual clinician; the standard API rejects the system role. Caveat = W2-F16
+  (`form_vitals.user`/performer absent or caller-controlled).
+- **F-S.4 — CONFIRMED for JSON responses; REFUTED for inbound W2 write bodies** — full JSON
+  FHIR responses remain plaintext `api_log` by default, but the logger never captures the
+  multipart PDF or the vital request JSON.
+
+**Blocking items (reviewer's list — MANDATORY per W2-D9 before writes are enabled; transport
+remains sound):**
+1. **W2-F12** — provision exact scopes; the agent asserts the granted scope set and rejects
+   any unexpected granted scope; document residual server-side escalation.
+2. **W2-F13** — patient-pin + encounter-ownership preflight mandatory; cross-patient and
+   mismatched-encounter negative tests must pass before writes are enabled.
+3. **W2-F14** — provisioned fixed category + explicit category-ID/ACL validation.
+4. **W2-F15/F16** — bind vital range + attribution policy; never send caller user/group;
+   decide clinician-provenance representation.
+5. **W2-F17** — cutover: revoke access/refresh tokens (or wait out the 1h expiry); do not
+   substitute `private_key_jwt` without resolving its enablement bypass.
+6. **W2-F18** — the agent idempotency ledger is load-bearing.
+7. **W2-F19** — size/page/exact-MIME/upload-error/controlled-4xx validation before the
+   native upload.
+8. **W2-F20** — confirm `system_error_logging != DEBUG` before using FHIR Binary for
+   document verification.
+9. **W2-F21** — Phase-3 must distinguish "no HTTP write method" from "no DB mutation"
+   (a metadata GET can backfill UUIDs).
+
 ## Gate verdict
 
-The W2 integration mechanism is sound with the corrected transport: uploads and
-artifacts via the documents API, vitals via the vitals API, everything append-only
-with lineage, scopes verified at provisioning. No finding blocks the architecture;
-W2-F4 is the one build-time checklist item. All findings feed W2_ARCHITECTURE
-(§3 discrepancy note, §4a ledger) and W2_DECISIONS (W2-D1, W2-D3, W2-D5).
+The W2 **transport** is sound: uploads and artifacts via the documents API, vitals via the
+vitals API, everything append-only with lineage — the W2-D1 decision survives the
+adversarial review (owner call 1, W2-D9). **The earlier "no finding blocks the
+architecture" verdict is retired (owner call 2, W2-D9):** the adversarial review surfaced
+HIGH findings (W2-F12..F17) showing the OpenEMR write surface does **not** enforce
+patient/encounter ownership, scope ceilings, category ACLs, vital ranges, attribution, or
+idempotency on create — so those controls are **mandatory agent-side** and must land
+before writes are enabled (blocking items 1–9 above; threaded into W2-OA3, W2-M8, W2-M11).
+W2-F4 remains the provisioning checklist item (replacement client). All findings feed
+W2_ARCHITECTURE (§3 discrepancy note, §4a ledger), W2_DECISIONS (W2-D1, W2-D3, W2-D5,
+**W2-D9**), and W2_IMPLEMENTATION_PLAN.

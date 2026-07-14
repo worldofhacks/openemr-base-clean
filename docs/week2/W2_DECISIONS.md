@@ -182,6 +182,42 @@
   stubbed-gate blind spot (prompt/behavior regressions now catchable). The two-tier
   design stands either way; this decision fixes WHERE live calls are allowed.
 
+## W2-D9. Adversarial audit-review response: transport stands, agent-side write controls made mandatory — **locked** (2026-07-13)
+- Trigger: a separate read-only adversarial re-audit of the whole write/upload surface
+  (`W2_AUDIT_REVIEW_RAW.md`; distilled into W2_AUDIT.md as findings W2-F12..F23 + imprecise
+  corrections to W2-F1/F4/F9/F11). 7 of W2-F1..F11 CONFIRMED, 4 imprecise, 12 new findings,
+  0 false-positives. Owner made two load-bearing calls on the review:
+- **Call 1 — the W2-D1 transport survives (unchanged).** The review's bottom line confirms
+  no client-supplied FHIR create/update/upload exists for DocumentReference, Observation,
+  or Binary; the standard documents (`POST /api/patient/:pid/document`) and vitals
+  (`POST /api/patient/:pid/encounter/:eid/vital`) APIs remain the sanctioned append-only
+  transport. The transport decision is **not reopened**. (`$docref`/`$export`/UUID-backfill
+  GETs can mutate DB state — W2-F8/F21 — but none is a target-resource client CRUD.)
+- **Call 2 — the "no finding blocks the architecture" gate verdict is retired.** The review
+  proves the OpenEMR write surface does **not** enforce, on create: launch-patient /
+  encounter ownership (W2-F13), a registered-scope ceiling (W2-F12), category ACLs (W2-F14),
+  vital physiological ranges (W2-F15), clinical attribution (W2-F16), or idempotency
+  (W2-F18); and client-disable does not revoke live tokens (W2-F17). These are now
+  **MANDATORY agent-side controls that must land before writes are enabled** — promoted
+  from defense-in-depth to blocking. Threaded into the plan at W2-OA3 (exact-scope
+  provisioning + granted-scope assertion + token-revoking cutover + fixed category),
+  W2-M8 (patient-pin + encounter-ownership preflight, upload validation, idempotency
+  ledger), and W2-M11 (bounded vital ranges, no caller-supplied author, ledger,
+  Binary-readback DEBUG-logging check). Transport remains sound; the write path is simply
+  gated behind these controls.
+- Precision corrections adopted (no decision change): missing `api:oemr` → **403 not 401**
+  (W2-F4); the document-download **500 is not a CSRF defect** but raw-bytes-as-filename —
+  FHIR DocumentReference→Binary stays the read-back (W2-F9); scope discovery advertises
+  legacy `.read` **plus** v2 `.rs` and the validator ignores constraints (W2-F11/F12);
+  `api_log` copies the JSON **response** into both request/response columns, so inbound PDF/
+  vital bodies are NOT logged (W2-F20 — the earlier leak hypothesis is FALSE, but FHIR JSON
+  readback still hits W1 F-S.4).
+- Non-D1 note carried for hygiene: **W2-F23** (soap_note PUT IDOR) — the agent touches no
+  soap_note route; recorded so no build agent adds one.
+- Rejected: treating the new HIGH findings as defense-in-depth (the surface enforces none
+  of these server-side — the agent is the only enforcement point); reopening the transport
+  (the findings are about missing *server-side* controls, not a wrong transport).
+
 ## Open
 - W2-O1. ~~Vector index: in-process vs external~~ **Resolved 2026-07-13
   (/arch-finalize):** in-process, built at Docker image build from the committed

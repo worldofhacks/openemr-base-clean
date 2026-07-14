@@ -88,3 +88,27 @@
   disabled** (`is_enabled=0` confirmed) — the W1 E9 duplicate-launcher lesson applied;
   it was local-only, password-grant, never production.
 - Stage: PLANNING COMPLETE → Wave 0 build next.
+
+## [2026-07-13] Adversarial audit review integrated — W2-F12..F23, W2-D9 · type: milestone
+- What: a separate read-only agent adversarially re-audited the whole write/upload surface
+  (static analysis; `W2_AUDIT_REVIEW_RAW.md`). Result: W2-F1..F11 → 7 CONFIRMED, 4
+  IMPRECISE, 0 false-positive; 12 new findings W2-F12..F23; 183 routes checked, 0 active
+  module route listeners. Spot-verified 4 citations against code before integrating
+  (ScopeEntity.php:156-161 legacy-scope escalation; EncounterService.php:580-595 caller
+  pid/eid stamped, no user/author; :657-676 range validator absent from REST;
+  ApiResponseLoggerListener.php:83-85 response logged into both columns). Distilled into
+  W2_AUDIT.md (new findings + imprecise corrections + retired gate verdict) and recorded
+  as ADR **W2-D9**; threaded the mandatory controls into W2_IMPLEMENTATION_PLAN.md
+  (integration table + W2-OA3/M8/M11/W2-1).
+- Why: the tasks-gen plan predated this review; several new HIGH findings show the OpenEMR
+  write surface enforces no patient/encounter ownership, scope ceiling, category ACL,
+  vital range, attribution, or idempotency on create — so those become mandatory
+  agent-side controls, not defense-in-depth.
+- Result: owner's two load-bearing calls recorded in W2-D9 — (1) the W2-D1 transport
+  survives (no client-supplied FHIR CRUD; standard documents/vitals APIs stand); (2) the
+  "no finding blocks the architecture" verdict is retired, and the blocking controls
+  (W2-F12..F21) gate the write path. Precision fixes adopted: missing scope → 403 not 401
+  (W2-F4); download 500 is raw-bytes-as-filename, not a CSRF defect (W2-F9); `api_log`
+  logs the response, so inbound PDF/vital bodies are NOT logged (W2-F20, earlier leak
+  hypothesis FALSE). Docs-only; no code, no system changes this pass.
+- Stage: PLANNING — plan hardened pre-build.

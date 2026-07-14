@@ -34,6 +34,25 @@
   push to origin+gitlab, delete 2 skeleton folders, prune remote branches.
 - Stage: PRE-DEFENSE.
 
+## [2026-07-13] /arch-finalize complete — binding W2_ARCHITECTURE.md at root · type: milestone
+- What: cold-eyes finalize (53-agent adversarial workflow: 7 dimension auditors +
+  independent PRD coverage re-derivation, refuter-verified) over the v2 draft. 3
+  critical (all in the eval gate: unbuildable thresholds, stub blindness, judge
+  contradiction), 31 important, 29 minor, 1 refuted. Coverage: 99 PRD requirements,
+  94 covered, 5 out-of-scope with PRD-sanctioned citations, 0 uncovered.
+- Why: the draft was authored in this workstream; the binding contract required an
+  unattached audit before /tasks-gen.
+- Result: root W2_ARCHITECTURE.md (15 §-anchors, ~500-word summary, every capability
+  cited to W2-D#/R#/F# + W1 refs); W2_gap-audit.md findings register; dated revisions
+  W2-D1/D4/D7, W2-O1 resolved; W2-R6 added (PyMuPDF is AGPL — pypdfium2 default).
+  Owner gates decided: two-tier gate w/ live-Anthropic Tier 2 (W2-D8), Cohere behind
+  a RERANKER seam w/ Monday-EOD key trigger + mxbai fallback, front-desk actor
+  demoted to narrative-only, durable Postgres job rows w/ delegated-token write
+  principal (pulls W1 token-persistence debt into MVP).
+- Stage: PLANNING COMPLETE → /tasks-gen next. Owner actions dated in the binding
+  doc tail: Cohere production key in Railway (Mon EOD trigger), ANTHROPIC_API_KEY
+  into GH Actions secrets (Tier 2), push main to origin + GitLab.
+
 ## [2026-07-13] W2 presearch + owner decision conversation · type: milestone
 - What: `docs/week2/W2_PRESEARCH.md` completed against the 16-section Pre-Search
   Checklist; owner decisions recorded: LangGraph (W2-D2), Cohere rerank under a

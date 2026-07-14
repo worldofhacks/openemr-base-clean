@@ -1,5 +1,9 @@
 # W2_ARCHITECTURE_DRAFT.md — Multimodal Evidence Agent (v2, post-research)
 
+> **SUPERSEDED 2026-07-13** by the binding repo-root `W2_ARCHITECTURE.md`, produced by
+> the /arch-finalize adversarial pass (findings + coverage: `docs/week2/W2_gap-audit.md`).
+> Retained as history; do not build against this draft.
+>
 > Status: DRAFT v2 (2026-07-13) — regenerated after W2_RESEARCH.md (R1–R5, deep-research
 > pass) and owner decisions (W2_DECISIONS.md W2-D1..D7, all locked). Supersedes the
 > defense draft v1. Next step: cold-eyes /arch-finalize (fresh session) → binding

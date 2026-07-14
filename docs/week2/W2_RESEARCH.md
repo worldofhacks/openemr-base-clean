@@ -154,9 +154,33 @@ for DocumentReference, no FHIR Observation write, in this fork.
   source (plus vitals API where applicable). To verify at build: the standard API
   (`api:oemr`) scope set on the SMART client registration (D14-class enable step).
 
-## Spawned verification items (build-phase, not blocking)
+## W2-R6. PDF text-layer + page-rendering library — ADDED 2026-07-13 (/arch-finalize; license-vetted, verify at build)
+
+The draft leaned on an unnamed PDF library in three load-bearing places (words+boxes
+text-layer read, page rasterization for OCR/VLM input, page-PNG rendering for the
+required bbox overlay) — and the most common Python choice, **PyMuPDF, is AGPL-3.0**,
+a real licensing trap in this GPL-3 fork with a deployed network service.
+
+- **Working default: `pypdfium2`** (PDFium binding; permissive Apache-2.0/BSD-3-class
+  licensing) — one library for (a) text extraction with character/word boxes, (b) page
+  rasterization for Tesseract input and VLM page images, (c) page-PNG rendering for the
+  overlay.
+- **Alternative for the words+boxes leg: `pdfplumber`** (MIT, on pdfminer.six) —
+  mature word-level `extract_words()` bboxes; no rendering, so it pairs with pypdfium2
+  if its word segmentation proves better on the fixture set.
+- **Rejected:** PyMuPDF (AGPL-3.0); pdf2image (adds a poppler system dependency for
+  rendering only).
+- Both candidates emit into the canonical NormBBox space (binding §2). Final selection
+  is a day-1 build spike item alongside Tesseract packaging (binding §9); licenses
+  re-verified from the shipped package metadata at that point.
+
+## Spawned verification items (build-phase, not blocking) — statuses 2026-07-13
 
 - V1: standard-API scopes + client enablement for `user/document.write`-class access.
+  **Carried** as an owner action / build-blocking checklist item (W2-F4; binding §4).
 - V2: LangGraph + SSE streaming through worker nodes (spike in MVP wave 1).
-- V3: Cohere trial-key rate limits under the 50-case eval run (may need caching or
-  a local fallback for CI — CI must not depend on live APIs anyway per the PRD).
+  **Carried visibly** in the binding doc (§2a/§9) with a named fallback: stream only
+  the final composer stage; perceived-latency cost, never a correctness cost.
+- V3: Cohere trial-key rate limits under the 50-case eval run. **Mooted 2026-07-13**
+  by the W2-D4 revision: CI never calls Cohere live, and the deployed path requires
+  the paid production key by Monday EOD or ships `RERANKER=local`.

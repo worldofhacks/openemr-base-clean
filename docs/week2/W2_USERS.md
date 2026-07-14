@@ -10,9 +10,15 @@
 Primary-care physician, outpatient clinic, ~20 patients/day, 90-second gaps between
 rooms (D1, W1 USERS.md). Week 2 moment: **the follow-up visit** where the chart's
 structured data is stale and the important recent information is buried in two
-uploaded documents — a scanned lab PDF and a front-desk intake form. Secondary actor
-(new, upload-only): **front-desk staff / medical assistant** who attaches incoming
-documents to the chart. They never query the agent; their only surface is upload.
+uploaded documents — a scanned lab PDF and a front-desk intake form.
+
+> **Revision (2026-07-13, /arch-finalize — owner decision):** the front-desk staff /
+> medical assistant is **document provenance, not an agent principal**. The PRD's
+> "uploaded by the front desk" describes how the paper arrived; the agent's upload
+> surface accepts only the W1 authenticated pinned SMART session (in the demo, the
+> physician uploads). A front-desk-authenticated path is an explicit W2 non-goal
+> (binding W2_ARCHITECTURE.md §1/§2a). UC actor lists below read accordingly: the
+> uploader is whoever holds the pinned session.
 
 ## Use cases
 

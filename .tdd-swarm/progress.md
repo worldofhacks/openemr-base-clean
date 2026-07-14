@@ -208,3 +208,25 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
 - Orchestrator re-ran gates: ALL PASS; frozen-drift none. -> W2-M24 REVIEW-PASSED.
 - Residual minors -> W2-M20 follow-ups (recorded): manual git-fetch PR-head in run: bodies is a
   distinct undetected evasion family (recommend run:-body scan); bare pull/N/head regex relaxation.
+
+## Phase 5 — Wave 0a INTEGRATION COMPLETE (final review-passed states merged; orchestrator trust-nothing)
+- Owner directive at resume: "mark M1/M3/M24 review-passed; license already resolved at 528786d —
+  do NOT re-review it." Post-ledger review micro-cycles that had accreted on the M1/M24 ticket
+  branches (but were never merged into wave0) integrated by 3-way merge (merge-base 497a7ed / 519dfed;
+  M3 @ f1765c7 was already fully merged via 3ae2b29):
+    - W2-M1 final @ 528786d  merged @ 3d62c18 — license DoD resolved (owner-granted documented
+      exception; MPL surface = tqdm+certifi+orjson+libgfortran, criterion-based; W2-D4/R6/§1/§6).
+      Scope: gates.md, report, ops/spike_rss.py, pyproject.toml, tests/test_app_boot.py, ticket.
+    - W2-M24 final @ cc7b164 merged @ 36c83c9 — quota/judge/workflow-evasion + post-GREEN PRT-lint
+      hardening; owner-confirmed accepted-residual CI-security follow-up (W2-D5/D8/§6a/§7).
+      Scope: report, ops/spike_tier2.py, tests/test_tier2_spike.py.
+- Separation of powers verified on the ticket branches (trust-nothing, per-commit): NO fix()/docs()
+  commit touched any frozen test; every test() freeze touched only tests, never src.
+- Orchestrator re-ran the full suite on merged wave0 (HEAD 36c83c9): 340 passed / 6 skipped
+  (pre-merge 294/6 + M1 test_app_boot additions + M24 test_tier2_spike expansion; 0 failures).
+  Fresh python3.12 venv (pip install -e '.[dev]'); live/ui self-skip.
+- Byte-integrity: merged frozen tests (test_app_boot / test_tier2_spike / test_graph_skeleton) and
+  spike src (spike_rss / spike_tier2) are byte-identical to their ticket tips (git diff empty).
+  Secret scan on main..wave0: clean (no .env / keys committed).
+- STATUS: W2-M1 / W2-M3 / W2-M24 all REVIEW-PASSED and INTEGRATED into swarm/w2-wave0. Wave 0a COMPLETE.
+  Next: Wave 0b W2-M4 (PDF words+boxes reader spike) — RED→GREEN→verify→merge, then owner go/no-go.

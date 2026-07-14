@@ -68,10 +68,12 @@
 - What: independent live verification of W2-F1 (local live stack; production read-only):
   verdict **CONFIRMED** — route-level 404s on FHIR POSTs even with maximal write scopes.
   New findings W2-F7..F11; W2-F4 **resolved** with the verified minimum scope set and a
-  hard constraint: clients cannot gain scopes post-registration → **replacement SMART
-  client** required at MVP. Contract corrections: upload returns 200 `true` with no id
+  hard constraint: no supported persisted-scope edit path exists → **replacement SMART
+  client** required at MVP (registered scope still is not an effective ceiling, W2-F12).
+  Contract corrections: upload returns 200 `true` with no id
   (id via collection GET by content hash); byte-exact read-back is the FHIR
-  DocumentReference→Binary projection (standard download 500s — known CSRF-key defect);
+  DocumentReference→Binary projection (standard download 500s — ~~known CSRF-key defect~~
+  **superseded 2026-07-13: raw bytes passed as filename**);
   vitals proven end-to-end through FHIR Observation reads. Binding doc gained an
   owner-approved "Verification errata" block + the Cohere-trigger date fix (Monday
   2026-07-13; 07-14 is Tuesday). Consistency pass then aligned the implementation plan
@@ -112,3 +114,72 @@
   logs the response, so inbound PDF/vital bodies are NOT logged (W2-F20, earlier leak
   hypothesis FALSE). Docs-only; no code, no system changes this pass.
 - Stage: PLANNING — plan hardened pre-build.
+
+## [2026-07-13] Post-review feasibility remediation locked — W2-D9/W2-D10 · type: decision
+- What: a second adversarial pass challenged whether the documented controls were
+  buildable and whether coverage prose had outrun implementation evidence. The owner
+  kept the standard-REST transport and locked W2-D10: Final includes the source document,
+  grounded extraction artifact, and eligible grounded intake vitals under one contained
+  exactly-once contract. The following 20 closures are now required:
+  1. PHI detection excludes canonical synthetic inputs and scans generated logs, traces,
+     reports, recordings, results, and other outputs; a known-leak fixture must turn red.
+  2. `schema_valid`, `citation_present`, `safe_refusal`, and `no_phi_in_logs` require
+     100%; factual consistency retains its threshold and >5-point delta, with denominator
+     arithmetic emitted and drills flipping enough applicable cases to cross it.
+  3. Freeze the schemas: GroundedField-owned citation, complete FailureReason,
+     result-level lab collection date, typed retrieval/job/write-intent/worker-lease/log
+     models, and grounded intake vitals. The canonical vitals set is bps, bpd, weight,
+     height, temperature, pulse, respiration, oxygen_saturation, plus measurement_date;
+     each owns on-page value/unit/citation/bbox. Provenance note is generated, not extracted.
+  4. The document API remains path-based: separately fixed source/artifact paths resolve
+     to the provisioned expected category ID and ACL before POST; ambiguity fails closed.
+  5. Source/artifact/vital creates use intents `{pending, unknown, complete}`, a remote
+     marker and payload fingerprint; possible commit → unknown → reconcile, never blind retry.
+  6. Permanent dedup/lineage key is patient-safe
+     `(patient_id, document_id_or_content_hash, leg, version, field)`; 30-day attempts are
+     separate; failed-job requeue is atomic.
+  7. The exact replacement-client scope payload lives in W2_AUDIT.md; missing or extra
+     grants refuse, and old access plus refresh tokens are retired at cutover.
+  8. Golden negatives are named for W2-F12/F13/F14/F15/F16/F17/F19.
+  9. Current-fact corrections are binding: missing scope is 403; download 500 is raw
+     bytes passed as filename; disable-only is not revocation; numeric SLOs lock at Early.
+  10. W2_USERS actor/auth language and W2-D8/D9/D10 traceability are reviewed together.
+  11. Durable jobs use transactional claim, lease/heartbeat, bounded backoff,
+      stale-lease recovery, explicit worker topology, graceful shutdown, and queue-age metrics.
+  12. Jobs use a separate encrypted patient/principal-bound delegated credential whose
+      refresh lifecycle is independent of interactive idle expiry.
+  13. One E2E test reconstructs upload, queue, workers, provider calls, every EHR
+      write, and every readback from one correlation ID.
+  14. Agent Postgres joins backup/restore; source custody is explicit; job/dedup/ledger
+      rows are PHI and inherit retention, access, encryption, and recovery obligations.
+  15. One typed W1-compatible log envelope has an owner; migrations 002/003 are ordered,
+      forward-safe, secret-safe, and have clean-upgrade plus rollback/recovery evidence.
+  16. W2-F20 is an admin/config gate: record deployed non-DEBUG evidence and fail closed
+      before Binary readback if the log level is unknown or DEBUG.
+  17. Tier 2 gets a real cost/quota/runtime spike for roughly 50 ×
+      (VLM + answer + judge), plus a safe fork-secret policy; untrusted fork code never
+      receives repository secrets.
+  18. Wave 0 concurrently loads bge-small, local reranker, and one OCR page and enforces
+      the Railway RSS/cold-start ceiling before that fallback stack may ship.
+  19. Only the PRD-sanctioned stretch tier is cut. Core, engineering requirements,
+      D9/D10 containment, all three writes, both gate tiers, and GitLab submission-host
+      enforcement (Tier 1 plus a same-SHA fail-closed bridge to the live Tier 2) are
+      uncuttable through Final.
+  20. `/health` remains process liveness; `/ready` includes worker heartbeat and oldest
+      queue age, and a soft dependency is verified as 200 + degraded rather than outage.
+- Why: the earlier plan incorrectly treated a local ledger transaction as remote
+  exactly-once, described direct category-ID input the API does not accept, conflated
+  interactive session expiry with background refresh, under-specified queue ownership,
+  misclassified patient-linked Postgres rows as PHI-free, under-scoped backup/readiness,
+  and could make its PHI scanner fail on canonical fixtures. Gate arithmetic and live-call
+  cost were also overstated.
+- Result: `W2_gap-audit.md` now treats every non-stretch PRD/core/engineering requirement
+  as **scheduled with concrete Final evidence**, not already proven. Its 20-item table
+  carries a STOP condition for each closure. W2-D9 remains the mandatory containment
+  gate; W2-D10 owns the full three-leg write protocol. Historical 401/CSRF/disable-only,
+  one-case-factual-flip, direct-category-ID, local-transaction-exactly-once, and
+  PHI-free-job-row claims are superseded and may not be presented as current facts.
+- STOP: do not enable a write if any D9/D10 precondition is unknown; do not ship a gate
+  whose leak fixture or threshold-crossing drill stays green; do not cut a non-stretch
+  requirement; do not report readiness with a stale worker or unknown F20 configuration.
+- Stage: PLANNING REMEDIATED — implementation evidence required by Final 2026-07-19.

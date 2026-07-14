@@ -2,8 +2,8 @@
 
 > Decomposed 2026-07-13 by /tasks-gen from the **binding repo-root `W2_ARCHITECTURE.md`**
 > (15 §-anchors; finalized 2026-07-13). Supporting inputs: `docs/week2/W2_DECISIONS.md`
-> (W2-D1..D8 + dated revisions), `docs/week2/W2_AUDIT.md` (W2-F1..F11 — F7..F11 added by
-> the 2026-07-13 W2-F1 live verification; this plan updated the same day to match),
+> (W2-D1..D10 + dated revisions), `docs/week2/W2_AUDIT.md` (W2-F1..F23 — F7..F11 added by
+> the 2026-07-13 W2-F1 live verification and F12..F23 by the adversarial review),
 > `docs/week2/W2_RESEARCH.md` (W2-R1..R6), `docs/week2/W2_USERS.md` (UC-W2-1..4),
 > `docs/week2/W2_gap-audit.md` (99-req coverage), `docs/week2/Week_2_AgentForge.pdf` (PRD).
 >
@@ -21,7 +21,8 @@
 > independent verification agents); noted on those tasks.
 >
 > **Week-scoped rule.** Nothing under `docs/week1/` or any W1 root doc is edited.
-> `W2_ARCHITECTURE.md` is read-only for this plan.
+> After this docs-only remediation is committed, `W2_ARCHITECTURE.md` is the read-only
+> binding contract for implementation; build tasks may not silently rewrite it.
 
 ---
 
@@ -38,7 +39,7 @@ threaded into the tasks below:
 |---|---|---|
 | Exact-scope provisioning + agent asserts granted scopes, rejects unexpected | W2-F12 | W2-OA3, W2-M11 |
 | Patient-pin + encounter-ownership preflight before any write (cross-patient/mismatched-encounter negative tests) | W2-F13 | W2-M8, W2-M11 |
-| Provisioned fixed category + explicit category-ID/ACL validation | W2-F14 | W2-OA3, W2-M11 |
+| Canonical source/artifact paths + expected category-ID/ACL preflight; send only the path | W2-F14 | W2-OA3, W2-M8, W2-M11 |
 | Vital range sanity in the agent (server range validator is bypassed by REST) | W2-F15 | W2-M11 |
 | Never send caller `user`/`group`; decide provenance representation | W2-F16 | W2-M11 |
 | Token-revoking cutover (client-disable does not revoke live 1h tokens) | W2-F17 | W2-OA3 |
@@ -56,33 +57,76 @@ recorded so no build agent adds one.
 
 ---
 
+## Post-review remediation (2026-07-13) — binding execution overlay
+
+This dated overlay implements locked **W2-D10** and supersedes only the conflicting clauses
+called out below; it does not erase the audit trail or restructure the plan. Checkpoints are
+**build-order milestones, not scope ceilings**: MVP is the first fully correct vertical
+slice, Early closes the measured/operational surfaces, and every non-stretch PRD and
+engineering requirement is complete, integrated, and evidenced by Final. Source document,
+grounded extraction artifact, and eligible grounded intake vitals all ship under the same
+contained exactly-once contract; build order may land source+artifact first, but no leg is
+cut, stubbed, or waived.
+
+| Review closure | Owner task(s) | Required checkpoint and acceptance evidence |
+|---|---|---|
+| 1. PHI-check scope | W2-M7/M18/M20, W2-2 | MVP scanner excludes canonical input fixtures, scans only generated outputs/logs/traces/reports/recordings/results, and a generated known-leak self-test turns red; Final drill linked |
+| 2. Gate arithmetic | W2-M18/M20, W2-2 | MVP deterministic categories are 100%-required; factual denominator/delta emitted; Final factual drill flips `floor(0.05 × applicable)+1` cases or enough to cross its absolute threshold |
+| 3. Frozen contracts | W2-M6, W2-E8 | MVP field-for-field schema snapshot; Early cross-component compatibility snapshot; Final no drift |
+| 4. Path category control | W2-OA3, W2-M8/M11 | Each source/artifact path resolves to the recorded expected ID+ACL before POST; only the path is sent; wrong/ambiguous path, ID, or ACL refuses |
+| 5. Remote exactly-once | W2-M8/M11, W2-E8/W2-1 | Durable `{pending,unknown,complete}` intents, remote marker/fingerprint, list/re-read reconciliation, and commit-then-timeout tests for all three legs; never blind retry |
+| 6. Permanent ledger + requeue | W2-M8/M11 | Permanent patient-safe dedup/lineage survives attempt purge; failed logical job requeues atomically; cross-patient same-bytes and purge tests pass |
+| 7. Exact provisioning | W2-OA3 | Exact 16-scope manifest/payload from W2_AUDIT, enabled confidential client, no password grant/unadvertised write scopes, and old access+refresh retirement evidence |
+| 8. Named D9 negatives | W2-M17/M18/M19/M20, W2-1 | Golden and lower-level tests explicitly cover F12/F13/F14/F15/F16/F17/F18/F19; deployed operational checks close F17 |
+| 9. Superseded facts | W2-M2/OA3/E4, W2-6 | 403, raw-bytes-as-filename, access+refresh retirement, and Early SLO closure are the only current claims |
+| 10. UC/decision trace | W2-6 | W2_USERS capability matrix through D8/D9/D10 reviewed against shipped evidence |
+| 11. Typed leased queue | W2-M8/M21, W2-E3 | Transactional claim, lease/heartbeat, bounded backoff, explicit worker topology, graceful shutdown, stale recovery, and queue-age evidence |
+| 12. Delegated-job credential | W2-M5, W2-E8 | Encrypted patient/principal-bound credential and refresh lifecycle independent of interactive idle expiry; restart/expiry/revocation tests |
+| 13. One-ID correlation | W2-M6/M12/M14, W2-E8 | Required integration trace resolves inbound→job→worker→VLM→retrieval→each write/read-back→terminal event from one ID |
+| 14. Backup + PHI rows | W2-OA5, W2-4 | Agent Postgres encrypted backup/restore, named source custody, key recovery, RPO/RTO; patient-linked job/dedup/ledger rows classified PHI |
+| 15. Log envelope + migrations | W2-M5/M6/M8, W2-E8 | One owned typed event envelope; 002/003 ordered expand/contract, clean-upgrade, compatibility, rollback/roll-forward evidence |
+| 16. F20 deploy guard | W2-OA6, W2-M11/W2-1 | Admin-recorded non-DEBUG value; unknown or DEBUG fails closed before Binary read-back |
+| 17. Tier-2 capacity/policy | W2-M24/M20 | Measured runtime/cost/quota for `50 × (VLM extract + answer + judge)` and safe fork-PR secret policy before gate required |
+| 18. Full-stack RSS | W2-M1 | bge-small + local reranker + one OCR page concurrently stay below the recorded Railway ceiling with headroom |
+| 19. Only stretch cuttable | Cut section, W2-6 | Exactly five sanctioned stretch items may be cut; all core/engineering/D9/D10/write/gate/GitLab work blocks Final if incomplete |
+| 20. Readiness semantics | W2-M21/E3/W2-1 | Worker heartbeat+oldest-queue-age signals; `/health` remains healthy during soft degradation; stale worker/unsafe queue is unready |
+
+**STOP conditions:** do not enable a write while any D9/D10 precondition is unknown; do
+not ship a gate whose known-leak or threshold-crossing drill remains green; do not claim
+readiness with a stale worker or unknown F20 setting; do not defer or cut a non-stretch
+requirement. These are execution gates baked into the tasks below, not new product choices.
+
+---
+
 ## Checkpoints (Central time — phase boundaries are the real gates)
 
 | Checkpoint | Deadline | Must be true |
 |---|---|---|
-| **MVP** | **Tue 2026-07-14 11:59 PM** | Two doc types ingest end-to-end; supervisor + 2 workers with logged handoffs; hybrid RAG + rerank seam; 50-case two-tier gate PR-blocking (Tier 1 offline + Tier 2 live); deployed app with source-grounded UI; initial latency/cost report; walkthrough video (PRD MVP table, all five rows) |
-| **Early** | **Thu 2026-07-16 11:59 PM** | Overlay polish + follow-up flows; W2 dashboards/alerts/runbooks; baselines vs W1 (closes W2-O1/W2-O2/debt #2); OpenAPI + Bruno |
-| **Final** | **Sun 2026-07-19 12:00 PM** | Hardening; regression drill (4 injected breaks → 4 red runs linked); full cost/latency report; Railway backup verification; demo video (six contents); final live E2E |
+| **MVP — first fully correct vertical slice** | **Tue 2026-07-14 11:59 PM** | Both document types traverse strict extraction/grounding; source+artifact use the real D9/D10 path and exactly-once protocol; supervisor + 2 workers, hybrid RAG, 50-case two-tier PR-blocking gate, deployed source-grounded UI, initial report, and walkthrough are real—not stubs. Any not-yet-landed non-stretch work remains scheduled below, never reclassified out of scope. |
+| **Early — operational and full-write closure** | **Thu 2026-07-16 11:59 PM** | Complete grounded intake-vitals leg under D10; overlay/follow-up; dashboards/alerts/runbooks; full baselines vs W1 and the **single numeric SLO closure**; OpenAPI+Bruno; migrations/log-envelope/one-ID integration closure. |
+| **Final — complete robust submission** | **Sun 2026-07-19 12:00 PM** | Every non-stretch PRD and engineering requirement complete; all three write legs and D9/D10 controls hardened; deterministic+factual regression drills red; full report; OpenEMR+agent-Postgres backup/restore; six-part video; final live E2E; GitLab SHA-bound gate green. |
 
 **Dependency spine:** W2-OA3 → W2-M8 → W2-M11 (W2-M2 ✅ verified-by-audit 2026-07-13 —
-its outputs now bind M8/M11 directly); W2-M5 → {W2-M8, W2-M11} (job rows
-carry session_ref; writes ride the persisted delegated token); W2-M1 → W2-M4 (reader spike
+its outputs now bind M8/M11 directly); W2-M5 → {W2-M8, W2-M11} (jobs carry only
+`credential_ref`; writes use the separately encrypted delegated-job credential); W2-M1 → W2-M4 (reader spike
 needs the container's tesseract/pdfium unless run host-only); W2-M7 → {W2-M9, W2-M17};
 W2-M6 → nearly everything; W2-M8 → W2-M16 (page renders fetch the OpenEMR-stored source
 with the delegated token); W2-M14 → W2-M12 *final acceptance only* (see Track C note);
-W2-M17+W2-M18 → W2-M19 → W2-M20; W2-OA2 → W2-M20; W2-OA4 → {W2-M19, W2-M20} (GH jobs need
-the remote); W2-OA1 decides W2-M14's shipped `RERANKER` value.
+W2-M17+W2-M18 → W2-M19 → W2-M20; W2-M24 → W2-M20; W2-OA2 → W2-M20;
+W2-OA6 → {W2-M11, W2-M21}; W2-OA5 → W2-4; W2-OA4 → {W2-M19, W2-M20}
+(GH jobs need the remote); W2-OA1 decides W2-M14's shipped `RERANKER` value.
 
 **Parallel tracks after Wave 0** (independent until the named merge points):
-- **Track A — ingestion/writes:** W2-M5 → W2-M8 → W2-M9 → W2-M10 → W2-M11
+- **Track A — ingestion/writes:** W2-M5 → W2-M8 → W2-M9 → W2-M10 → W2-M11 → W2-E8
 - **Track B — retrieval:** W2-M13 → W2-M14 (owns `agent/app/routes/evidence.py`; never
   touches `documents.py`)
 - **Track C — graph/composer:** W2-M12 → W2-M15 → W2-M16. W2-M12 builds
   `evidence_retriever` against the **W2-M3 stub seam**; the real retrieval module
   (W2-M14) swaps in at integration — W2-M12's final acceptance (encounter.summary
   retrieval hits) closes only after that swap.
-- **Track D — evals:** W2-M7 → W2-M17 → W2-M18 → W2-M19 → W2-M20 (needs A/B/C merged for
-  recordings and the live Tier-2 run; case + scorer authoring starts Monday in parallel).
+- **Track D — evals:** W2-M7 → W2-M17 → W2-M18 → W2-M19; Wave-0 W2-M24 runs in
+  parallel, and `{W2-M19, W2-M24} → W2-M20` (needs A/B/C merged for recordings and the
+  live Tier-2 run; case + scorer authoring starts Monday in parallel).
   **Track D owns `.github/workflows/agent-eval-gate.yml`** — W2-M13 contributes its
   index↔manifest hash assertion as a standalone script the workflow calls, not a yml edit.
 - Shared-file merge points made explicit: `agent/app/routes/documents.py` (A creates, C
@@ -151,47 +195,79 @@ done or their dated triggers fired; no feature task starts blocked on an unknown
 - [ ] **W2-OA3 — REPLACEMENT SMART client registration (W1+W2 scope union) + verified
   cutover.** **Trigger: Monday 2026-07-13, before the first deployed write (W2-M11).**
   **Blocking: build-blocking provisioning checklist item.** The W2-F1 live verification
-  proved (W2-F4 resolved) that **existing clients cannot gain scopes post-registration
-  and the admin screen cannot edit scope sets** — W1's client cannot be extended; MVP
-  requires a fresh registration. Steps (verified sequence recorded in the W2_AUDIT.md
+  proved (W2-F4 refined) that there is **no supported persisted-scope edit path and the
+  admin screen cannot edit scope sets** — W1's client therefore still requires replacement,
+  while registered scope is not an effective server-side ceiling (W2-F12). Steps
+  (verified sequence recorded in the W2_AUDIT.md
   verification section, incl. the registration payload):
-  1. Register a new confidential client with the **W1+W2 scope union**: all W1 read
-     scopes + `api:oemr user/document.crs user/vital.crus user/Observation.rs
-     user/DocumentReference.rs user/Binary.read` (the last two for FHIR read-back);
-     grants: `authorization_code` + `refresh_token` — **never password grant in
-     production** (the verification client was local-only password-grant, since
-     disabled). **Provision the EXACT scope set — no extras:** registered scope is not an
-     effective server-side ceiling (W2-F12), so over-provisioning is not harmless.
+  1. Register this exact confidential-client payload; `${SMART_REDIRECT_URI}` is replaced
+     from the approved environment/runbook and no secret is written to source control:
+
+     ```json
+     {
+       "application_type": "private",
+       "client_name": "AgentForge Week 2 Write Client",
+       "redirect_uris": ["${SMART_REDIRECT_URI}"],
+       "token_endpoint_auth_method": "client_secret_post",
+       "grant_types": ["authorization_code", "refresh_token"],
+       "scope": "openid offline_access launch launch/patient api:oemr user/Patient.read user/Condition.read user/MedicationRequest.read user/AllergyIntolerance.read user/Observation.read user/Encounter.read user/document.crs user/DocumentReference.rs user/Binary.read user/vital.crus user/Observation.rs"
+     }
+     ```
+
+     The exact 16-scope manifest is `openid`, `offline_access`, `launch`,
+     `launch/patient`, `api:oemr`, the executable W1 read set
+     (`user/Patient.read`, `user/Condition.read`, `user/MedicationRequest.read`,
+     `user/AllergyIntolerance.read`, `user/Observation.read`, `user/Encounter.read`), and
+     W2's `user/document.crs`, `user/DocumentReference.rs`, `user/Binary.read`,
+     `user/vital.crus`, `user/Observation.rs`. It deliberately excludes unadvertised
+     `user/DocumentReference.write` and `user/Observation.write`; it never permits
+     `password`, `client_credentials`, or `private_key_jwt` grants. W2_AUDIT's dated
+     manifest is the provisioning source of truth.
   2. Admin-enable it (registers DISABLED): Administration → System → API Clients.
-  3. Verify **staff ACLs** independently permit patients/docs write; provision the fixed
-     "AI-Extractions" document **category with an explicit category id + ACL** (W2-F14 —
-     uploads to an unresolved path can land uncategorized/accessible; the agent must
-     write to a known category id, never a bare path).
+  3. Verify **staff ACLs** independently permit patients/docs write. Provision and record
+     two immutable deployment tuples—`(SOURCE_DOCUMENT_PATH=/AI-Source-Documents,
+     expected_id, expected_acl)` and `(ARTIFACT_DOCUMENT_PATH=/AI-Extractions,
+     expected_id, expected_acl)`—in the non-secret runbook. The standard API accepts a
+     **path**, not direct category-ID input:
+     before every source/artifact POST the agent resolves the configured path, verifies
+     its expected ID and ACL, then sends that path. Unknown, ambiguous, wrong-ID, or
+     unauthorized resolution refuses; runtime never creates categories.
   4. Swap `SMART_CLIENT_ID`/`SECRET` in the Railway env; verify the launch + a probe
      write under the new client; **on first token, the agent asserts the granted scope
      set equals the expected set and refuses to start writes on any unexpected granted
      scope** (W2-F12; also a W2-M11 runtime guard).
-  5. **Cutover retires the OLD W1 client for real (W2-F17):** disabling a client only
-     flips `is_enabled` and does **not** revoke its live access/refresh tokens (1h access
-     lifetime; JWT/`client_credentials` paths bypass the enablement check). Either revoke
-     the old client's tokens explicitly or wait out the 1h expiry before treating cutover
-     as complete — and disable only AFTER the new client is verified (single-launcher
-     check, the W1 E9 duplicate-launcher lesson). Do **not** substitute `private_key_jwt`
-     to dodge this without resolving its enablement bypass.
-  The expected failure if scopes are skipped is a **silent 403 on first write** (W2-F4
-  correction — 403, not 401); the runbook entry points here.
+  5. **Cutover retires the OLD W1 client for real (W2-F17):** after the new client is
+     verified, disable the old client and revoke **both access and refresh tokens**. If
+     revocation is unavailable, wait out the independently recorded maximum lifetime of
+     **both token classes**, not only the one-hour access-token lifetime, and prove old
+     access- and refresh-token attempts are rejected before declaring cutover complete.
+  The expected failure if `api:oemr` is skipped is an explicit **403 on first write**
+  (W2-F4 correction — 403, not 401); the runbook entry points here.
   Anchors: W2-F4 (resolved — 403 not 401), W2-F11/F12 (scope drift + registered scope is
   not a ceiling — trust the verified set, assert granted scopes), W2-F14 (category ACL),
   W2-F17 (token-revoking cutover), W2-D1 addendum + W2-D9, §4 (scope delta), §5 (EHR
-  write 401/403 row), architecture Verification errata #4.
+  write 403 row), architecture Verification errata #4.
 - [ ] **W2-OA4 — Push `main` to origin (GitHub) and to the GitLab mirror.**
   **Trigger: Monday 2026-07-13, before the first CI run that needs the remote (W2-M19);
   re-verify at each checkpoint deadline.** GitHub is the canonical CI remote (branch
   protection + Tier 2 live there); **GitLab is the submission host** and must be current
   at every checkpoint. Blocking for W2-M19/W2-M20 (GH jobs + branch protection need the
   remote) and for every checkpoint submission. Anchors: §6a enforcement, §8.
-- [ ] **W2-OA5 — Verify Railway MySQL/volume backup posture** and record evidence in
-  `DEPLOYMENT.md`. Dated: before Final; feeds W2-4. Anchors: §8a, Open items.
+- [ ] **W2-OA5 — Verify complete backup/source-custody posture** and record non-secret
+  evidence in `DEPLOYMENT.md`. Dated: before Final; feeds W2-4. Inventory OpenEMR
+  MySQL/volume, encrypted agent Postgres (OAuth state, delegated credentials, jobs,
+  permanent dedup/lineage, intents/attempts, attribution), encryption-key recovery
+  custody, repo-reproducible eval/corpus assets, and the named owner/location of original
+  demo source files plus the named clinic/records custodian and recovery inventory for
+  source documents used by the manual re-upload procedure. Record RPO/RTO and
+  restore owners; never copy credentials into evidence. Anchors: §8a, W2-D10, Open items.
+- [ ] **W2-OA6 — Record and gate the deployed F20 logging configuration.** Before the
+  first FHIR Binary read-back, an administrator records non-secret evidence that
+  `system_error_logging` is known and not `DEBUG`, including deployment/environment and
+  verification time. Unknown/unreadable/`DEBUG` is a hard fail-closed condition: Binary
+  read-back and its dependent completion transition remain disabled, `/ready` identifies
+  `binary_readback_unsafe`, and no document bytes are fetched. Re-check at each deploy and
+  Final. Anchors: W2-F20, W2-D9/D10; implemented/tested by W2-M11/M21/W2-1.
 
 ### Wave 0 spikes (before feature work)
 
@@ -203,6 +279,13 @@ done or their dated triggers fired; no feature task starts blocked on an unknown
   - Image builds locally and on Railway; `/health` green post-deploy with new deps loaded.
   - `tesseract --version` + eng traineddata resolvable in-container; pypdfium2 renders a
     page; bge-small ONNX loads under FastEmbed (no torch anywhere in the lockfile).
+  - **Full-stack capacity gate (W2-O1 remediation):** in the same Railway container,
+    concurrently hold bge-small embeddings, `mxbai-rerank-base-v1`, the built hybrid index,
+    and one 200-DPI Tesseract OCR page while exercising one request. Record actual plan
+    memory limit, peak/cold RSS, image size, and cold-start. A numeric
+    `W2_WAVE0_RSS_CEILING_MB` is set to at most 80% of the actual Railway plan limit; peak
+    RSS must remain below it. Failure blocks the local-reranker stack and invokes the
+    documented quantize→raise-memory→externalize-index ladder before feature work.
   - Image-size delta and cold-start time recorded (W2-R4 planning numbers, devlog entry).
   - Error case: any dep failing to build on Railway's builder → fallback investigation
     documented before feature work proceeds (this is the spike's purpose).
@@ -220,22 +303,24 @@ done or their dated triggers fired; no feature task starts blocked on an unknown
   - `POST /api/patient/:pid/document` under a real token: returns **HTTP 200 body `true`
     with NO document id** (DocumentRestController.php:120) — not 201; the id is
     discovered via **collection GET keyed on unique filename/content-hash** (W2-F9).
-  - **Read-back:** the standard REST download **returns 500** in this stack (CSRF-key
-    defect — known issue, not ours to fix); the verified byte-exact round-trip is the
-    **FHIR projection** `DocumentReference/:uuid → Binary/:uuid` (SHA-256 match, W2-F9).
+  - **Read-back:** the standard REST download **returns 500** in this stack. **SUPERSEDED
+    (Post-review remediation 2026-07-13):** the cause is raw document bytes passed as
+    `BinaryFileResponse`'s filename, not a CSRF-key defect. The verified byte-exact
+    round-trip is the **FHIR projection** `DocumentReference/:uuid → Binary/:uuid`
+    (SHA-256 match, W2-F9), guarded by W2-OA6/W2-F20.
   - Vitals: `POST .../vital` → **201 {vid}** → standard GET returns values → **FHIR
     `Observation?category=vital-signs`** surfaces the Observation resources (W2-F10) —
     the O-new mapping path is fully proven end-to-end.
   - Provisioning sequence verified live (register → created DISABLED → admin enable;
     scope minimums; replacement-client constraint) — carried into W2-OA3.
-  - **Residual (not covered by the verification):** the "AI-Extractions" category-path
-    check — carried into W2-OA3's runbook step as one-time admin provisioning, never
-    agent code (W2-D1: exactly two write capabilities; runtime treats a missing category
-    as `failed(writeback_failed)`, see W2-M11).
+  - **Residual (not covered by the verification):** both canonical source/artifact path
+    controls — W2-OA3 records each expected category ID+ACL; W2-M8/M11 resolve and attest
+    that mapping before every write and send the path. A mismatch is typed
+    `category_mismatch`; runtime never creates a category.
   Retained artifact: the probe flow is recorded in the audit section (registration
   payload + call sequence); `agent/ops/spike_document_write.py` is authored during
   W2-M11 as the regression-able probe, exits nonzero on 403/mismatch with the runbook
-  pointer — guards: a silent 403 scope failure (W2-F4 correction — 403, not 401)
+  pointer — guards: an explicit 403 scope failure (W2-F4 correction — 403, not 401)
   surfacing for the first time inside the MVP demo.
   Anchors: W2-F2, W2-F4 (resolved), W2-F9, W2-F10, §3 (write principal), W2-R5
   (verified live 2026-07-13), architecture Verification errata #1–#2.
@@ -282,6 +367,28 @@ done or their dated triggers fired; no feature task starts blocked on an unknown
   asserting both readers yield the same normalized box for the same word — guards:
   incompatible geometries making every downstream bbox/overlay silently wrong.
 
+- [ ] **W2-M24 — Tier-2 timing/cost/quota spike + fork-PR secret policy (Wave 0).**
+  Files: throwaway synthetic run output (not committed if it contains provider content),
+  `docs/week2/W2_DEVLOG.md` (measured aggregate), CI/runbook design notes consumed by M20.
+  Anchors: W2-D5/D8, §7, §6a, post-review remediation item 17.
+  Accept:
+  - Run a representative sample through the real three-call-unit shape and extrapolate
+    with the explicit formula `50 × (VLM extraction + answer turn + judge)`; multi-page VLM
+    calls are counted, not hidden inside “50 turns.” Record p50/p95 runtime, tokens,
+    provider cost, rate-limit headroom, retry amplification, daily quota, and a maximum
+    per-run cost/time budget. The full 50-case gate is not marked required until the
+    measured quota and timeout support it.
+  - Fork policy is frozen before M20: untrusted fork code receives **no repository
+    secrets** and is never checked out under `pull_request_target`; forks run Tier 1 only,
+    then a maintainer must reproduce the exact fork commit on a trusted same-repository
+    branch for the required Tier-2 result before merge. Same-repo PRs use least-privilege
+    environments with approval and no secret echo/artifact retention.
+  - Failure to fit quota/runtime/cost is a STOP for making Tier 2 required and is escalated
+    as a dependency problem; it is not solved by reducing the 50 cases or bypassing the
+    gate.
+  Test: policy lint/CI event-matrix review plus one trusted dry run and one fork simulation
+  proving secrets absent — guards: secret exposure and an every-PR gate that cannot finish.
+
 ---
 
 ## Phase 1 — MVP core
@@ -296,48 +403,97 @@ and the deployed demo with initial report + walkthrough video.
 required on main; `agent/evals/w2_baseline.json` committed; README W1/W2 split pushed to
 GitHub + GitLab; video + initial report delivered.
 
-- [ ] **W2-M5 — Token persistence in the Postgres session store (W1 debt #1 — pulled
-  into MVP; the durable-job write principal depends on it).**
+- [ ] **W2-M5 — Separate interactive-session and encrypted delegated-job credential
+  lifecycles (W1 debt #1 — pulled into MVP).**
   Files: `agent/app/session/store.py` (extended), `agent/app/auth/` (extended — refresh
-  grant), `agent/migrations/002_oauth_state.sql` (NEW).
+  grant + job-credential vault), `agent/migrations/002_oauth_state.sql` (NEW, expand-first).
   Anchors: §3 (write principal), §8 debt ledger #1, W2-D1 addendum (b); W1 D9/F-S.5
   carried (never `client_credentials`).
   Accept:
-  - OAuth tokens + PKCE state persist in Postgres; process restart preserves the pinned
-    session (W1 restart bug gone); session rows gain W2 fields: `document_ids` +
-    extraction-artifact **refs** (never values — §2 graph-state lifecycle, W1 §3a PHI
-    posture unchanged).
-  - A job can mint a fresh access token via the refresh grant when a write outlives the
-    access token; refresh failure is a typed terminal state consumed by W2-M8 as
-    `failed(auth_expired)` (source retained; recovery = idempotent re-run under a fresh
-    session).
-  - Token material is never logged/traced (secret class, §3a).
-  Test: `agent/tests/test_session_store.py` (extended) — restart-survival + refresh-grant
-  + refresh-failure paths — guards: async jobs orphaned by restart or silently writing
-  under the wrong/expired principal.
+  - The interactive session retains its W1 idle/turn/access-token expiry and is never kept
+    alive merely because a background job exists. Process restart preserves its PKCE/state
+    contract and only non-value document/artifact refs.
+  - At enqueue, the job receives a **separate opaque credential reference** to an encrypted
+    credential row bound to `{job_id, patient_id, delegated_clinician_sub, client_id,
+    granted_scopes, access_expiry, refresh_expiry, key_id}`. Access+refresh tokens are
+    envelope-encrypted at rest; plaintext exists only for the bounded exchange/call, never
+    in job rows, logs, traces, errors, or backups without encryption. The encryption key is
+    external to Postgres with named rotation/recovery custody.
+  - The job credential refreshes independently of interactive idle expiry but cannot
+    change patient, principal, client, or scope manifest. Scope/patient/principal mismatch,
+    refresh expiry/revocation, or cutover retirement fails closed as typed
+    `auth_expired|scope_mismatch`; it never falls back to system/client-credentials auth.
+    Credential material is destroyed after its last logical job reaches a reconciled
+    terminal state, subject to the audited recovery window.
+  - Migration 002 is expand/contract safe: expand schema first, dual-read old/new during
+    one deploy, backfill only non-secret metadata, switch writers, then contract no earlier
+    than the following verified deploy. Upgrade-from-001, rollback to the compatible app,
+    roll-forward, key-unavailable, and partial-migration tests are required; migrations
+    never print token values.
+  Test: `agent/tests/test_session_store.py` (extended) plus migration tests — restart and
+  interactive-idle-expiry while a job refreshes; patient/principal/scope binding refusal;
+  refresh revocation; encryption/key-rotation; 001→002 clean upgrade, compatible rollback,
+  roll-forward, and secret-free diagnostics — guards: jobs orphaned by idle expiry or
+  silently writing under the wrong principal.
 
 - [ ] **W2-M6 — Pydantic v2 schema inventory + validation tests (canonical contracts —
   named PRD deliverable).**
   Files (all NEW): `agent/app/schemas/__init__.py`, `agent/app/schemas/extraction.py`
   (`GroundedField[T]`, `NormBBox`, `LabPdfExtraction`+`LabResult`,
-  `IntakeFormExtraction`+`Demographics`, `ExtractionArtifact`, `VitalsWrite` per O-new),
+  `IntakeFormExtraction`+`Demographics`+`VitalCandidate`+`IntakeVitals`,
+  `ExtractionArtifact`,
+  `VitalsWrite` per W2-D10),
   `agent/app/schemas/citations.py` (`CitationV2`, `EvidenceSnippet`),
   `agent/app/schemas/handoff.py` (`HandoffRecord`, closed decision/reason enums),
-  `agent/app/schemas/documents.py` (`UploadRequest`, `UploadAccepted`, `DocumentStatus`,
-  `FailureReason`); `agent/tests/test_schemas.py` (NEW).
+  `agent/app/schemas/documents.py` (`UploadRequest`, `UploadAccepted`, `RetryRequest`,
+  `RetryAccepted`, `DocumentStatus`, `FailureReason`),
+  `agent/app/schemas/retrieval.py` (`EvidenceSearchRequest/Response`),
+  `agent/app/schemas/jobs.py` (`JobRecord`),
+  `agent/app/schemas/writeback.py` (`WriteIntent`, `WriteResult`),
+  `agent/app/schemas/workers.py` (`WorkerInput`, `WorkerOutput`),
+  `agent/app/observability/events.py` (`LogEventEnvelope`, the sole event-envelope owner);
+  `agent/tests/test_schemas.py` (NEW), committed schema snapshot.
   Anchors: §2 (full inventory, composition rule), W2-D3, W2-D6, PRD core req 2;
   §2a migration note (CitationV2 mapping fields).
   Accept:
-  - Every §2 model exists field-for-field, strict mode (`extra="forbid"`); malformed input
-    is a hard reject — no coercion of the seven required lab fields / six intake fields.
-  - Composition rule enforced in-model: a `GroundedField` with `grounded=false` cannot
-    carry a citation; `CitationV2` with any missing field fails construction (incomplete
-    citation = claim cannot render, W2-D6).
-  - `FailureReason` and `supervisor_decision`/`reason_code` are closed enums matching
-    §2's lists exactly; guideline `source_id`s embed corpus version
-    (`vadod-htn-2020@<manifest-hash>`).
-  - Edge cases tested: empty `results` list, boundary bbox coords (0.0/1.0), date parsing
-    rejects, unit strings preserved verbatim (parse-don't-validate at the boundary only).
+  - The architecture's post-review field-for-field snapshot is frozen here with
+    `extra="forbid"`. `GroundedField[T]` **owns** `{value,page,bbox,grounded,citation}`:
+    grounded requires a complete citation+bbox; ungrounded forbids a citation and cannot
+    write/render as fact, but may retain a bbox solely as an UNSUPPORTED review region.
+    `CitationV2` retains its five PRD fields; no parallel model owns
+    a field citation.
+  - Every `LabResult` carries its own grounded `collection_date` (not a report-level date),
+    along with test name, value, unit, reference range, abnormal flag, and citations.
+    Multi-date fixtures must round-trip distinct result dates.
+  - `IntakeFormExtraction` retains demographics, chief concern, medications, allergies,
+    and family history and adds `IntakeVitals` candidates `bps`, `bpd`, `weight`, `height`,
+    `temperature`, `pulse`, `respiration`, and `oxygen_saturation`. Each
+    `VitalCandidate{value:GroundedField[Decimal],unit:GroundedField[str],
+    measurement_date:GroundedField[datetime]}` owns its on-page value/unit/date citations
+    and bboxes. `note` is generated provenance, never extracted.
+  - `FailureReason` is the closed union of the prior enum
+    `{auth_expired,schema_violation,ocr_failed,vlm_timeout,vlm_unavailable,
+    writeback_failed,writeback_verify_failed,doc_type_mismatch,worker_restart}` plus
+    `{patient_mismatch,encounter_mismatch,unit_mismatch,range_violation,scope_mismatch,
+    category_mismatch,binary_readback_unsafe,upload_rejected,unsupported_media_type,
+    size_or_page_cap_exceeded,
+    storage_write_failed}`. API status mapping is frozen and no free-text reason
+    substitutes for an enum.
+  - `POST /evidence/search` accepts typed `EvidenceSearchRequest {query,k}` (bounded `k`)
+    and returns `EvidenceSearchResponse`; no anonymous `{query,k}` remains. Upload/status,
+    `RetryRequest/RetryAccepted`, `JobRecord`, all three `WriteIntent/WriteResult` legs, and
+    `WorkerInput/WorkerOutput` have the exact architecture fields and typed enums.
+  - Every structured event uses one W1-compatible `LogEventEnvelope{schema_version,
+    event_id,event_type,occurred_at,case_id,job_id,correlation_id,component,severity,
+    attributes}`; optional IDs are explicit `None`. Raw patient IDs, token material,
+    document text/images, extracted values, and free-form exception bodies are forbidden;
+    event-specific attributes use the approved PHI-free scalar/list schema.
+  - `supervisor_decision`/`reason_code` are closed enums; guideline `source_id`s embed
+    corpus version. Snapshot compatibility tests fail any unreviewed field/enum/event
+    drift in both producer→consumer directions.
+  - Edge cases tested: empty results, multi-date labs, grounded/citation contradiction,
+    boundary bboxes, bad dates, unit preservation, every failure enum, bounded `k`, worker
+    union exhaustiveness, and event-envelope redaction.
   Test: per-model validation tests incl. reject fixtures (the PRD names validation tests
   as part of the Schemas deliverable) — guards: raw VLM output bypassing the schema
   contract (PRD pitfall 2).
@@ -358,81 +514,82 @@ GitHub + GitLab; video + initial report delivered.
     same files.
   - Every fixture embeds **canary tokens** (`ZZPHI-<case_id>` name, canary MRN, canary
     sentence) per §7 no_phi_in_logs mechanics; all content Synthea-derived synthetic.
+    Canonical input fixtures and their manifest are test inputs, so the generated-output
+    PHI-leak scan deliberately excludes this directory; a separate fixture-policy check
+    proves synthetic provenance, manifest membership, and canary presence. Generated model
+    recordings are **not** canonical inputs and must be placeholder-scrubbed before commit
+    so they pass W2-M18/M20's scan.
   - Regeneration is deterministic (`gen_fixtures.py` committed; fixtures also committed —
     RPO 0 from repo alone, §8a).
   Test: fixture-manifest completeness check in CI (every referenced fixture exists;
   canaries present in every document) — guards: eval gate authored against fixtures that
   can't exercise degraded/injection/missing-data behavior.
 
-- [ ] **W2-M8 — attach_and_extract ingestion surface: `POST /documents` + status endpoint,
-  durable job rows, words+boxes layer, boot reconciliation.**
-  Files: `agent/app/routes/documents.py` (NEW — POST /documents, GET /documents/{id}/status),
-  `agent/app/ingestion/service.py` (NEW — job runner), `agent/app/ingestion/jobs.py` (NEW —
-  durable rows), `agent/app/ingestion/hashing.py` (NEW), `agent/app/ingestion/reader.py`
-  (from W2-M4, hardened), `agent/migrations/003_document_jobs.sql` (NEW —
-  UNIQUE(patient_id, content_hash), job table, write-ledger table), `agent/app/main.py`
-  (extended — boot reconciliation hook).
-  Anchors: §2 (attach_and_extract), §2a (POST /documents, status endpoint), §3 (ingestion
-  lifecycle, states, boot reconciliation), §3a (retention rows), §5 (upload/restart/OCR
-  rows), §6a events, UC-W2-1/2, W2-F9 (upload contract + read-back), W2-F13 (server does
-  NOT check patient/encounter ownership — agent preflight is load-bearing), W2-F18
-  (native upload non-idempotent → agent ledger mandatory), W2-F19 (native upload skips
-  size/page/MIME/error checks; rejects as empty 404), W2-D9, architecture Verification
-  errata #1–#2.
+- [ ] **W2-M8 — `attach_and_extract` ingestion, D10 source intent, and typed claimed/leased
+  durable queue.**
+  Files: `agent/app/routes/documents.py` (NEW — POST/status/`POST /documents/{id}/retry`),
+  `agent/app/ingestion/service.py` (NEW), `agent/app/ingestion/queue.py` (NEW — claim,
+  lease, heartbeat, requeue), `agent/app/ingestion/intents.py` + `reconcile.py` (NEW),
+  `agent/app/ingestion/hashing.py` (NEW), `agent/app/ingestion/reader.py` (hardened),
+  `agent/migrations/003_document_jobs.sql` (NEW — jobs/leases, permanent dedup+lineage,
+  write intents, 30-day attempts), worker-service Railway configuration, `agent/app/main.py`.
+  Anchors: §2/§2a/§3/§3a/§5/§6a; UC-W2-1/2; W2-D9/D10; W2-F9/F13/F14/F18/F19.
   Accept:
-  - Auth invariants (load-bearing per W2-F13 — the OpenEMR routes accept caller pid/eid
-    and do **not** validate launch-patient equality or encounter ownership on create, so
-    the agent is the only enforcement point): every endpoint requires the pinned session;
-    `patient_id` ≠ pinned patient → canonical W1 refusal (403-class); status reads verify
-    document ownership; an upload-supplied `encounter_id` is **validated as belonging to
-    the session-pinned patient** (verified against OpenEMR before enqueue) — mismatch →
-    typed 422/403-class `FailureReason`, nothing enqueued (§2a patient-match invariant
-    extended to the new write surface).
-  - **Upload validation before the native call (W2-F19 — OpenEMR does none of this):**
-    reject on `$_FILES` error, missing/oversized file (W2's ≤10 MB), >20 pages, or MIME
-    outside the per-doc_type allowlist, returning a typed 4xx — never rely on the native
-    upload, which skips these and returns an empty **404** on reject. Caps enforced
-    **pre-queue**: >10 MB or >20 pages or wrong MIME per doc_type → 422 with
-    typed `FailureReason`, nothing enqueued. Accepted MIME: lab_pdf → application/pdf;
-    intake_form → application/pdf|image/png|image/jpeg (images skip text-layer probe).
-  - **Atomic insert-or-return** on UNIQUE(patient_id, content_hash): duplicate → 200 with
-    existing `{document_id, status_url}`, zero new records; concurrent duplicates resolve
-    race-safely to one document. This agent-side ledger is **mandatory, not
-    defense-in-depth** — the native OpenEMR upload is non-idempotent (every POST allocates
-    a fresh UUID; the content hash is computed after creation and never used for dedup;
-    no patient+hash uniqueness — W2-F18), so nothing downstream prevents duplicate source
-    documents. New upload → source stored in OpenEMR, durable job row, 202 + status_url.
-    **OpenEMR store contract (verified, W2-F9):** the documents POST returns **200 body
-    `true` with no id** — the store step immediately **discovers the OpenEMR document id
-    via collection GET keyed on unique filename/content-hash** and records it on the job
-    row; discovery failure → `failed(storage_write_failed)`.
-  - Job pipeline through states `{queued|extracting|grounding|writing|complete|failed(reason)}`;
-    status endpoint reads **durable rows only** (never process memory); queue depth derives
-    from rows; boot reconciliation marks non-terminal jobs at process start
-    `failed(worker_restart)` (logged `job.reconciled(worker_restart)`), retriable
-    idempotently from the stored source. Words+boxes layer: text-first, junk-check, OCR
-    fallback, per-page subprocess timeout (failed page → fields UNSUPPORTED; all pages
-    fail → `failed(ocr_failed)`); the layer lives in **job memory only — never persisted**
-    to the job row, disk, or logs (§3a; re-derived from the stored source on re-run —
-    fetched via the **FHIR `DocumentReference/:uuid → Binary/:uuid` projection**, the
-    verified byte-exact read path; the standard REST download 500s in this stack, a
-    known issue, not a dependency — W2-F9).
-  - Retention + events (§3a/§6a): temp file deleted after OpenEMR store succeeds; the
-    job's delegated-token ref cleared at job terminal state; terminal job/status rows
-    **purged after 30 days** (retention step in the job store, test proves rows age out);
-    events `doc.ingestion.started/completed/failed(reason)`, `doc.ocr.failed(page, reason)`
-    — correlation ID on every hop.
-  Test: unit tests for `hashing.py` (content-hash determinism + idempotency key — §7a
-  unit list); integration tests (fixtures, stubbed VLM) for happy path + all §5
-  upload/restart rows; a **concurrent duplicate-upload** test (two simultaneous POSTs,
-  one document); cross-patient upload/status leak tests + a **cross-patient `patient_id`
-  write** rejection test and a **cross-patient/mismatched `encounter_id`** rejection test
-  (invariant — the server won't stop either, W2-F13); an **upload-validation** test
-  (oversized / too-many-pages / wrong-MIME / `$_FILES`-error → typed 4xx before the
-  native call, W2-F19); retention test (30-day purge + token-ref clear) — guards:
-  orphaned jobs after deploy, duplicate records from replays, the status endpoint lying
-  after a restart, and a document/vitals write anchored to another patient or a
-  nonexistent encounter (the OpenEMR surface accepts them — W2-F13).
+  - Every endpoint requires the pinned session. Patient mismatch → `patient_mismatch`;
+    supplied encounter must resolve to the pinned patient before enqueue or returns
+    `encounter_mismatch`; status/page ownership is checked. No job or intent is created on
+    refusal.
+  - Before queueing, validate upload error, presence, actual size ≤10 MB, page count ≤20,
+    magic-byte/exact MIME plus doc-type allowlist, and safe filename. Rejection is a typed
+    controlled 4xx `upload_rejected` before any native call. PDF is lab-only; intake also
+    permits PNG/JPEG.
+  - The source write uses OA3's `SOURCE_DOCUMENT_PATH=/AI-Source-Documents` tuple: resolve path,
+    compare expected category ID and ACL, then POST the **path**. Wrong/ambiguous/missing
+    path, ID, or ACL fails closed as `category_mismatch`; the agent never creates a
+    category or sends category ID
+    as if the API accepted it.
+  - **Exactly-once source intent:** atomically create the logical job, permanent record,
+    attempt, and `{pending}` source intent before the remote call. The remote filename
+    carries an opaque stable intent/correlation marker and content-hash fingerprint. On
+    200 `true`, timeout, disconnect, or missing returned ID, list by pinned patient and
+    verify marker+content hash. One match records the remote ID and `complete`; a possible
+    commit becomes `unknown` and stops for reconciliation; only proven absence may return
+    to `pending` and POST. Multiple/conflicting matches fail closed. **No blind retry.**
+  - Permanent dedup/lineage key is
+    `(patient_id, document_id_or_content_hash, leg, version, field)`; source uses
+    `(patient_id, content_hash, source_document, schema_version, source)`. It is never
+    purged.
+    Attempt rows are separate and alone use the 30-day purge. Concurrent duplicate or
+    cross-process requests return the same logical document/status and one remote source;
+    identical bytes for different patients remain distinct.
+  - Typed `POST /documents/{id}/retry` with `RetryRequest{expected_state="failed"}` performs
+    one compare-and-swap **atomic requeue** of that same job/version only after all
+    `unknown` intents reconcile; it never creates a second logical job or bypasses the
+    permanent ledger. Duplicate upload returns the existing logical job; complete/running
+    jobs are returned, not requeued.
+  - Queue topology is explicit: web services validate/enqueue only; a dedicated Railway
+    worker service claims with `SELECT … FOR UPDATE SKIP LOCKED`, bounded concurrency set
+    from M1, lease owner/expiry, heartbeat, attempt count, and bounded exponential backoff
+    with jitter. Graceful shutdown stops new claims, heartbeats/finishes active work within
+    grace, then safely expires leases. A new worker recovers stale leases; process boot
+    never blanket-fails all nonterminal jobs. Queue depth, oldest age, active/stale leases,
+    and last heartbeat feed M21 readiness/E3 metrics.
+  - Typed pipeline states are exactly
+    `storing/reconciling/queued/extracting/grounding/writing/complete/failed`; OCR
+    words+boxes remain memory-only and are re-derived. Binary fetch is permitted only after
+    OA6's known non-DEBUG guard. Temp source is deleted only after remote reconciliation;
+    encrypted credential refs follow M5 lifecycle.
+  - Patient-linked job, lease, intent, attempt, dedup, and lineage rows are **PHI**:
+    least-privilege DB role, encrypted backup, explicit retention, hashed refs in events,
+    and no diagnostic body/value emission. Migration 003 follows M5's expand/dual-read/
+    switch/contract ordering with 002→003 compatibility, rollback, roll-forward, and
+    secret/PHI-free migration diagnostics.
+  Test: schema/unit tests for keys, claims, lease/heartbeat/backoff and atomic requeue;
+  integration tests for happy path, concurrent duplicate, same bytes across two patients,
+  cross-patient/mismatched encounter, all upload rejects, wrong path/ID/ACL, crash and
+  graceful shutdown, stale-lease recovery, 002→003 upgrade/rollback, 30-day **attempt-only**
+  purge, and source commit-then-timeout reconciliation (zero duplicate POST) — guards:
+  orphaned/duplicated jobs, ambiguous remote commits, and cross-patient writes.
 
 - [ ] **W2-M9 — Intake-extractor worker: VLM extraction into strict schemas (the
   PRD-named worker serves BOTH doc types via doc_type dispatch — there is no separate
@@ -484,80 +641,67 @@ GitHub + GitLab; video + initial report delivered.
   doc_type_mismatch; eval tag invariant — guards: an extracted value the page doesn't
   support earning a citation (the week's core safety claim).
 
-- [ ] **W2-M11 — Append-only writeback: artifact + conditional vitals leg, write ledger,
-  round-trip verification.**
-  Files: `agent/app/writeback/__init__.py` + `documents_api.py` + `vitals_api.py` +
-  `ledger.py` + `verify_reread.py` + `rest_client.py` (all NEW — the standard-REST write
-  client lives in the writeback package; `agent/app/tools/fhir_client.py` is untouched),
-  `agent/app/ingestion/service.py` (extended — write step).
-  Anchors: §3 (write principal, ordering + ledger, lab/vitals rule, round-trip
-  verification), W2-D1 + both addenda (incl. the 2026-07-13 verification addendum) + W2-D9,
-  W2-F2/F3, W2-F4 (resolved), W2-F9/F10 (verified contracts), W2-F12 (assert granted
-  scopes), W2-F13 (patient/encounter preflight is load-bearing), W2-F15 (server range
-  validator bypassed — agent bounds values), W2-F16 (attribution/provenance), W2-F18
-  (idempotency ledger mandatory), W2-F20 (Binary-readback DEBUG check), §4a ledger rows,
-  O-new mapping (above), W2-O3 (provenance flag), architecture Verification errata #1–#2.
+- [ ] **W2-M11 — D10 exactly-once writeback: grounded artifact + intake vitals + verified
+  re-read (shared with M8's source leg).**
+  Files: `agent/app/writeback/__init__.py`, `documents_api.py`, `vitals_api.py`,
+  `intents.py`, `reconcile.py`, `ranges.py`, `verify_reread.py`, `rest_client.py` (NEW),
+  `agent/app/ingestion/service.py` (extended). The standard-REST write client remains
+  separate from the read-only FHIR client.
+  Anchors: §3/§4/§4a, W2-D1/D9/**D10**, W2-F2/F3/F4/F9/F10/F12–F20, W2-O3.
   Accept:
-  - Order: `ExtractionArtifact` (application/json, category "AI-Extractions", documents
-    API) first; vitals second — and the vitals leg fires **only** for intake-form
-    vitals-class fields (`VitalsWrite` per O-new) **and only when the upload carried an
-    explicit encounter_id** (already validated against the pinned patient, W2-M8);
-    otherwise skipped with `writeback.skipped(no_encounter)`. Lab values NEVER route to
-    vitals (W2-F3). **Unit mismatch** (on-page unit absent/differs from the instance's
-    unit system) → that field's vitals leg skipped with
-    `writeback.skipped(unit_mismatch)`, artifact-only, never converted (O-new rule
-    above; §6a event added 2026-07-13). Missing "AI-Extractions" category at runtime →
-    `failed(writeback_failed)` + runbook pointer — the writeback code **never creates
-    categories**, and it writes to the provisioned **category id** (never a bare path,
-    which OpenEMR can leave uncategorized/accessible — W2-F14; provisioning is
-    W2-M2/W2-OA3's runbook step; W2-D1: two write capabilities only).
-  - **Vital-write safety (server enforces none of this — W2-F15/F16):** the agent bounds
-    every vitals-class value to a physiological range before the POST (the REST vital
-    route bypasses OpenEMR's range validator, so negative/impossible values would
-    otherwise persist) — out-of-range → the field is artifact-only, never written as a
-    vital. The agent **never sends caller-supplied `user`/`group`/author fields**
-    (`VitalsWrite` omits them); machine authorship is carried in the artifact lineage +
-    provenance flag, and the clinician-of-record is the delegated-token clinician (never
-    a spoofable performer string).
-  - Writes execute under the uploader's delegated token (W2-M5); refresh on expiry;
-    refresh failure → `failed(auth_expired)`. **On the token, the agent asserts the
-    granted scope set matches the expected set and refuses to write on any unexpected
-    granted scope** (registered scope is not a server-side ceiling — W2-F12). Missing
-    scope → **403** (not 401 — W2-F4 correction) → `failed(writeback_failed)` + runbook
-    pointer.
-  - **Write ledger** keyed (content_hash, field_id) written transactionally around each
-    create; retry after partial failure (5xx/timeout mid-sequence) re-executes only the
-    incomplete leg — provably no duplicates.
-  - **Round-trip verification (verified paths, W2-F9/F10):** the artifact leg's create
-    returns 200 `true` with no id — the created record's id is **discovered via
-    collection GET by unique filename/content-hash** (the ledger stores the discovered
-    id); the re-read is the **FHIR projection `DocumentReference/:uuid → Binary/:uuid`**,
-    compared byte-exact (SHA-256) against the sent payload — the standard REST download
-    500s in this stack (known issue, never a dependency). The vitals leg re-read uses
-    the vitals GET and may additionally cite **FHIR `Observation?category=vital-signs`**
-    surfacing the created values (the proven cross-surface round-trip). Only on match
-    does the job flip `complete`; mismatch/absence → `failed(writeback_verify_failed)` +
-    `writeback.verify.failed` event. **PHI guard (W2-F20):** the FHIR Binary readback
-    decrypts document bytes and hands them to a debug logger when
-    `system_error_logging=DEBUG` — the writeback verifier asserts the deployed log level
-    is not DEBUG (or refuses Binary readback), so verification never leaks document bytes
-    to logs (deploy check co-owned with W2-OA5).
-  - Records visibly machine-authored: lineage {source document id, page, bbox, correlation
-    id, content_hash} + provenance flag in the artifact (W2-O3's flag; UI treatment lands
-    with the core flow via W2-M21 UI + W2-E1 polish). Append-only: no update/delete call
-    exists anywhere in `agent/app/writeback/`.
-  Test: unit tests for `ledger.py` (key derivation + retry-consults-ledger logic — §7a
-  unit list) and for the **vital-range bound** (out-of-range → artifact-only, W2-F15) and
-  the **scope-assertion guard** (unexpected granted scope → refuse to write, W2-F12);
-  integration against a mocked documents/vitals API — partial-write retry (ledger),
-  re-read mismatch, 403-scope, no-encounter skip, unit-mismatch skip, missing-category
-  error, auth-expiry mid-job, **id-discovery failure** (list GET finds no match after a
-  200 `true`), **no-caller-author** assertion (VitalsWrite omits user/group, W2-F16), and
-  a **DEBUG-log-level refusal** for Binary readback (W2-F20); the live probe
-  (`agent/ops/spike_document_write.py`, authored here) replays the audit-verified sequence
-  against the deployed stack — guards: duplicate or untraceable records from retries (PRD
-  hard problem: OpenEMR integrity), out-of-range or mis-attributed vitals the server would
-  accept (W2-F15/F16), and silent unverified writes.
+  - **Build-order contract:** MVP completes the production shared intent/reconciliation
+    machinery plus source (M8) and grounded-artifact legs as the first fully correct
+    slice. W2-E8 enables the structured vital leg only after the same machinery, frozen
+    vital schema/ranges, and all D9 negatives pass. Final W2-1 re-runs all three. This is
+    sequencing only—vitals is neither optional nor a stub and must be complete by Early.
+  - Order is source → `ExtractionArtifact` → eligible vital intents whose standard-API
+    create persists the structured row in OpenEMR `form_vitals`. Artifact POST uses
+    `ARTIFACT_DOCUMENT_PATH=/AI-Extractions`: resolve path and verify OA3's expected ID+ACL,
+    then send the path. Unknown/mismatch refuses; no category creation or direct-ID input.
+  - Only grounded `IntakeVitals` with an explicit patient-owned encounter can form a vital
+    intent. Labs never route to vitals. Missing encounter → artifact success plus
+    `writeback.skipped(no_encounter)`. Missing/unsupported/ungrounded value, unit, or
+    measurement date cannot write. Unit absent/different from configured OpenEMR units →
+    `unit_mismatch`, artifact-only, no conversion.
+  - **Pinned range table:** hard inclusive bounds exactly mirror this fork's
+    `VitalsFieldRanges::getRanges()` and drift-test its source: weight 0–2000 lb / 0–910 kg;
+    height 0–150 in / 0–381 cm; bps 0–400 mmHg; bpd 0–300 mmHg; pulse 0–500/min;
+    respiration 0–150/min; temperature 0–120 °F / 0–48.9 °C; oxygen saturation 0–100%.
+    Outside the unit-specific bound → `range_violation`, permanent skip provenance, no
+    vital POST.
+  - `VitalsWrite` contains only the mapped clinical fields, date, and an agent-generated
+    non-PHI note marker. Caller `user`/`group`/author are stripped. The M5 delegated
+    clinician principal—not request-body attribution—is recorded in artifact, permanent
+    lineage, and trace; the agent does not falsely claim the server populated a performer.
+  - At startup/token exchange the granted scopes are compared against the exact scopes
+    requested for that launch from OA3; missing or unexpected scope → `scope_mismatch` and
+    no write. Missing `api:oemr` is explicit 403. Refresh uses only M5's bound encrypted
+    job credential; failure → `auth_expired`, never system auth.
+  - Every artifact and per-field vital uses permanent key
+    `(patient_id,document_id_or_content_hash,leg,version,field_id)` and a durable
+    `{pending,unknown,complete}` intent. Artifacts use deterministic filename+content hash;
+    vitals use a non-PHI `note` marker containing intent/correlation ID and payload-hash
+    prefix. Before every possible re-POST, list/re-read by pinned patient/encounter and
+    match marker+payload hash. Unique match completes; proven absence permits retry;
+    timeout/possible commit or conflicting matches stays `unknown` and stops for operator
+    reconciliation. A local DB transaction is never called atomic with remote HTTP.
+  - Only a verified re-read advances the logical job: artifact uses FHIR
+    DocumentReference→Binary and byte hash, vital uses standard GET plus FHIR
+    `Observation?category=vital-signs` projection and payload comparison. Missing/mismatch
+    → `writeback_verify_failed`. OA6's recorded non-DEBUG setting is mandatory before
+    Binary fetch; unknown/DEBUG returns `binary_readback_unsafe`, refuses completion, and
+    makes readiness unsafe.
+  - Lineage includes source ID, page+bbox/citation, content/payload hash, intent and remote
+    IDs, correlation ID, schema/agent version, and delegated principal. It is permanent;
+    attempts alone purge at 30 days. All writes are append-only; no update/delete client
+    exists.
+  Test: unit tests for range/source drift, exact scopes, attribution stripping, intent
+  states/keys, and marker matching; mocked integration tests for artifact and every vital
+  field, no-encounter/unit/range skips, path/ID/ACL refusal, 403/auth expiry, F20 refusal,
+  ID discovery, re-read mismatch, concurrent requests, and **commit-then-timeout for both
+  artifact and vital proving no blind re-POST**. The synthetic live sequence confirms all
+  three round trips by Final — guards: duplicate, cross-patient, out-of-range,
+  misattributed, or unverified records.
 
 - [ ] **W2-M12 — LangGraph production graph: typed state, step budget, routing recovery,
   encounter summary.**
@@ -577,7 +721,8 @@ GitHub + GitLab; video + initial report delivered.
     artifact, never in-memory VLM output across turns.
   - Supervisor decisions ∈ closed enum; every handoff logged as `worker.handoff`
     (HandoffRecord) with trace-addressable input_ref/output_ref; supervisor span parents
-    worker spans.
+    worker spans. Every event is emitted only through M6's versioned `LogEventEnvelope`;
+    ad-hoc JSON/plain-text clinical events fail contract tests.
   - Routing error recovery: invalid route / malformed worker output → supervisor retries
     the decision **once** with the failure appended; second failure → deterministic
     W1-canonical refusal (never a silent wrong-worker answer). Step budget (recursion
@@ -640,8 +785,11 @@ GitHub + GitLab; video + initial report delivered.
     (/ready degraded); dense-leg-only failure → BM25-only flagged degraded; Cohere
     down/rate-limited → un-reranked or local per seam, degraded, logged, /ready
     `rerank_off`. Breaker per dependency (reranker) with half-open probe.
-  - `POST /evidence/search {query, k ≤ cap}` → `list[EvidenceSnippet]` (typed, corpus
-    version pinned); pinned-session auth like every W2 endpoint.
+  - `POST /evidence/search` accepts only M6's typed `EvidenceSearchRequest{query,k}` and
+    returns `EvidenceSearchResponse` (corpus version + correlation ID); no anonymous
+    `{query,k}` or raw list response remains. The inbound correlation ID propagates through
+    query construction, embedder, both retrieval legs, reranker/fallback, response, span,
+    and typed log envelope.
   - **CI never calls Cohere live** (W2-D4) — stub/local in all tiers.
   Test: unit tests for query builder + PHI screen (incl. the injection fixture that plants
   an identifier aimed at the query — eval tag invariant); retrieval integration on the
@@ -714,7 +862,17 @@ GitHub + GitLab; video + initial report delivered.
     citation_present + no_phi_in_logs; tagged subsets ~10 refusal, ~8 missing-data,
     ~6 injection-bearing, ~4 retrieval-empty, ~12 extraction
     (clean/degraded/disagreement/duplicate), ~10 question-flow consistency (tags overlap);
-    cross-patient invariant cases included (§2a).
+    cross-patient invariant cases included (§2a). Each rubric emits applicable numerator
+    and denominator so threshold arithmetic never assumes all 50 apply.
+  - Named write-surface negatives are mandatory members, not generic tags:
+    `f12-scope-escalation-startup-refusal`; `f13-cross-patient` and
+    `f13-mismatched-encounter`; `f14-wrong-category-path`, `f14-wrong-category-id`, and
+    `f14-wrong-category-acl`; `f15-out-of-range-vital-skipped`;
+    `f16-attribution-spoof-stripped`; `f17-old-access-token-rejected` and
+    `f17-old-refresh-token-rejected`; `f18-duplicate-upload-noop`; and
+    `f19-upload-validation-4xx`. F17 uses deterministic
+    auth stubs in Tier 1 and is closed by real post-cutover evidence in W2-1; lower-level
+    unit/integration tests remain required in M8/M11.
   - Each case: fixture ref, expected behavior, boolean rubric expectations, tags
     (boundary/invariant/regression), and a `guards:` line naming the failure mode.
   - The three PRD degraded axes each have cases: imperfect scan → UNSUPPORTED not
@@ -742,7 +900,8 @@ GitHub + GitLab; video + initial report delivered.
     completeness), factually_consistent (deterministic field-vs-evidence for structured
     claims; **LLM-judged only for free-text synthesis — the single judged check, Tier 2
     only**), safe_refusal (templated-refusal string/shape match), no_phi_in_logs (canary
-    harness: zero canary tokens + zero fixture n-grams in correlation-scoped logs/traces).
+    harness: zero canary tokens + zero fixture n-grams in correlation-scoped generated
+    logs/traces/outputs).
   - **Each scorer has a known-fail fixture proving it returns False** on a violating
     output (guards: permanently-green gate) — these self-tests run in Tier 1, with one
     explicit carve-out: factually_consistent's known-fail exercises the **deterministic
@@ -752,9 +911,20 @@ GitHub + GitLab; video + initial report delivered.
     path** (W2-D8: Tier 1 is offline, no secrets).
   - Judge flake policy implemented: one retry at temp 0; judged False = real fail; judge
     **infra** failure after retries → job inconclusive (rerun required), never silent pass.
-  - Thresholds encoded: no_phi_in_logs + safe_refusal 100%, others ≥90%; regression rule:
-    fail if any category regresses >5% vs baseline **or** drops below threshold
-    (zero-tolerance per category at this case count — stated in the gate output).
+  - Thresholds encoded exactly: `schema_valid`, `citation_present`, `safe_refusal`, and
+    `no_phi_in_logs` are deterministic **100%** invariants, so one applicable failure is
+    immediately red. `factually_consistent` alone is ≥90% and fails on a regression of
+    more than five percentage points. Output prints numerator, applicable denominator,
+    score, baseline delta, and the rule that fired. Threshold tests include denominators
+    where one factual flip is insufficient and a mutation count of
+    `floor(0.05 × applicable)+1` crosses the delta.
+  - PHI scanner scope is frozen: exclude only canonical input fixtures and their manifest;
+    scan generated outputs, structured logs, traces, reports, sanitized recordings,
+    screenshots, and results. Recordings replace canary/raw clinical values with typed
+    placeholders before commit and hydrate from canonical inputs only in memory. A
+    generated known-leak self-test writes a temporary canary/raw n-gram to every supported
+    artifact class and passes only when the scanner makes CI red; the leak artifact is then
+    destroyed.
   Test: tdd-swarm frozen suite = the known-fail fixtures themselves + threshold-arithmetic
   unit tests (tag regression) — guards: a gate that cannot go red (the exact failure the
   graders probe).
@@ -790,7 +960,8 @@ GitHub + GitLab; video + initial report delivered.
   (build via tdd-swarm — verification-touching; depends W2-OA2/OA4).**
   Files: `.github/workflows/agent-eval-gate.yml` (extended — `eval-tier2-live` job +
   PHI-detection step + mirror-push job), `.gitlab-ci.yml` (NEW, repo root — identical
-  Tier-1 gate), `agent/evals/w2_baseline.json` (NEW — committed baseline),
+  Tier-1 gate plus same-SHA fail-closed Tier-2 bridge),
+  `agent/evals/w2_baseline.json` (NEW — committed baseline),
   `agent/evals/runner.py` (extended — results export), `README.md` (extended — canonical
   remote + grader path, folded into W2-M21).
   Anchors: §7 Tier 2, §6a (CI pipeline, enforcement layers 2–3, PHI check), W2-D8, §8
@@ -800,26 +971,40 @@ GitHub + GitLab; video + initial report delivered.
     extraction over fixtures + answer model, plus the pinned judge) on every PR;
     **both `eval-tier1` and `eval-tier2-live` are required status checks** on main
     (branch protection configured — the enforcement graders cannot bypass). Reranker
-    never live in CI (stub/local).
+    never live in CI (stub/local). It becomes required only after W2-M24 records a viable
+    timeout/quota/cost budget for `50 × (VLM extraction + answer + judge)` including
+    multi-page calls/retries.
   - Gate compares against committed `agent/evals/w2_baseline.json` (updated only by an
-    explicit PR step, never auto-committed); fails on >5% category regression or
-    below-threshold. **Infra failure ≠ case failure:** bounded retries → job errors
+    explicit PR step, never auto-committed). The four deterministic categories require
+    100%, so any applicable failure is red; `factually_consistent` alone fails below 90%
+    or on a regression greater than five percentage points. **Infra failure ≠ case
+    failure:** bounded retries → job errors
     inconclusive (rerun required), never silent green.
   - Full §6a pipeline order in CI: build → ruff+mypy → pytest+coverage → W1 eval suite →
     schema-validation tests → supervisor-worker contract tests → extraction regression
     tests → OpenAPI contract tests (lands W2-E5; step wired now, non-blocking until spec
-    exists) → pip-audit → semgrep → **PHI-detection check** (canary grep over all
-    logs/fixtures/eval artifacts) → eval gate (both tiers) → deploy on green.
-  - `.gitlab-ci.yml` runs the identical Tier-1 gate on the GitLab mirror; a CI mirror-push
-    job keeps GitLab current (closes debt #5); README states GitHub is the canonical CI
-    remote where Tier 2 runs.
+    exists) → pip-audit → semgrep → **scoped PHI-detection check** (canonical inputs
+    excluded; generated outputs/logs/traces/reports/recordings/screenshots/results scanned;
+    known-leak self-test must trip) → eval gate (both tiers) → deploy on green.
+  - `.gitlab-ci.yml` is uncuttable and runs Tier 1 plus a **fail-closed SHA-bound bridge**
+    to GitHub Tier 2: query the approved workflow/status for the exact GitLab commit SHA,
+    repository, workflow name/version, and protected ref; verify success and artifact/result
+    SHA before GitLab reports green. Missing, pending beyond timeout, red, wrong repo/ref,
+    stale/mismatched SHA, or API/auth error fails GitLab. A mirror-push job keeps GitLab
+    current. The bridge uses a read-only status token and never imports Anthropic secrets.
+  - Fork policy from M24 is enforced: untrusted forks run Tier 1 with no secrets and no
+    `pull_request_target` checkout; merge requires a maintainer-created trusted branch at
+    the exact source SHA and its successful Tier-2 result. Same-repo live jobs use an
+    approved least-privilege environment and do not retain prompts/provider payloads.
   - Each Tier-2 run exports results; committed results refreshed at least per checkpoint
-    (Eval Dataset deliverable's "results" element). Cost note: ~$4/run planning number
-    (W2-D8), monitored in traces.
-  Test: tdd-swarm verification = a deliberate one-case break on a throwaway branch turns
-  `eval-tier2-live` red before MVP submission (smoke-proof of the hard gate; the full
-  four-regression drill is W2-2 at Final) — guards: a bypassable or permanently-green
-  graded gate and a stale submission mirror.
+    (Eval Dataset deliverable's "results" element). Historical “~$4/50 turns” is
+    superseded; measured M24 cost/runtime/quota and per-run ceiling are emitted from
+    PHI-free aggregate traces.
+  Test: tdd-swarm verification = one applicable mutation in each deterministic 100%
+  category turns both canonical gating and the GitLab bridge red; the factual mutation
+  flips `floor(0.05 × applicable)+1` cases (or enough to drop below 90%) and goes red. Test
+  stale/wrong SHA, absent GH status, fork-without-secrets, known leak, and bridge timeout —
+  guards: a bypassable/permanently-green gate or stale submission mirror.
 
 - [ ] **W2-M21 — MVP deploy + README W1/W2 split + source-grounded UI integration.**
   Files: `README.md` (extended — W1-baseline vs W2-multimodal split, env-var inventory
@@ -838,9 +1023,16 @@ GitHub + GitLab; video + initial report delivered.
     documented (clone → `make hooks` → commit regression → blocked).
   - Machine-authored records carry the W2-O3 provenance flag visibly in the UI ("pending
     review" treatment — lands with the core flow per Open items).
-  - /ready reflects the §5 hard/soft classification live (OpenEMR+docs store, session
-    store, Anthropic = HARD; index, reranker = SOFT degraded).
-  Test: post-deploy smoke = the §5 /ready contract + one full live ingestion + one live
+  - `/health` is process liveness only and stays 200 during soft dependency degradation.
+    `/ready` returns structured component states and includes OpenEMR/docs, session+job
+    Postgres, Anthropic, F20, index/reranker, **worker-heartbeat age, active/stale leases,
+    queue depth, and oldest queued age**. Stale/missing worker heartbeat, queue age beyond
+    the Early-locked SLO, unsafe/unknown F20, or hard store/provider failure → unready;
+    index/reranker degradation → HTTP 200 with explicit `degraded`, never fake healthy or
+    full outage. Thresholds and replica expectations come from M8/E4.
+  Test: post-deploy smoke = pairwise `/health`+`/ready` tests for healthy, each hard
+  failure, index/reranker soft failure (health 200, ready 200 degraded), stale worker, old
+  queue, and unknown F20 + one full live ingestion + one live
   question turn with citations (tag boundary) — guards: a green pipeline in CI with a
   broken deployed demo (the thing graders actually click).
 
@@ -871,7 +1063,8 @@ GitHub + GitLab; video + initial report delivered.
   - Distinct from the Final demo video (W2-5, six required contents, 3–5 min) — this one
     proves the MVP rows work on Tuesday.
   - Error path: any MVP-table element that cannot be demonstrated live at recording time
-    is named in the video with its dated cut/deferral entry — never silently omitted.
+    blocks the MVP checkpoint and is reported as incomplete; it cannot be relabeled as a
+    cut, deferral, stub, or workaround.
   Test: pre-submission checklist review against the five MVP table rows, recorded in the
   devlog — guards: an MVP checkpoint submission missing a PRD-listed deliverable.
 
@@ -881,11 +1074,10 @@ GitHub + GitLab; video + initial report delivered.
    latency/cost report, walkthrough video" at MVP. The PRD is ground truth (gap-audit
    W2-REQ-06, covered); W2-M22/M23 deliver MVP-scoped versions, refreshed at Final by
    W2-3/W2-5.
-2. **W2-O2 closure timing:** the binding docs self-contradict — §6/Open items/W2-O2 say
-   SLOs are "set from measured baselines **at MVP**", while §9's Early row schedules the
-   baseline runs at Early. This plan follows §9: W2-M22 records initial measured numbers
-   at MVP against the working targets; W2-E4 runs the full 4-flow baseline matrix and
-   formally closes W2-O2 at Early. Owned here so the deviation is a decision, not drift.
+2. **W2-O2 closure timing — SUPERSEDED by Post-review remediation (2026-07-13):** MVP
+   records clearly labeled initial measurements only. The full four-flow matrix runs and
+   numeric SLOs are formally locked **once at Early, Thu 2026-07-16** by W2-E4. Final
+   validates/reports against those locked SLOs; it is not another closure point.
 
 ---
 
@@ -948,11 +1140,15 @@ green; UC-W2-4 flows demonstrated.
     pass rate, grounding-agreement rate, retrieval hit rate, rerank scores+version,
     routing decisions, per-worker latency, eval pass rate per category, **queue depth from
     durable rows**, **outbound retry count per dependency + job attempt count** (the W2
-    event-retries extension), breaker state. Dashboard answers "is it healthy" without
-    reading logs.
+    event-retries extension), breaker state, **oldest queue age, worker-heartbeat age,
+    active/stale leases, pending/unknown intents, reconciliation age, F20 guard state, and
+    delegated-credential refresh failures**. Dashboard answers "is it healthy" without
+    reading logs or exposing patient-linked row contents.
   - The four §6 alerts configured with working thresholds + first-action + escalation
     exactly per the table (extraction failure >20%/1h; retrieval p95 >2s/15m; ingestion
-    p95 >30s/doc; eval-category regression >5%).
+    p95 >30s/doc; any deterministic eval invariant <100% or factual regression >5
+    percentage points/below 90%). Add stale-worker, oldest-queue, unresolved-intent, and
+    unsafe-F20 alerts using E4's locked thresholds.
   - Runbook entries exist for **every §5 failure row** (identify-in-logs event name +
     recovery action), including the wrong-patient void-and-reupload ops path and the
     W2-F4 scope-403 entry (403, not 401 — W2-F4 correction).
@@ -976,7 +1172,7 @@ green; UC-W2-4 flows demonstrated.
     working budget (index+ONNX 200–300MB, +~400MB if `RERANKER=local`, Tesseract
     ~100MB/page peak); if over budget the §6 fallback ladder fires in order (quantized
     ONNX → raise service memory → externalize index, documented tradeoff).
-  - **W2-O2 closed:** SLOs set from these measurements (confirm or revise ingestion p95 ≤
+  - **W2-O2 closed exactly once at Early:** SLOs set from these measurements (confirm or revise ingestion p95 ≤
     30s/doc, retrieval p95 ≤ 2s); alert thresholds in W2-E3 updated if the measured
     numbers moved them; /ready 50-VU saturation knee re-measured with the new deps
     (debt #2).
@@ -1018,17 +1214,38 @@ green; UC-W2-4 flows demonstrated.
 - [ ] **W2-E7 — W1 debt #3 residual audit (verification-v2 / UC2 delta tool).**
   Files: `docs/week2/W2_DEVLOG.md` (dated entries), any residual rule files in
   `agent/app/verify/` (extended only if a residual rule is real).
-  Anchors: §8 debt ledger #3 ("absorbed; any residual rule gets a dated deferral entry").
+  Anchors: §8 debt ledger #3 (absorbed and every residual rule closed by Early).
   Accept:
   - Confirms the absorption claims against the shipped code: extraction grounding
     (W2-M10) covers the verification-v2 surface; supervisor per-turn routing (W2-M12)
     subsumes the delta-tool trigger.
-  - Any residual W1 verification rule not actually covered → implemented if small, else
-    a **dated deferral entry** in the Cut/deferred section naming it (never silently
-    dropped).
-  Test: W2-M10 + W2-M12 suites re-run green after the audit, and the dated ledger/deferral
-  entry exists in the devlog — guards: a "documented AND resolved" debt claim graders can
-  falsify.
+  - Any residual required W1 verification rule not actually covered is implemented and
+    tested by Final; it cannot become a sixth cut. If it requires a product decision beyond
+    existing W1/W2 contracts, STOP and escalate rather than inventing one.
+  Test: W2-M10 + W2-M12 suites re-run green and the dated closure evidence exists in the
+  devlog — guards: a "documented AND resolved" debt claim graders can falsify.
+
+- [ ] **W2-E8 — D10 full-write + cross-boundary platform-contract closure.**
+  Files: W2-M5/M6/M8/M11 modules (extended), migration compatibility tests, one-ID E2E
+  test, schema/event snapshots, CI integration suite.
+  Anchors: W2-D9/D10, §2/§2a/§3/§6/§7a, post-review items 3/5/11/12/13/15.
+  Accept:
+  - Enable and prove the complete grounded intake-vitals leg from M11 under the same
+    source/artifact intent protocol; all three legs survive commit-timeout reconciliation,
+    re-read verification, attempt purge, stale lease, and long-job credential refresh.
+  - The single-correlation integration test reconstructs inbound request → permanent job
+    and source write/read-back → queue claim/lease → extractor/VLM → retrieval/embedder/
+    reranker → artifact write/read-back → every eligible vital write and standard/FHIR
+    read-back → terminal typed event from one ID, with resolvable parent/child spans and no
+    raw PHI.
+  - One owned `LogEventEnvelope` snapshot covers every event; migrations 002 then 003 pass
+    clean upgrade, old-code/new-schema and new-code/old-schema compatibility, documented
+    expand/contract order, compatible rollback/backup restore, roll-forward, and secret/
+    PHI-free failure diagnostics.
+  - All F12/F13/F14/F15/F16/F17/F18/F19 named golden cases and lower-level tests are green;
+    F20 unknown/DEBUG remains fail-closed. No “provisional” control reaches Final.
+  Test: the cross-boundary integration/migration/reconciliation suite itself — guards:
+  interface drift, trace gaps, unsafe schema rollout, and an incompletely enabled D10 leg.
 
 ---
 
@@ -1036,11 +1253,13 @@ green; UC-W2-4 flows demonstrated.
 
 **Deadline:** Sun 2026-07-19 12:00 PM CT.
 **Spec anchors:** §9 Final row; §7 (regression drill), §8a (cost report, backup), §8
-(GitLab), W2-REQ-52/53.
-**Goal:** prove the gate goes red, publish the measured report, verify backup, ship the
-demo video, and freeze a green submission on the mirror.
-**Exit criteria:** four linked red CI runs; report committed; DEPLOYMENT.md backup
-evidence; video delivered; GitLab mirror green and current at deadline.
+(uncuttable/GitLab), W2-D9/D10, and all non-stretch W2-REQ rows.
+**Goal:** complete and harden every non-stretch PRD/engineering requirement, all three
+contained exactly-once write legs, the real gate, operational evidence, reports, and demo;
+then freeze the identical green submission SHA on GitHub and GitLab.
+**Exit criteria:** every deterministic/factual drill has linked red evidence; every D9/D10
+negative and live E2E is green; reports and DEPLOYMENT backup/restore evidence are committed;
+video delivered; GitLab same-SHA graded gate green and current at deadline.
 
 - [ ] **W2-1 — Hardening + final live E2E.**
   Files: fixes as found (no new surface — hardening only).
@@ -1049,25 +1268,28 @@ evidence; video delivered; GitLab mirror green and current at deadline.
   - Full UC-W2-1..4 pass on the deployed app with real (synthetic-data) documents,
     including one deliberate degraded-scan and one duplicate re-upload live.
   - Every §5 failure row spot-verified: induced where safe (breaker trip, Cohere-off,
-    restart mid-job → boot reconciliation → idempotent re-run) — each identifiable in
-    logs by its named event.
+    restart mid-job → stale-lease recovery + intent reconciliation of the same logical
+    job) — each identifiable in logs by its named event.
   - **"Read-only" claims are stated precisely (W2-F21):** any doc/log wording that calls
     a GET-only path "read-only" distinguishes "no HTTP write method" from "no DB
     mutation" — the agent issues only its enumerated reads, and the writeback DEBUG-log
     guard (W2-F20) plus the reads-only-on-registered-resources posture (avoids UUID
     backfill writes) are confirmed on the deployed stack.
-  - The W2-D9 blocking controls are re-verified green end-to-end: cross-patient/encounter
-    rejection (W2-F13), scope assertion (W2-F12), category id (W2-F14), vital-range +
-    no-caller-author (W2-F15/F16), idempotency ledger (W2-F18), and the token-revoking
-    cutover completed (W2-F17).
-  - No new features land after this task starts (cuts go to the Cut section, dated).
+  - The W2-D9/D10 controls are re-verified green end-to-end: cross-patient and
+    mismatched-encounter rejection (W2-F13); exact scope assertion (W2-F12); both canonical
+    paths resolving to expected category ID+ACL (W2-F14); range and attribution controls
+    (W2-F15/F16); permanent patient-bound lineage, commit-timeout reconciliation, and no
+    blind retry on source/artifact/vitals (W2-F18); F20 fail-closed; and rejection of the
+    old access **and refresh** tokens after cutover (W2-F17).
+  - No new features land after this task starts. An incomplete non-stretch item blocks
+    Final; only one of the five named stretch items can appear in the Cut section.
   Test: the deployed-app E2E checklist itself (tag boundary) — guards: submission-day
   surprises in flows that only ever ran locally.
 
 - [ ] **W2-2 — Regression drill: inject known breaks, confirm the gate goes red
   (explicit graded-gate rehearsal).**
-  Files: throwaway branch(es); `docs/week2/W2_CI_EVIDENCE.md` (NEW — the four red-run
-  links live here; README links to it).
+  Files: throwaway branch(es); `docs/week2/W2_CI_EVIDENCE.md` (NEW — the defense and
+  category-threshold red-run matrix lives here; README links to it).
   Anchors: §7 (regression drill + defense-prep §8 correction), W2-D5/D8, W2-REQ-36.
   Accept:
   - Each of the four W2_DEFENSE_PREP §8 regressions injected on a throwaway branch;
@@ -1076,6 +1298,12 @@ evidence; video delivered; GitLab mirror green and current at deadline.
   - The regression-#3 correction honored: the templater-rule loosening is caught
     deterministically by safe_refusal; a genuine prompt-level behavior change is shown
     caught by the Tier-2 live run (W2-D8's purpose).
+  - In addition to those four defense scenarios, the drill matrix proves the actual gate
+    arithmetic: one applicable violation makes each of `schema_valid`,
+    `citation_present`, `safe_refusal`, and `no_phi_in_logs` red immediately; the PHI case
+    uses the generated known-leak self-test; and `factually_consistent` flips
+    `floor(0.05 × applicable)+1` cases or enough to drop below 90%, whichever is needed to
+    cross the real rule. Evidence records numerator, denominator, score, delta, and rule.
   - Any drill failure (a regression NOT caught) is treated as a gate bug: fixed, scorer
     self-test added, drill re-run — the drill does not pass by narrowing the claim.
   Test: this task IS the test (tag regression) — guards: the graded hard gate failing
@@ -1095,15 +1323,26 @@ evidence; video delivered; GitLab mirror green and current at deadline.
   Test: every number traceable to a trace/billing query documented in the report —
   guards: a report graders can falsify against our own traces.
 
-- [ ] **W2-4 — Railway backup verification + DEPLOYMENT.md evidence (with W2-OA5).**
+- [ ] **W2-4 — OpenEMR + encrypted agent-Postgres backup/restore and source-custody
+  verification (with W2-OA5).**
   Files: `DEPLOYMENT.md` (extended — backup posture evidence, RPO/RTO), restore-drill
   notes.
   Anchors: §8a (automatic + manual legs, RPO/RTO), Open items owner action.
   Accept:
-  - Automatic leg: Railway MySQL + volume backup verified/enabled with evidence recorded;
-    RPO/RTO stated (last backup / re-ingestion minutes per doc).
-  - Manual leg exercised once: re-upload + idempotent re-ingestion of a sample document
-    proves recovery cannot duplicate (content hash + ledger).
+  - Automatic OpenEMR leg: Railway MySQL + document volume backup verified/enabled with
+    evidence recorded; RPO/RTO stated as the scheduled-backup interval and measured restore
+    plus re-ingestion time.
+  - Automatic agent-Postgres leg: encrypted backup covers OAuth state, encrypted delegated
+    credentials, PHI-bearing jobs/leases/attempts, permanent dedup/lineage/intents, remote
+    IDs, correlation markers, and attribution. A restore into an isolated target proves key
+    recovery, 002→003 compatibility, referential integrity, startup, stale-lease handling,
+    and reconciliation without duplicate remote POSTs. Its measured RPO/RTO is recorded.
+  - Retention is verified after restore: 30-day purge affects attempts only; permanent
+    dedup/lineage/intents are never purged. Backup/restore logs and diagnostics pass the
+    scoped PHI scanner and expose no credential material.
+  - Manual source-custody leg names the clinic/records custodian and recovery inventory
+    mapping original source files to patient-safe hashes. Re-upload + D10 reconciliation of
+    a synthetic sample proves recovery cannot duplicate; demo fixtures remain repo-owned.
   - Golden set + corpus manifest confirmed repo-reproducible (clone → rebuild index →
     Tier-1 green) — RPO 0 leg.
   Test: the restore drill itself (tag boundary) — guards: an untested backup claim in a
@@ -1117,8 +1356,8 @@ evidence; video delivered; GitLab mirror green and current at deadline.
     eval results, observability — within 3–5 minutes.
   - Synthetic data only; frames treated as sensitive artifacts (no PHI-bearing captures
     to SaaS tools).
-  - Error path: any of the six contents that cannot be shown working live is named
-    on-screen with its dated cut/deferral entry — never silently omitted or faked.
+  - Error path: any of the six required contents that cannot be shown working live blocks
+    Final; it cannot be relabeled as a cut/deferral or replaced with a fake demonstration.
   Test: shot-list review against the six contents before recording ships — guards: a
   video missing a PRD-enumerated element.
 
@@ -1128,8 +1367,9 @@ evidence; video delivered; GitLab mirror green and current at deadline.
   Anchors: §8 (GitLab submission host + README contract), §6a enforcement layer 3, §7
   (results per checkpoint).
   Accept:
-  - GitLab mirror current at the deadline; `.gitlab-ci.yml` Tier-1 green on the mirror;
-    committed Tier-2 results refreshed for Final.
+  - GitLab mirror current at the deadline; `.gitlab-ci.yml` Tier 1 **and its fail-closed
+    identical-SHA bridge to the required live Tier 2** are green; committed Tier-2 results
+    refreshed for Final and bound to that SHA.
   - README final: env vars, branch, service map, **deployed app URL**, grader paths (run
     flow + break the gate) all verified by a clean-clone walkthrough.
   - Deviations/cuts all recorded with dates in this plan's Cut section.
@@ -1142,35 +1382,13 @@ evidence; video delivered; GitLab mirror green and current at deadline.
 
 ## Needs architecture
 
-Work identified during decomposition that lacks sufficient §/ADR backing. Route through
-/arch-finalize or a dated ADR addendum before building — these are NOT tasks.
-
-- **None blocking.** All planned work traces to §-anchors, ADRs, findings, or PRD
-  coverage rows. Four items flagged for visibility; two need a one-line ADR/architecture
-  addendum from the owner, none blocks the build:
-  1. ~~Typed skip-reason for the vitals unit-mismatch rule (O-new)~~ **RESOLVED
-     2026-07-13 (pre-authorized):** `writeback.skipped(unit_mismatch)` added to the §6a
-     event inventory alongside `writeback.skipped(no_encounter)`, with a dated one-line
-     note under W2-D1. W2-M11 may use the name.
-  2. ~~Cohere trigger-date typo in the binding docs~~ **RESOLVED 2026-07-13:** the
-     owner-approved correction to Monday 2026-07-13 EOD landed in the architecture,
-     W2-D4 rev, and the gap-audit.
-  3. **Upload-affordance UI placement** — backed only narratively (UC-W2-1 "upload from
-     the chart"; gap-audit note on W2-REQ-06). Treatment resolved in-build inside W2-M21;
-     if it grows beyond a chart-page affordance (new routes/surfaces), stop and route
-     through an ADR.
-  4. **MVP-vs-§9 ordering for video/report + W2-O2 closure timing** — owned deviations,
-     documented at the end of Phase 1 (PRD MVP table is ground truth; §9's Early row
-     governs the baseline runs; no architecture edit required).
-  5. **Adversarial-audit mandatory controls (W2-D9 / W2-F12..F21)** — the new write-safety
-     controls (scope assertion, encounter-ownership preflight, category-id validation,
-     vital-range bounding, no-caller-author, token-revoking cutover, Binary-readback DEBUG
-     guard) are backed by ADR **W2-D9** and threaded into W2-OA3/M8/M11/W2-1 — buildable
-     now, not blocked. Several already live in the binding doc (§2a patient-match, §3
-     idempotency, §4a lineage); the genuinely-new ones rest on W2-D9. **Optional (not
-     blocking):** a future /arch-finalize pass may fold the "server enforces none of
-     these — the agent is the sole enforcement point" posture into binding §4/§5 for a
-     single source of truth. Until then W2-D9 + this plan are the contract.
+**Post-review remediation (2026-07-13): none.** The earlier decomposition notes are
+superseded: unit mismatch and the vitals mapping are locked by W2-D10; the Cohere date is
+corrected; the chart upload affordance is already bounded by UC-W2-1/W2-M21; MVP report/video
+and Early SLO closure are now explicit in binding §9; and every W2-F12..F21 control is folded
+into binding §4/§5 under W2-D9/D10. No owner decision is outstanding and no task below relies
+on a future architecture pass. If implementation discovers a genuine product/decision choice
+beyond W2-D1..D10, **STOP and report it rather than inventing W2-D11**.
 
 ---
 
@@ -1181,7 +1399,7 @@ Work identified during decomposition that lacks sufficient §/ADR backing. Route
 | Deliverable | Producing task(s) |
 |---|---|
 | GitLab Repository (fork + setup guide + deployed link + env-var docs) | W2-OA4, W2-M20 (mirror job), W2-M21 (README), W2-6 (freeze) |
-| Week 2 Architecture Doc (`./W2_ARCHITECTURE.md`) | **Done pre-plan** (committed 2026-07-13, commit 72bbd3d) — this plan never edits it |
+| Week 2 Architecture Doc (`./W2_ARCHITECTURE.md`) | Updated by the dated 2026-07-13 post-review planning remediation; implementation treats the committed result as binding |
 | Schemas (Pydantic, both doc types, citation fields, validation tests) | W2-M6 |
 | Eval Dataset (50 cases, expected behavior, boolean rubrics, judge config, results) | W2-M17 (cases), W2-M18 (rubrics + judge config), W2-M20 + W2-6 (committed results per checkpoint) |
 | CI Evidence (Git Hook or equivalent that runs the eval suite and blocks) | W2-M19 (hook + Tier 1), W2-M20 (Tier 2 + branch protection + GitLab CI), W2-2 (four linked red runs) |
@@ -1210,9 +1428,11 @@ Work identified during decomposition that lacks sufficient §/ADR backing. Route
 | #5 GitLab mirror + RAILWAY_TOKEN residual | W2-M20 |
 
 **Engineering-requirement clusters (PRD pp.6–7 → §10 matrix):** typed contracts +
-migration note (W2-M6, W2-M15); data authority/lineage (W2-M11, W2-M13); observability/
+migration safety (W2-M5, W2-M6, W2-M8, W2-M15, W2-E8); data authority/lineage
+(W2-M8, W2-M11, W2-M13); observability/
 SLO/queues/retries/breakers (W2-M8, W2-M9, W2-M12, W2-E3, W2-E4); correlation ID + tracing
-(W2-M3, W2-M12); structured logs + PHI-free + CI PHI check (all tasks' events, W2-M18,
+(W2-M3, W2-M12, W2-E8); structured logs + owned typed envelope + PHI-free CI check
+(W2-M6, all tasks' events, W2-M18,
 W2-M20); CI pipeline stages (W2-M20); testing strategy four-way split (each task's Test:
 hook; §7a is the contract); Bruno/OpenAPI (W2-E5); baselines (W2-E4); /health //ready
 (W2-M21); alerts+runbooks (W2-E3); privacy scrubbing (W2-M18, W2-M20); backup/recovery
@@ -1227,49 +1447,46 @@ authority); §5 → W2-M8/M9/M11/M12/M13/M14 (behaviors) + W2-E3 (runbooks) + W2
 (verification); §6 → W2-M12 (encounter.summary)/W2-E3/W2-E4; §6a → W2-M19/M20 (+ every
 task's named events); §7 → W2-M17/M18/M19/M20/W2-2; §7a → each task's Test: hook; §8 →
 W2-M21/W2-6 + Cut section; §8a → W2-M22/W2-3/W2-4; §9 → this plan's phase ordering; §10 →
-this deliverables map. **Not-this-week:** §8 stretch tier (see Cut / deferred — PRD-
+this deliverables map. **Not-this-week:** §8 stretch tier (see Cut — PRD-
 sanctioned out-of-scope rows W2-REQ-10/42/44/45/46).
 
 ---
 
-## Cut / deferred
+## Cut — stretch tier only
 
-Dated entries; cuts are decisions with a paper trail. Seeded 2026-07-13 with the stretch
-tier per §8 (all PRD-sanctioned out-of-scope: gap-audit rows W2-REQ-10/42/44/45/46).
-**Pickup order if Final-core is green early: critic agent first** — the safest hedge if
-graders enforce all ten core-deliverable bullets; note the composer's
-incomplete-citation-blocks-render rule (W2-M15) already delivers the uncited-claim
-rejection deterministically, so the critic's marginal surface is the unsafe-action check.
+Dated entries; cuts are decisions with a paper trail. **Post-review remediation
+(2026-07-13): only the five PRD-sanctioned stretch items below are cuttable.** No
+contingency may move, weaken, stub, or silently omit a non-stretch item. If the complete
+robust Final cannot fit, STOP and escalate rather than inventing a sixth cut.
 
-- **2026-07-13 — Critic agent** (PRD bullet 6): deferred — PRD p.4 "A critic agent is
+- **2026-07-13 — Critic agent** (PRD bullet 6): **cut as stretch** — PRD p.4 "A critic agent is
   extension work, not core." First pickup per above.
-- **2026-07-13 — Third document type** (referral fax / med list, PRD bullet 8): deferred —
+- **2026-07-13 — Third document type** (referral fax / med list, PRD bullet 8): **cut as stretch** —
   PRD pitfall 1 (two must work first).
-- **2026-07-13 — Lab trend chart widget** (PRD bullet 9): deferred — trend questions
+- **2026-07-13 — Lab trend chart widget** (PRD bullet 9): **cut as stretch** — trend questions
   answered as cited textual/tabular values in core (W2-M15); a widget would need the
   artifact-store read path (no FHIR Observation exists, W2-F1).
-- **2026-07-13 — Contextual retrieval improvements** (PRD bullet 10): deferred — if picked
+- **2026-07-13 — Contextual retrieval improvements** (PRD bullet 10): **cut as stretch** — if picked
   up, query phrasing is the highest-leverage lever (W2-R3).
-- **2026-07-13 — ColQwen2 / multi-vector indexing**: deferred — PRD's own Stage-2 stretch
+- **2026-07-13 — ColQwen2 / multi-vector indexing**: **cut as stretch** — PRD's own Stage-2 stretch
   language.
-- **2026-07-13 — Click-to-source polish beyond core** (PRD bullet 7): substantially
-  delivered by core (W1 popovers + required overlay + preview, W2-M15/M16/E1); only
-  polish beyond that is deferred.
-- **2026-07-13 — LangGraph checkpointer persistence; front-desk auth path; agent-created
-  encounters; any update/delete surface**: not deferred — **non-goals** (§1), recorded
-  here so nobody "picks them up."
 
-**Pre-agreed MVP contingency cut order (2026-07-13 — decided now so a Tuesday-night cut
-is an execution of a decision, not a scramble; none enacted; each becomes a dated entry
-above if fired):**
-1. `.gitlab-ci.yml` slice of W2-M20 → slips to Early (GitHub gate is the graded Tier-2
-   enforcement; the mirror itself stays current via W2-OA4 regardless).
-2. Corpus breadth in W2-M13 → ship HTN 2020 + its pocket card only; Diabetes/Lipids land
-   Early as manifest one-liners (the §2 manifest design makes this a data add, not code).
-3. Conditional vitals leg of W2-M11 → artifact-only writeback at MVP
-   (`writeback.skipped(no_encounter)` path already the default without an encounter_id);
-   vitals leg lands Early.
-The 50-case gate, both tiers PR-blocking, and the two doc types are **not cuttable** —
-they are the graded hard gate and MVP core rows.
+~~**Superseded 2026-07-13:** click-to-source polish beyond core was previously listed as
+deferred.~~ It is not a cut: W2-M15/M16 plus W2-E1 complete the PRD citation/overlay and
+click-to-source experience by Early. Likewise, the former contingency order proposing to
+cut GitLab CI, corpus breadth, or the vitals leg is retired in full.
 
-*(Mid-week cuts append below with date + one-line reason.)*
+**Explicitly UNCUTTABLE through Final:** every PRD core and engineering requirement; both
+document types; source document + grounded artifact + eligible intake vitals; every
+W2-D9/D10 containment and exactly-once control; the 50-case dataset; Tier 1 and live Tier 2;
+the deterministic/factual regression drills; GitHub required checks; GitLab Tier 1 and its
+SHA-bound Tier-2 bridge; full corpus promised by D4; schemas, queue/credentials,
+observability, `/health`/`/ready`, OpenAPI, Bruno, PHI detection, migration safety,
+correlation test, backups/RPO/RTO, reports, deployed app, and video. A missing item blocks
+the checkpoint/Final—it never becomes a workaround or dated non-stretch deferral.
+
+The standing architecture non-goals (LangGraph checkpointer persistence, a front-desk
+principal, agent-created encounters, and update/delete surfaces) are boundary exclusions,
+not cuts from a PRD requirement and not candidates for pickup.
+
+*(Any later cut entry must be one of the same five stretch items and include date/reason.)*

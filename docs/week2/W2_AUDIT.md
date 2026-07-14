@@ -47,9 +47,10 @@ not as fake vitals. The verifier must never shoehorn labs into the vitals route.
 clients DISABLED and scopes gate each surface; the standard API uses `api:oemr`-class
 scopes distinct from the FHIR `user/*.read` set the W1 client holds.
 *Impact:* the SMART client registration must add the document/vital write scopes and
-be re-enabled by an admin (one-time provisioning step, runbook item). A silent 401 on
-first write is the expected first-run failure if skipped. **Build-blocking checklist
-item, not an unknown.**
+be re-enabled by an admin (one-time provisioning step, runbook item). **SUPERSEDED
+(Post-review remediation 2026-07-13):** the earlier "silent 401" prediction is not the
+verified contract; a missing `api:oemr` yields **403**. **Build-blocking checklist item,
+not an unknown.**
 
 ## W2-F5 — Uploaded documents are an untrusted input surface (design finding)
 
@@ -97,7 +98,10 @@ Production was not written to.
   byte-exact** (DocumentReference/uuid → Binary/uuid, SHA-256 match on a 603-byte test
   PDF). The standard REST download companion **returns 500** in this stack (CSRF-key
   defect via DocumentService::getFile → C_Document) — known local defect; the FHIR
-  Binary path is the reliable read-back.
+  Binary path is the reliable read-back. **SUPERSEDED (Post-review remediation
+  2026-07-13):** the 500 remains code-consistent, but the cause is raw document bytes
+  being passed as `BinaryFileResponse`'s filename, **not** a CSRF-key defect; see the
+  W2-F9 correction below.
 - **W2-F10 — Vitals path fully validated end-to-end:** POST vital → 201 {vid} → standard
   GET returns values → **FHIR `Observation?category=vital-signs` surfaces 15 Observation
   resources** (BP panel, HR, SpO2, temp, height, weight, respiration). The PRD's
@@ -113,17 +117,89 @@ Production was not written to.
   `user/DocumentReference.rs user/Binary.read` for document read-back verification).
   Registration → created DISABLED → admin enable via Administration → System → API
   Clients (verified sequence recorded). Staff ACLs must independently permit
-  patients/docs write. **Critical constraint: existing clients cannot gain scopes
-  post-registration and the admin screen cannot edit scope sets — W1's client cannot be
-  extended; W2 requires a REPLACEMENT registration** (union of W1+W2 scopes,
+  patients/docs write. **Precision (W2-F4/F12): there is no supported persisted-scope edit
+  path or admin scope-set editor — W1's client cannot be extended through a supported
+  operation, so W2 requires a REPLACEMENT registration** (union of W1+W2 scopes,
   auth-code+refresh grants, swap SMART_CLIENT_ID/SECRET, then disable the old client —
-  W1's E9 duplicate-launcher lesson applies to the cutover).
+  W1's E9 duplicate-launcher lesson applies to the cutover). **SUPERSEDED
+  (Post-review remediation 2026-07-13):** disable-only is insufficient; the cutover must
+  disable the old client **and** retire its access and refresh tokens by revocation or by
+  waiting out both token lifetimes before treating the old client as retired (W2-F17).
 
 **MVP design corrections fed to the binding doc/plan:** upload success = 200 `true`; id
 via list-by-hash; FHIR DocumentReference→Binary is the round-trip read-back (dodges the
 500); `$docref` described as "server-generated CCD persistence"; vitals unchanged.
 Verification client: local-only, password-grant (pre-enabled locally; NOT for
-production), to be disabled post-audit.
+production), to be disabled post-audit. This is historical probe provenance only:
+**password grant is prohibited for the W2 write client** specified below.
+
+### Post-review remediation (2026-07-13) — exact W2 write-client registration manifest
+
+This block is the provisioning source of truth for the replacement confidential client.
+The carried W1 read set is copied exactly from the executable W1 policy at
+`agent/app/auth/scopes.py:23-30` and its freezing test at
+`agent/tests/test_scopes.py:23-35`; no read scope is inferred from discovery metadata.
+The W2 verification established the standard-write and read-back additions at
+W2-F4/W2-F10 above. The exact registered scope manifest is:
+
+```text
+openid
+offline_access
+launch
+launch/patient
+api:oemr
+user/Patient.read
+user/Condition.read
+user/MedicationRequest.read
+user/AllergyIntolerance.read
+user/Observation.read
+user/Encounter.read
+user/document.crs
+user/DocumentReference.rs
+user/Binary.read
+user/vital.crus
+user/Observation.rs
+```
+
+`user/Observation.rs` is the verified FHIR
+`Observation?category=vital-signs` read-back scope; the carried
+`user/Observation.read` remains because the replacement registration is the exact union
+of W1 and W2. The manifest deliberately does **not** register the unadvertised
+`user/DocumentReference.write` or `user/Observation.write` strings. Scope order is not
+semantic, but membership is exact.
+
+Use this dynamic-registration payload, substituting only the deployment callback URI
+placeholder from the secret/environment runbook; do not put a client secret in the
+payload or in this repository:
+
+```json
+{
+  "application_type": "private",
+  "client_name": "AgentForge Week 2 Write Client",
+  "redirect_uris": ["${SMART_REDIRECT_URI}"],
+  "token_endpoint_auth_method": "client_secret_post",
+  "grant_types": ["authorization_code", "refresh_token"],
+  "scope": "openid offline_access launch launch/patient api:oemr user/Patient.read user/Condition.read user/MedicationRequest.read user/AllergyIntolerance.read user/Observation.read user/Encounter.read user/document.crs user/DocumentReference.rs user/Binary.read user/vital.crus user/Observation.rs"
+}
+```
+
+The accepted registration fields and array handling are code-backed at
+`src/RestControllers/AuthorizationController.php:268-291,311-336`; the confidential
+client selection is `application_type=private` at `:312-315`; and the repository's
+auth-code exchange posts the secret in the form body (`client_secret_post`) at
+`agent/app/auth/smart_client.py:148-163`. The W2 client permits **only** delegated
+`authorization_code` plus `refresh_token`; it never registers or uses `password`,
+`client_credentials`, or `private_key_jwt`.
+
+Provisioning sequence: register with the exact payload; capture the returned client ID
+and secret directly into the approved secret store without logging either value; enable
+the initially disabled client in **Administration → System → API Clients**; retain
+the fixed scope manifest as non-secret evidence; and validate the first delegated token
+against the exact scopes requested for that launch, rejecting missing or unexpected
+grants before writes are enabled (W2-F12). A skipped `api:oemr` grant is a **403**, not
+401. At cutover, swap the deployment credentials, prove the new client flow, then disable
+the old client and revoke both access and refresh tokens; if revocation is unavailable,
+wait out **both** lifetimes before declaring retirement. Disable-only is not retirement.
 
 ## Adversarial audit review (2026-07-13 — read-only static analysis; findings W2-F12..F23)
 
@@ -184,7 +260,8 @@ production), to be disabled post-audit.
   `DocumentService::isValidPath` can return true for an unresolved one-component path
   (`DocumentService.php:52-94`); category-aware `Document::can_access` is not called on
   upload; docs with no categories are treated accessible (`Document.class.php:361-364`).
-  *Affects: W2-D1 fixed category, provisioning, ACL (W2-OA3, W2-M11).*
+  *Affects: W2-D9 canonical source/artifact path → expected category-ID/ACL preflight,
+  provisioning, and runtime attestation (W2-OA3, W2-M8, W2-M11).*
 - **W2-F15 — HIGH — REST vital creation bypasses the physiological range validator.** The
   REST validator checks only numeric/string shape (`EncounterService.php:657-676`); the
   real range validator (`FormVitals.php:470-510`, `VitalsFieldRanges.php:22-90`) is **not
@@ -257,12 +334,15 @@ remains sound):**
    any unexpected granted scope; document residual server-side escalation.
 2. **W2-F13** — patient-pin + encounter-ownership preflight mandatory; cross-patient and
    mismatched-encounter negative tests must pass before writes are enabled.
-3. **W2-F14** — provisioned fixed category + explicit category-ID/ACL validation.
+3. **W2-F14** — canonical source/artifact paths, each preflighted to its provisioned
+   expected category ID+ACL; the request sends the path and mismatch fails closed.
 4. **W2-F15/F16** — bind vital range + attribution policy; never send caller user/group;
    decide clinician-provenance representation.
-5. **W2-F17** — cutover: revoke access/refresh tokens (or wait out the 1h expiry); do not
-   substitute `private_key_jwt` without resolving its enablement bypass.
-6. **W2-F18** — the agent idempotency ledger is load-bearing.
+5. **W2-F17** — cutover: revoke both access and refresh tokens or wait out each token
+   class's independently recorded maximum lifetime; disable-only/one-hour-only is not
+   retirement. Do not substitute `private_key_jwt` without resolving its enablement bypass.
+6. **W2-F18** — D10's patient-bound permanent dedup/lineage, durable intents, and
+   reconcile-before-retry protocol are load-bearing; 30-day attempts are not the ledger.
 7. **W2-F19** — size/page/exact-MIME/upload-error/controlled-4xx validation before the
    native upload.
 8. **W2-F20** — confirm `system_error_logging != DEBUG` before using FHIR Binary for
@@ -282,4 +362,4 @@ idempotency on create — so those controls are **mandatory agent-side** and mus
 before writes are enabled (blocking items 1–9 above; threaded into W2-OA3, W2-M8, W2-M11).
 W2-F4 remains the provisioning checklist item (replacement client). All findings feed
 W2_ARCHITECTURE (§3 discrepancy note, §4a ledger), W2_DECISIONS (W2-D1, W2-D3, W2-D5,
-**W2-D9**), and W2_IMPLEMENTATION_PLAN.
+**W2-D9/W2-D10**), and W2_IMPLEMENTATION_PLAN.

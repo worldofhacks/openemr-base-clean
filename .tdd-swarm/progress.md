@@ -94,3 +94,19 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
   distinct token-adjacent entities (insulin glargine≈insulin lispro, metoprolol tartrate≈succinate).
   NOT a served-falsehood (strict dose/value + render uses the record's true identity), but the entity
   gate is weaker than intended → micro-cycle to tighten (token-SUBSET, not shared-one-token).
+
+# ============================================================================
+# EPIC: W2 Wave 0 — de-risking spikes (swarm/w2-wave0), started 2026-07-14
+# Baseline (main @ c3e0804): 238 passed, 5 skipped (agent/ pytest). Posture: production-grade (carried).
+# Tickets (from docs/week2/W2_IMPLEMENTATION_PLAN.md Phase 0 — binding source; owner pre-approved
+# exactly this set in the dispatch prompt, satisfying the Phase-1 human checkpoint):
+#   W2-M1 (container spike, Railway + RSS gate)  -> W2-M4 (PDF words+boxes reader spike)
+#   W2-M3 (LangGraph skeleton + SSE spike)       || W2-M24 (Tier-2 timing/cost/quota + fork-PR secret policy)
+# Sub-waves: 0a = {W2-M1, W2-M3, W2-M24}; 0b = {W2-M4}. STOP after Wave 0 for owner go/no-go.
+# Constraints: writes ONLY under agent/ (+ devlog aggregate, .tdd-swarm/, tickets/); no OpenEMR
+# PHP/routes/schema (W2-D2/D9); no OpenEMR write enablement (W2-OA3 pending); PyMuPDF banned (W2-R6);
+# synthetic data only; secrets from env only. GH Issues mirroring skipped (W1 precedent: ledger is
+# the record). Facts at start: Railway CLI logged in (agent service Online); fork GH repo secrets
+# EMPTY (W2-OA2 pending — M24 measures on the local agent key and notes it); host tesseract installed
+# for the M4 local loop; per-ticket isolation via `openemr-cmd worktree add <branch> -b --base
+# swarm/w2-wave0` (no stack started; no git hooks in this clone).

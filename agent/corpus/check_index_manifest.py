@@ -13,9 +13,27 @@ from dataclasses import dataclass
 from pathlib import Path
 
 try:
-    from corpus.build import canonical_manifest_hash, load_manifest, sha256_file
+    from corpus.build import (
+        EMBED_DIMENSION,
+        EMBED_MODEL,
+        EMBED_ONNX,
+        EMBED_REVISION,
+        EMBED_SOURCE_REPO,
+        canonical_manifest_hash,
+        load_manifest,
+        sha256_file,
+    )
 except ModuleNotFoundError:  # direct ``python corpus/check_index_manifest.py`` execution
-    from build import canonical_manifest_hash, load_manifest, sha256_file
+    from build import (  # type: ignore[no-redef]
+        EMBED_DIMENSION,
+        EMBED_MODEL,
+        EMBED_ONNX,
+        EMBED_REVISION,
+        EMBED_SOURCE_REPO,
+        canonical_manifest_hash,
+        load_manifest,
+        sha256_file,
+    )
 
 
 @dataclass(frozen=True)
@@ -33,21 +51,39 @@ def check_index_manifest(corpus_dir: Path) -> IntegrityResult:
         metadata = json.loads((corpus_dir / "index" / "metadata.json").read_text(encoding="utf-8"))
         chunks_path = corpus_dir / "chunks.jsonl"
         dense_path = corpus_dir / "index" / "dense.f32"
+        chunks_hash = sha256_file(chunks_path)
+        dense_hash = sha256_file(dense_path)
+        chunk_count = sum(
+            1 for line in chunks_path.read_text(encoding="utf-8").splitlines() if line
+        )
+        dense_size = dense_path.stat().st_size
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return IntegrityResult(False, f"retrieval index unavailable: {exc}")
 
     if metadata.get("manifest_sha256") != manifest_hash:
         return IntegrityResult(False, "index manifest hash mismatch", manifest_hash)
-    if metadata.get("chunks_sha256") != sha256_file(chunks_path):
+    if metadata.get("chunks_sha256") != chunks_hash:
         return IntegrityResult(False, "index chunks hash mismatch", manifest_hash)
-    if metadata.get("dense_sha256") != sha256_file(dense_path):
+    if metadata.get("dense_sha256") != dense_hash:
         return IntegrityResult(False, "dense index hash mismatch", manifest_hash)
 
-    chunk_count = sum(1 for line in chunks_path.read_text(encoding="utf-8").splitlines() if line)
     if metadata.get("chunk_count") != chunk_count or manifest.get("totals", {}).get("chunks") != chunk_count:
         return IntegrityResult(False, "index chunk count mismatch", manifest_hash, chunk_count)
-    dimension = metadata.get("dense", {}).get("dimension")
-    if not isinstance(dimension, int) or dense_path.stat().st_size != chunk_count * dimension * 4:
+    expected_dense = {
+        "model": EMBED_MODEL,
+        "source_repo": EMBED_SOURCE_REPO,
+        "revision": EMBED_REVISION,
+        "model_file": EMBED_ONNX,
+        "dimension": EMBED_DIMENSION,
+        "runtime": "FastEmbed/ONNX",
+    }
+    dense_metadata = metadata.get("dense")
+    if not isinstance(dense_metadata, dict) or any(
+        dense_metadata.get(key) != value for key, value in expected_dense.items()
+    ):
+        return IntegrityResult(False, "dense model metadata mismatch", manifest_hash, chunk_count)
+    dimension = dense_metadata["dimension"]
+    if dense_size != chunk_count * dimension * 4:
         return IntegrityResult(False, "dense index size mismatch", manifest_hash, chunk_count)
     expected_version = f"{manifest.get('corpus_id')}@{manifest_hash}"
     if metadata.get("corpus_version") != expected_version:

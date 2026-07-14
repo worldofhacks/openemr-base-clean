@@ -3,7 +3,6 @@
 # W2-D4 / W2-R3: sparse BM25, pinned-model FastEmbed/ONNX, managed reranker seam.
 rank-bm25==0.2.2
 fastembed>=0.8,<0.9
-cohere>=7,<8
 
 # Maintainer-only source refresh; already present in the Wave-0 reader stack.
 pdfplumber>=0.11,<0.12

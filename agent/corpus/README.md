@@ -41,6 +41,25 @@ It downloads only the pinned `qdrant/bge-small-en-v1.5-onnx-q` snapshot at revis
 The standalone integrity command checks manifest, chunks, dense bytes, dimensions, and
 corpus-version hashes; any mismatch exits nonzero.
 
+## Runtime retrieval
+
+`corpus.retrieval.HybridRetriever` loads the committed BM25 corpus and dense matrix only
+after the evidence route receives a request. It fuses the top sparse and BGE results with
+reciprocal-rank fusion, then reranks at most 30 candidates. `RERANKER=local` (the default)
+uses the pinned quantized `mxbai-rerank-base-v1` ONNX artifact. `RERANKER=cohere` reads
+`COHERE_API_KEY` from the process environment and calls Cohere v2 only after both the query
+builder and final outbound PHI screen pass; an absent key, screen rejection, breaker-open
+state, or vendor failure falls back locally. Tests always inject a Cohere stub and never
+make a live vendor call.
+
+The route declares named, strict `EvidenceSearchRequest`, `EvidenceSnippet`, and
+`EvidenceSearchResponse` models at `POST /evidence/search`. Its query accepts condition/test
+terms only, `k` is bounded to 1–10, a healthy miss is an empty 200 response, and a corrupt
+index or production embedder outage is a distinct 503. The composition layer can attach
+the current pinned session's demographic strings at
+`request.state.evidence_demographic_strings`; those values are checked at the final Cohere
+egress boundary and are never logged.
+
 To refresh the curated text after an explicit reviewed version change, download the six
 manifest-pinned PDFs outside the repo and run:
 
@@ -57,4 +76,7 @@ runtime network path.
 This isolated lane does not own shared files. The integration owner must add the runtime
 requirements to `agent/pyproject.toml`, copy/build `agent/corpus/` in `agent/Dockerfile`,
 include `app.routes.evidence.router` in `app/main.py`, and connect retrieval health to
-`/ready`. No workaround for those merge points is hidden here.
+`/ready`. Router inclusion must remain behind the application's SMART/pinned-session guard,
+and the Track M6 event owner must wrap the emitted `retrieval.query.executed`,
+`retrieval.unavailable`, `rerank.executed`, and `breaker.state.changed` records in the
+canonical event envelope. No workaround for those merge points is hidden here.

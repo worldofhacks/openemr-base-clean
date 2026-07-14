@@ -755,3 +755,581 @@ def test_dependabot_near_miss_still_passes_after_evasion_hardening():
         assert spelling not in text, f"near-miss unexpectedly contains {spelling!r}"
 
     assert list(mod.lint_workflows([near_miss])) == []
+
+
+# ===========================================================================
+# Fresh review additions — quota fail-closed behavior, equivalent
+# pwn-request workflow shapes, and the binding W2-D8 live-call configuration.
+#
+# These tests intentionally use structured status/classification contracts.
+# Verdicts must not be inferred by searching human-readable quota prose, and
+# workflow findings must distinguish executable PR-head checkout shapes from
+# comments, echoed examples, and base-ref checkouts.
+# ===========================================================================
+
+
+def test_viability_accepts_structured_daily_and_spend_quota_sufficiency():
+    # spec(W2-M24:AC-3; W2-D8/§7 quota decision guard)
+    # guards: a fail-closed repair that can never emit viable, even when both
+    # independent quota axes are explicitly sufficient and the cost/runtime
+    # projection fits. The approved legacy positive-string fixture above
+    # remains compatible; this is the new machine-readable positive control.
+    mod = _spike()
+    quota_evidence = {
+        "statement": "synthetic opaque quota evidence",
+        "sufficiency": {"daily": "sufficient", "spend": "sufficient"},
+    }
+    report = _build_report(
+        mod,
+        daily_quota_statement=quota_evidence,
+        max_cost_usd=10.0,
+        max_seconds=900.0,
+    )
+
+    assert report["daily_quota_statement"] == quota_evidence
+    assert report["extrapolated_50"]["projected_cost_usd"] < 10.0
+    assert report["extrapolated_50"]["projected_seconds"] < 900.0
+    assert report["verdict"] == "viable"
+
+
+@pytest.mark.parametrize(
+    "max_cost_usd,max_seconds,overrun_axis",
+    [
+        pytest.param(1.0, 900.0, "cost", id="cost_over_budget"),
+        pytest.param(10.0, 300.0, "runtime", id="runtime_over_budget"),
+    ],
+)
+def test_structured_sufficient_quota_still_enforces_cost_and_runtime_budgets(
+    max_cost_usd, max_seconds, overrun_axis
+):
+    # spec(W2-M24:AC-3; W2-D8/§7 quota decision guard)
+    # guards: a new structured-quota branch returning viable immediately and
+    # bypassing the independent cost/runtime STOP conditions.
+    mod = _spike()
+    quota_evidence = {
+        "statement": "synthetic opaque quota evidence",
+        "sufficiency": {"daily": "sufficient", "spend": "sufficient"},
+    }
+    report = _build_report(
+        mod,
+        daily_quota_statement=quota_evidence,
+        max_cost_usd=max_cost_usd,
+        max_seconds=max_seconds,
+    )
+
+    projection = report["extrapolated_50"]
+    if overrun_axis == "cost":
+        assert projection["projected_cost_usd"] > max_cost_usd
+        assert projection["projected_seconds"] < max_seconds
+    else:
+        assert projection["projected_seconds"] > max_seconds
+        assert projection["projected_cost_usd"] < max_cost_usd
+    assert report["daily_quota_statement"] == quota_evidence
+    assert report["verdict"] == "stop_escalate"
+
+
+@pytest.mark.parametrize(
+    "quota_evidence",
+    [
+        pytest.param(None, id="missing_evidence"),
+        pytest.param("synthetic opaque quota evidence", id="unstructured_opaque_prose"),
+        pytest.param(
+            "synthetic quota fits and both axes are sufficient",
+            id="deceptive_viability_words",
+        ),
+        pytest.param(
+            {"statement": "synthetic opaque quota evidence"},
+            id="missing_sufficiency_object",
+        ),
+        pytest.param(
+            {
+                "statement": "synthetic opaque quota evidence",
+                "sufficiency": {"spend": "sufficient"},
+            },
+            id="missing_daily_status",
+        ),
+        pytest.param(
+            {
+                "statement": "synthetic opaque quota evidence",
+                "sufficiency": {"daily": "sufficient"},
+            },
+            id="missing_spend_status",
+        ),
+        pytest.param(
+            {
+                "statement": "synthetic opaque quota evidence",
+                "sufficiency": "daily=sufficient, spend=sufficient",
+            },
+            id="unstructured_sufficiency_value",
+        ),
+    ],
+)
+def test_viability_fails_closed_on_missing_or_unstructured_quota_evidence(
+    quota_evidence,
+):
+    # spec(W2-M24:AC-3; W2-D8/§7 quota decision guard)
+    # guards: missing/malformed quota evidence silently inheriting viability
+    # from cost and runtime. Arbitrary prose is deliberately opaque; this does
+    # not invalidate the approved freeze's specific legacy positive statement.
+    mod = _spike()
+    report = _build_report(
+        mod,
+        daily_quota_statement=quota_evidence,
+        max_cost_usd=10.0,
+        max_seconds=900.0,
+    )
+
+    assert report["extrapolated_50"]["projected_cost_usd"] < 10.0
+    assert report["extrapolated_50"]["projected_seconds"] < 900.0
+    assert report["daily_quota_statement"] == quota_evidence
+    assert report["verdict"] == "stop_escalate"
+
+
+@pytest.mark.parametrize(
+    "daily_status,spend_status",
+    [
+        ("unknown", "sufficient"),
+        ("insufficient", "sufficient"),
+        ("sufficient", "unknown"),
+        ("sufficient", "insufficient"),
+        ("Sufficient", "sufficient"),
+        ("sufficient", "SUFFICIENT"),
+        (True, "sufficient"),
+        ("sufficient", 1),
+        (None, "sufficient"),
+        ("sufficient", None),
+    ],
+    ids=[
+        "daily_unknown",
+        "daily_insufficient",
+        "spend_unknown",
+        "spend_insufficient",
+        "daily_wrong_case",
+        "spend_wrong_case",
+        "daily_wrong_type",
+        "spend_wrong_type",
+        "daily_null",
+        "spend_null",
+    ],
+)
+def test_viability_fails_closed_on_structured_daily_or_spend_quota_status(
+    daily_status, spend_status
+):
+    # spec(W2-M24:AC-3; W2-D8/§7 quota decision guard)
+    # guards: declaring the required live gate viable from runtime/cost alone
+    # while daily provider capacity or the account spend quota is unknown or
+    # insufficient. The narrative is deliberately opaque: only the structured
+    # status is authoritative, so a keyword search cannot self-grade the run.
+    mod = _spike()
+    quota_evidence = {
+        "statement": "synthetic opaque quota evidence",
+        "sufficiency": {"daily": daily_status, "spend": spend_status},
+    }
+    report = _build_report(
+        mod,
+        daily_quota_statement=quota_evidence,
+        max_cost_usd=10.0,
+        max_seconds=900.0,
+    )
+
+    # Premise: the same sample fits both per-run budgets; quota is the sole
+    # reason the locked decision must stop-escalate.
+    assert report["extrapolated_50"]["projected_cost_usd"] < 10.0
+    assert report["extrapolated_50"]["projected_seconds"] < 900.0
+    assert report["daily_quota_statement"] == quota_evidence
+    assert report["verdict"] == "stop_escalate"
+
+
+def test_per_minute_headers_do_not_claim_daily_or_spend_quota_sufficiency():
+    # spec(W2-M24:AC-3; W2-D8/§7 quota decision guard)
+    # guards: treating Anthropic per-minute rate limits as proof that a daily
+    # run or account spend quota fits. Neither capacity is present in these
+    # headers, so both structured statuses must remain unknown and viability
+    # must fail closed even though cost/runtime fit.
+    mod = _spike()
+    projection = mod.extrapolate(_canonical_units())
+    evidence = mod._daily_quota_statement(
+        {
+            "anthropic-ratelimit-requests-limit": "4000",
+            "anthropic-ratelimit-input-tokens-limit": "400000",
+            "anthropic-ratelimit-output-tokens-limit": "80000",
+        },
+        projection,
+    )
+
+    assert isinstance(evidence, dict), (
+        "quota evidence must carry machine-readable sufficiency separately "
+        "from its human-readable statement"
+    )
+    assert isinstance(evidence.get("statement"), str) and evidence["statement"].strip()
+    assert evidence.get("sufficiency") == {"daily": "unknown", "spend": "unknown"}
+
+    report = _build_report(
+        mod,
+        daily_quota_statement=evidence,
+        max_cost_usd=10.0,
+        max_seconds=900.0,
+    )
+    assert report["verdict"] == "stop_escalate"
+
+
+_BRACKET_PR_REF_WORKFLOW = """\
+name: bracket-form PR ref violation (test-only)
+on:
+  pull_request_target:
+jobs:
+  unsafe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request['head']['sha'] }}
+      - run: ./ci/test.sh
+        env:
+          PROVIDER_KEY: ${{ secrets.FAKE_PROVIDER_KEY }}
+"""
+
+_BRACKET_SECRET_WORKFLOW = """\
+name: bracket-form secret violation (test-only)
+on:
+  pull_request_target:
+jobs:
+  unsafe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - run: ./ci/test.sh
+        env:
+          PROVIDER_KEY: ${{ secrets['FAKE_PROVIDER_KEY'] }}
+"""
+
+_BRACKET_GITHUB_TOKEN_WORKFLOW = """\
+name: bracket-form github token violation (test-only)
+on:
+  pull_request_target:
+jobs:
+  unsafe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - run: gh pr edit --add-label reviewed "$PR_URL"
+        env:
+          GH_TOKEN: ${{ github['token'] }}
+"""
+
+_FORK_REPOSITORY_AND_REF_WORKFLOW = """\
+name: explicit fork repository and ref violation (test-only)
+on:
+  pull_request_target:
+jobs:
+  unsafe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request['head']['repo']['full_name'] }}
+          ref: ${{ github.event.pull_request['head']['ref'] }}
+      - run: ./ci/test.sh
+        env:
+          PROVIDER_KEY: ${{ secrets.FAKE_PROVIDER_KEY }}
+"""
+
+_BASE_CHECKOUT_WITH_BRACKET_SECRET = """\
+name: base checkout with bracket secret (compliant test-only)
+on:
+  pull_request_target:
+jobs:
+  safe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./trusted/base-script.sh
+        env:
+          PROVIDER_KEY: ${{ secrets['FAKE_PROVIDER_KEY'] }}
+"""
+
+_COMMENT_ONLY_SECRET_NEAR_MISS = """\
+name: comment-only secret example (compliant test-only)
+on:
+  pull_request_target:
+permissions: {}
+jobs:
+  safe:
+    permissions: {}
+    runs-on: ubuntu-latest
+    steps:
+      # Documentation only; no secret expression is evaluated here:
+      # PROVIDER_KEY: ${{ secrets.FAKE_DOCUMENTATION_ONLY }}
+      - name: anonymously fetch and execute the public fork PR head
+        env:
+          GH_TOKEN: ""
+          GITHUB_TOKEN: ""
+          GIT_ASKPASS: /bin/false
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_TERMINAL_PROMPT: "0"
+          HOME: ${{ runner.temp }}/anonymous-git-home
+          PR_REPOSITORY: ${{ github.event.pull_request['head']['repo']['full_name'] }}
+          PR_SHA: ${{ github.event.pull_request['head']['sha'] }}
+        run: |
+          mkdir -p "$HOME"
+          git init pr-head
+          git -C pr-head remote add origin "https://github.com/${PR_REPOSITORY}.git"
+          git -C pr-head -c credential.helper= -c http.extraHeader= fetch --no-tags --depth=1 origin "$PR_SHA"
+          git -C pr-head checkout --detach FETCH_HEAD
+          make -C pr-head test
+"""
+
+
+def _lint_fixture_classifications(mod, tmp_path, fixtures):
+    classifications = {}
+    for name, content in fixtures.items():
+        path = tmp_path / name
+        path.write_text(content)
+        classifications[name] = bool(list(mod.lint_workflows([path])))
+    return classifications
+
+
+def test_lint_classifies_bracket_forms_and_explicit_fork_checkout_without_false_positives(
+    tmp_path,
+):
+    # spec(W2-M24:AC-5; W2-D8/§6a)
+    # guards: dot-notation-only matching for PR refs, secrets, or github.token;
+    # also freezes actions/checkout's explicit fork repository+ref form. The
+    # two near misses prove hardening does not flag a base checkout or a secret
+    # expression that exists only in a YAML comment. The comment fixture's
+    # PR-head fetch is anonymous: no checkout action (and therefore no default
+    # persisted action token), empty token env vars, no permissions, and Git
+    # credential helpers/HTTP auth headers explicitly disabled.
+    mod = _spike()
+    assert "uses: actions/checkout" not in _COMMENT_ONLY_SECRET_NEAR_MISS
+    assert _COMMENT_ONLY_SECRET_NEAR_MISS.count("permissions: {}") == 2
+    assert 'GH_TOKEN: ""' in _COMMENT_ONLY_SECRET_NEAR_MISS
+    assert 'GITHUB_TOKEN: ""' in _COMMENT_ONLY_SECRET_NEAR_MISS
+    assert 'GIT_CONFIG_NOSYSTEM: "1"' in _COMMENT_ONLY_SECRET_NEAR_MISS
+    assert "anonymous-git-home" in _COMMENT_ONLY_SECRET_NEAR_MISS
+    assert "credential.helper=" in _COMMENT_ONLY_SECRET_NEAR_MISS
+    assert "http.extraHeader=" in _COMMENT_ONLY_SECRET_NEAR_MISS
+    fixtures = {
+        "bracket_pr_ref.yml": _BRACKET_PR_REF_WORKFLOW,
+        "bracket_secret.yml": _BRACKET_SECRET_WORKFLOW,
+        "bracket_github_token.yml": _BRACKET_GITHUB_TOKEN_WORKFLOW,
+        "fork_repository_and_ref.yml": _FORK_REPOSITORY_AND_REF_WORKFLOW,
+        "base_checkout_near_miss.yml": _BASE_CHECKOUT_WITH_BRACKET_SECRET,
+        "comment_only_secret_near_miss.yml": _COMMENT_ONLY_SECRET_NEAR_MISS,
+    }
+    actual = _lint_fixture_classifications(mod, tmp_path, fixtures)
+    assert actual == {
+        "bracket_pr_ref.yml": True,
+        "bracket_secret.yml": True,
+        "bracket_github_token.yml": True,
+        "fork_repository_and_ref.yml": True,
+        "base_checkout_near_miss.yml": False,
+        "comment_only_secret_near_miss.yml": False,
+    }
+
+
+_RUN_FETCH_HEAD_WITH_SECRET = """\
+name: shell fetch PR head with secret violation (test-only)
+on:
+  pull_request_target:
+jobs:
+  unsafe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: establish trusted base-repository checkout
+        uses: actions/checkout@v4
+      - name: fetch and execute the fork PR head
+        env:
+          PROVIDER_KEY: ${{ secrets.FAKE_PROVIDER_KEY }}
+        run: |
+          git fetch origin "pull/${{ github.event.pull_request.number }}/head:refs/remotes/origin/pr-head"
+          git checkout --detach refs/remotes/origin/pr-head
+          ./ci/test.sh
+"""
+
+_RUN_FETCH_HEAD_WITH_TOKEN = """\
+name: shell fetch PR head with github token violation (test-only)
+on:
+  pull_request_target:
+jobs:
+  unsafe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: establish trusted base-repository checkout
+        uses: actions/checkout@v4
+      - name: fetch and execute the fork PR head
+        env:
+          GH_TOKEN: ${{ github['token'] }}
+        run: |
+          git fetch "https://x-access-token:${GH_TOKEN}@github.com/${{ github.event.pull_request['head']['repo']['full_name'] }}.git" "${{ github.event.pull_request['head']['sha'] }}"
+          git checkout --detach FETCH_HEAD
+          ./ci/test.sh
+"""
+
+_RUN_FETCH_BASE_NEAR_MISS = """\
+name: shell fetch trusted base branch (compliant test-only)
+on:
+  pull_request_target:
+jobs:
+  safe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: establish trusted base-repository checkout
+        uses: actions/checkout@v4
+      - env:
+          PROVIDER_KEY: ${{ secrets.FAKE_PROVIDER_KEY }}
+        run: |
+          git fetch origin main
+          git checkout --detach origin/main
+          ./trusted/base-script.sh
+"""
+
+_RUN_ECHOED_COMMAND_NEAR_MISS = """\
+name: echoed shell example only (compliant test-only)
+on:
+  pull_request_target:
+jobs:
+  safe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: establish trusted base-repository checkout
+        uses: actions/checkout@v4
+      - env:
+          PROVIDER_KEY: ${{ secrets.FAKE_PROVIDER_KEY }}
+        run: |
+          echo 'git fetch origin pull/123/head:pr-head'
+          echo 'git checkout pr-head'
+          ./trusted/base-script.sh
+"""
+
+_RUN_FETCH_HEAD_UNDER_PULL_REQUEST = """\
+name: ordinary pull request shell checkout (compliant test-only)
+on:
+  pull_request:
+jobs:
+  unprivileged:
+    runs-on: ubuntu-latest
+    steps:
+      - name: establish event-appropriate checkout and git repository
+        uses: actions/checkout@v4
+      - env:
+          PROVIDER_KEY: ${{ secrets.FAKE_PROVIDER_KEY }}
+        run: |
+          git fetch origin "pull/${{ github.event.pull_request.number }}/head:pr-head"
+          git checkout --detach pr-head
+          make test
+"""
+
+
+def test_lint_classifies_run_body_pr_head_fetch_checkout_with_secret_or_token(
+    tmp_path,
+):
+    # spec(W2-M24:AC-5; W2-D8/§6a)
+    # guards: restricting the checkout leg to actions/checkout. Direct shell
+    # fetch+checkout is the same pwn-request primitive. Base-branch commands,
+    # echoed examples, and the unprivileged pull_request event remain valid
+    # near misses and must not be swept up by a keyword-only detector.
+    mod = _spike()
+    fixtures = {
+        "run_fetch_head_secret.yml": _RUN_FETCH_HEAD_WITH_SECRET,
+        "run_fetch_head_token.yml": _RUN_FETCH_HEAD_WITH_TOKEN,
+        "run_fetch_base_near_miss.yml": _RUN_FETCH_BASE_NEAR_MISS,
+        "run_echoed_commands_near_miss.yml": _RUN_ECHOED_COMMAND_NEAR_MISS,
+        "run_pull_request_near_miss.yml": _RUN_FETCH_HEAD_UNDER_PULL_REQUEST,
+    }
+    actual = _lint_fixture_classifications(mod, tmp_path, fixtures)
+    assert actual == {
+        "run_fetch_head_secret.yml": True,
+        "run_fetch_head_token.yml": True,
+        "run_fetch_base_near_miss.yml": False,
+        "run_echoed_commands_near_miss.yml": False,
+        "run_pull_request_near_miss.yml": False,
+    }
+
+
+class _FakeUsage:
+    input_tokens = 10
+    output_tokens = 2
+
+
+class _FakeTextBlock:
+    type = "text"
+    text = "synthetic provider response"
+
+
+class _FakeMessage:
+    usage = _FakeUsage()
+    content = [_FakeTextBlock()]
+
+
+class _FakeRawResponse:
+    headers = {}
+    retries_taken = 0
+
+    @staticmethod
+    def parse():
+        return _FakeMessage()
+
+
+class _RecordingRawMessages:
+    def __init__(self, calls):
+        self._calls = calls
+
+    def create(self, **kwargs):
+        self._calls.append(kwargs)
+        return _FakeRawResponse()
+
+
+class _RecordingMessages:
+    def __init__(self, calls):
+        self.with_raw_response = _RecordingRawMessages(calls)
+
+
+class _RecordingAnthropicClient:
+    def __init__(self):
+        self.calls = []
+        self.messages = _RecordingMessages(self.calls)
+
+
+def test_live_unit_explicitly_pins_temperature_on_vlm_answer_and_judge_calls():
+    # supplemental(W2-D8/§7): live-call temperature configuration guard
+    # guards: relying on provider defaults. W2-D8 binds judge temperature to
+    # exactly zero and requires every agent call (each VLM page and answer) to
+    # be explicitly temperature-pinned and stable. VLM and answer temperatures
+    # may differ; corresponding calls may not drift between otherwise identical
+    # runs. This offline fake is not evidence for AC-7's live measurement.
+    mod = _spike()
+
+    def record_one_run():
+        client = _RecordingAnthropicClient()
+        mod._run_unit(
+            client=client,
+            model="synthetic-model-2026-07-14",
+            pricing=(3.0, 15.0),
+            pages=2,
+        )
+        return client.calls
+
+    runs = [record_one_run(), record_one_run()]
+    for run_number, calls in enumerate(runs, start=1):
+        assert len(calls) == 4  # two VLM pages + answer + judge
+        missing = [
+            index for index, call in enumerate(calls) if "temperature" not in call
+        ]
+        assert missing == [], (
+            f"provider run {run_number} missing explicit temperature at indexes {missing}"
+        )
+        for call in calls[:-1]:
+            assert isinstance(call["temperature"], (int, float))
+        assert calls[-1]["temperature"] == 0
+
+    first_agent_temperatures = [call["temperature"] for call in runs[0][:-1]]
+    second_agent_temperatures = [call["temperature"] for call in runs[1][:-1]]
+    assert first_agent_temperatures == second_agent_temperatures, (
+        "corresponding VLM-page and answer temperatures must be stable across runs; "
+        f"got {first_agent_temperatures!r} then {second_agent_temperatures!r}"
+    )

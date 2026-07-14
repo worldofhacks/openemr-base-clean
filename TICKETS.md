@@ -11,9 +11,9 @@ Baseline: `agent/` pytest = 238 passed, 5 skipped (main @ c3e0804). Gates:
 
 | id | title | status | deps | branch |
 |----|-------|--------|------|--------|
-| W2-M1 | Day-1 container spike — W2 native deps build, deploy, and fit under a measured Railway RSS ceiling | backlog | — | ticket/w2-m1-container-spike |
-| W2-M3 | LangGraph skeleton + SSE spike — supervisor + 2 stub workers, HandoffRecords, span nesting, W1 loop embedded behind a default-OFF flag | backlog | — | ticket/w2-m3-graph-skeleton |
-| W2-M24 | Tier-2 timing/cost/quota spike + fork-PR secret policy (policy doc consumed by W2-M20) | backlog | — | ticket/w2-m24-tier2-spike |
+| W2-M1 | Day-1 container spike — W2 native deps build, deploy, and fit under a measured Railway RSS ceiling | tests-written | — | ticket/w2-m1-container-spike |
+| W2-M3 | LangGraph skeleton + SSE spike — supervisor + 2 stub workers, HandoffRecords, span nesting, W1 loop embedded behind a default-OFF flag | tests-written | — | ticket/w2-m3-graph-skeleton |
+| W2-M24 | Tier-2 timing/cost/quota spike + fork-PR secret policy (policy doc consumed by W2-M20) | tests-written | — | ticket/w2-m24-tier2-spike |
 
 ## Wave 0b
 

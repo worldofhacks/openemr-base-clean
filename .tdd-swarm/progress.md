@@ -129,3 +129,18 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
 - Baseline normalization (verified by collect-diff): fresh [dev] venv = 236 passed / 6 skipped,
   which is EXACTLY the primary's 238/5 minus the opt-in [ui] playwright extra (test_ui_smoke:
   2 passing params there -> 1 module skip here). Per-worktree gate number: 236 passed / 6 skipped.
+
+## Phase 2 — wave 0a tests FROZEN (RED verified by orchestrator, trust-nothing)
+- W2-M1: freeze cdeed28 (test_app_boot.py extended append-only; 5 AC-1 import tests RED for right
+  reason, 2 AC-2 guards green-by-construction as documented; suite 5F/238P/6S). Review: APPROVE_FREEZE,
+  3 minor (recorded): stale 238/5 baseline wording in ticket vs real fresh-venv 236/6; pip-in-venv
+  assumption; host-tesseract dependency is by-design of AC-1.
+- W2-M3: freeze d88b234 (test_graph_skeleton.py NEW; 16 RED; suite 16F/236P/6S). Review:
+  APPROVE_FREEZE, 4 minor (recorded): span capture via existing sink seam outside M3 scopes (impl
+  calls the seam, doesn't edit it); fake propagate_attributes order-sensitivity; step budget bounded
+  not pinned-exact; per-decision reason_code sets approximated by single closed enum.
+- W2-M24: freeze 849cbcc (test_tier2_spike.py NEW; 30 RED; suite 30F/236P/6S). Review: APPROVE_FREEZE,
+  3 minor (recorded): AC-5 ablation missing no-secrets leg; stale baseline wording; nearest-rank
+  percentile definition frozen (documented choice).
+- Orchestrator re-ran suites + spec-lint in all three worktrees and verified changed-file sets are
+  exactly the declared test files. Statuses -> tests-written. Impl agents may NOT touch agent/tests/**.

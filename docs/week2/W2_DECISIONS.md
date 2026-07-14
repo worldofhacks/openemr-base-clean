@@ -41,10 +41,13 @@
   widened from read-only to read + narrow create.
 - Rejected: pretending it is still read-only (false); a store outside OpenEMR (splits
   data authority, fails round-trip).
-- **Addendum (2026-07-13, /arch-finalize — owner-confirmed):** the write mechanism is
-  fully designed, not just named. (a) Ingestion jobs are **durable Postgres rows** with
-  boot reconciliation (non-terminal jobs at boot → failed(worker_restart), retriable
-  idempotently) — never in-process-only state. (b) **Write principal:** jobs execute
+- **Addendum (2026-07-13, /arch-finalize — owner-confirmed; boot-reconciliation clause
+  superseded by the Post-review remediation, see ARCHITECTURE §3):** the write mechanism
+  is fully designed, not just named. (a) Ingestion jobs are **durable Postgres rows** with
+  lease-based boot reconciliation — startup reclaims only expired leases and reconciles any
+  `unknown` remote intent, resuming the same logical job; a job that can be neither
+  reclaimed nor reconciled terminates `failed(worker_restart)` (the one live trigger for
+  that reason). Never in-process-only state. (b) **Write principal:** jobs execute
   under the uploading clinician's delegated token via the persisted session store (the
   W1 token-persistence debt fix, pulled into MVP because this depends on it); refresh
   grant if a write outlives the access token; never client_credentials (W1 D9/F-S.5
@@ -302,7 +305,7 @@
   a possible commit moves the intent to `unknown`; it stops for reconciliation and is
   **never blind-retried**. Only a proven-absent remote object may be posted again.
 - Permanent dedup/lineage records are keyed by
-  `(patient_id, document_id_or_content_hash, leg, version, field)` and are never
+  `(patient_id, document_id_or_content_hash, leg, version, field_id)` and are never
   purged. Purgeable attempt rows are separate and retain for 30 days. Atomic
   failed-job requeue changes queue state without creating a second logical job or
   bypassing the permanent ledger.

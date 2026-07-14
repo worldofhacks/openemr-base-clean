@@ -540,9 +540,13 @@ GitHub + GitLab; video + initial report delivered.
     `encounter_mismatch`; status/page ownership is checked. No job or intent is created on
     refusal.
   - Before queueing, validate upload error, presence, actual size ≤10 MB, page count ≤20,
-    magic-byte/exact MIME plus doc-type allowlist, and safe filename. Rejection is a typed
-    controlled 4xx `upload_rejected` before any native call. PDF is lab-only; intake also
-    permits PNG/JPEG.
+    magic-byte/exact MIME plus doc-type allowlist, and safe filename. Each failure is a
+    typed controlled 4xx with its SPECIFIC reason before any native call: wrong/disallowed
+    MIME or doc-type → `unsupported_media_type`; size >10 MB or pages >20 →
+    `size_or_page_cap_exceeded`; upload error / missing part / unsafe filename →
+    `upload_rejected`. All three frozen enum members stay reachable and separately tested
+    (§6a "every value maps to a §5 row + event + negative test"). PDF is lab-only; intake
+    also permits PNG/JPEG.
   - The source write uses OA3's `SOURCE_DOCUMENT_PATH=/AI-Source-Documents` tuple: resolve path,
     compare expected category ID and ACL, then POST the **path**. Wrong/ambiguous/missing
     path, ID, or ACL fails closed as `category_mismatch`; the agent never creates a
@@ -556,7 +560,7 @@ GitHub + GitLab; video + initial report delivered.
     commit becomes `unknown` and stops for reconciliation; only proven absence may return
     to `pending` and POST. Multiple/conflicting matches fail closed. **No blind retry.**
   - Permanent dedup/lineage key is
-    `(patient_id, document_id_or_content_hash, leg, version, field)`; source uses
+    `(patient_id, document_id_or_content_hash, leg, version, field_id)`; source uses
     `(patient_id, content_hash, source_document, schema_version, source)`. It is never
     purged.
     Attempt rows are separate and alone use the 30-day purge. Concurrent duplicate or
@@ -1293,8 +1297,9 @@ video delivered; GitLab same-SHA graded gate green and current at deadline.
   Anchors: §7 (regression drill + defense-prep §8 correction), W2-D5/D8, W2-REQ-36.
   Accept:
   - Each of the four W2_DEFENSE_PREP §8 regressions injected on a throwaway branch;
-    **the gate goes red for the mapped category in all four runs**; the four red CI runs
-    are linked in the CI Evidence deliverable.
+    **the gate goes red for the mapped category in all four runs**. The CI Evidence
+    deliverable links the FULL red-run matrix: these four §8 runs plus one injection per
+    deterministic 100% category and the `factually_consistent` threshold-crossing drill.
   - The regression-#3 correction honored: the templater-rule loosening is caught
     deterministically by safe_refusal; a genuine prompt-level behavior change is shown
     caught by the Tier-2 live run (W2-D8's purpose).
@@ -1460,7 +1465,8 @@ contingency may move, weaken, stub, or silently omit a non-stretch item. If the 
 robust Final cannot fit, STOP and escalate rather than inventing a sixth cut.
 
 - **2026-07-13 — Critic agent** (PRD bullet 6): **cut as stretch** — PRD p.4 "A critic agent is
-  extension work, not core." First pickup per above.
+  extension work, not core." First stretch item to pick up if Final-core lands early (it
+  wraps the existing verifier as a graph node — smallest lift).
 - **2026-07-13 — Third document type** (referral fax / med list, PRD bullet 8): **cut as stretch** —
   PRD pitfall 1 (two must work first).
 - **2026-07-13 — Lab trend chart widget** (PRD bullet 9): **cut as stretch** — trend questions

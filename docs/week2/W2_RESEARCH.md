@@ -110,6 +110,12 @@ Key sources: [Cohere rate limits](https://docs.cohere.com/docs/rate-limits),
 
 ## W2-R4. Extraction cost, OCR reality, SLO baselining — planning numbers
 
+> **Post-remediation note (2026-07-13):** SLO closure is locked to **Early (Thu
+> 2026-07-16)**, not "revised at MVP" (single dated answer, W2_DECISIONS/gap-audit).
+> Corpus scope for the build is the **VA/DoD CPG trio only**; CDC/USPSTF remain
+> license-vetted manifest-ADD options (not claimed as ingested) unless a demo case needs
+> them. The research below is the point-in-time source material.
+
 - VLM page cost: Claude images tokenize by area (roughly (w×h)/750 tokens); a
   typical scanned page runs on the order of 1.5–2K input tokens ≈ **$0.005–0.01/page
   on Sonnet input pricing** before prompt/output. Cap pages per document; measure

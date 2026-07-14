@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker network *)",
+      "Bash(mkdir -p /tmp/sim-sites)",
+      "Bash(rm -rf /tmp/sim-sites/*)",
+      "Bash(docker run *)"
+    ]
+  }
+}

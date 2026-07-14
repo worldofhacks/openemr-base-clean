@@ -2,6 +2,21 @@
 
 > Written 2026-07-13, ~2h before the defense. Presearch + decision slate + grill bank.
 > Source: Week_2_AgentForge.pdf. No code exists yet; this is the defense package.
+>
+> **Post-remediation corrections (2026-07-13, supersede the older body below where they
+> conflict — the binding docs are W2_ARCHITECTURE.md + W2_DECISIONS.md):**
+> - **Eval gate:** it is NOT ">5% regression only." Four deterministic categories
+>   (schema_valid, citation_present, no_phi_in_logs, safe_refusal) are 100%-required — any
+>   single failure is red; `factually_consistent` alone uses the threshold/delta rule (W2-D8).
+> - **Cuts:** exactly FIVE stretch items are cut (critic, 3rd doc type, trend chart,
+>   contextual-retrieval, multi-vector), not six.
+> - **Idempotency:** OpenEMR's document upload is NON-idempotent natively (W2-F18), so the
+>   agent's permanent patient-scoped dedup ledger + exactly-once intent contract (W2-D10) is
+>   load-bearing, not defense-in-depth.
+> - **Scopes:** W1's client cannot gain the W2 scope families (api:oemr/document/vital), so a
+>   REPLACEMENT SMART client is required (W2-F4); note that registration scope is NOT an
+>   effective server-side ceiling (same-resource escalation, W2-F12) — the agent asserts its
+>   exact granted set at startup.
 
 ## 1. What Week 2 actually is (one paragraph)
 

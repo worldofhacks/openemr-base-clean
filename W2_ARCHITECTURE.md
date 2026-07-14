@@ -460,7 +460,9 @@ grounding → full writeback → round-trip verification.
 - **Boot reconciliation.** ~~Every non-terminal job is marked `failed(worker_restart)`.~~
   **SUPERSEDED — Post-review remediation (2026-07-13):** startup reclaims only expired
   leases, reconciles any `unknown` remote intent before further work, and resumes the same
-  logical job. Live leases owned by another worker are never failed. Deploys drain claims
+  logical job. Live leases owned by another worker are never failed. A job that can be
+  neither reclaimed nor reconciled at boot terminates `failed(worker_restart)` — the sole
+  live trigger for that enum member, keeping it reachable + testable. Deploys drain claims
   gracefully; failed jobs use the atomic retry contract above.
 
 Extraction report to the physician: grounded fields cited + boxed; ungrounded fields
@@ -859,8 +861,9 @@ fixture proving it returns False on a violating output (guards: permanently-gree
 Final, a **regression drill** on a throwaway branch injects one applicable failure for every
 deterministic 100% category and enough applicable `factually_consistent` failures to cross
 its real threshold/delta, in addition to each of the four W2_DEFENSE_PREP §8 regressions;
-the gate must go red for every mapped category and the
-four red CI runs are linked in the CI Evidence deliverable. **Correction to the
+the gate must go red for every mapped category, and the **full red-run matrix** (each
+deterministic-category injection, the `factually_consistent` threshold crossing, and the
+four §8 regressions) is linked in the CI Evidence deliverable. **Correction to the
 defense-prep §8 regression-#3 story (recorded honestly):** the empty-allergy render is
 enforced by the deterministic templater (W1 §5 rule 3), so a pure prompt edit cannot flip
 it — the realistic injected regression is a code change loosening that rule, caught

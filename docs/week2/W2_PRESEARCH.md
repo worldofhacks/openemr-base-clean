@@ -4,6 +4,13 @@
 > (3 phases, 16 sections). New artifact per the week-scoped convention; Week 1
 > PRESEARCH.md is frozen history. Open items are tagged OPEN and resolved in the
 > conversation record at the bottom. Research follow-ups are tagged → W2-R#.
+>
+> **Point-in-time note (superseded where in conflict by the binding docs, 2026-07-13):**
+> this presearch predates the write-path verification + remediation. Current state: the
+> eval gate is four 100%-required deterministic categories + a factual threshold (not
+> ">5% only"); there is no client-supplied FHIR DocumentReference/Observation write (writes
+> go through the standard documents/vitals APIs under the W2-D10 exactly-once contract); the
+> PHI-scan covers generated artifacts only. Binding: W2_ARCHITECTURE.md + W2_DECISIONS.md.
 
 ## Phase 1 — Define Your Constraints
 

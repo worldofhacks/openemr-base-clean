@@ -136,7 +136,7 @@
   5. Source/artifact/vital creates use intents `{pending, unknown, complete}`, a remote
      marker and payload fingerprint; possible commit → unknown → reconcile, never blind retry.
   6. Permanent dedup/lineage key is patient-safe
-     `(patient_id, document_id_or_content_hash, leg, version, field)`; 30-day attempts are
+     `(patient_id, document_id_or_content_hash, leg, version, field_id)`; 30-day attempts are
      separate; failed-job requeue is atomic.
   7. The exact replacement-client scope payload lives in W2_AUDIT.md; missing or extra
      grants refuse, and old access plus refresh tokens are retired at cutover.

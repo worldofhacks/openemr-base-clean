@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import multiprocessing
 import re
+from io import BytesIO
 from pathlib import Path
 from typing import Callable, Literal, Optional
 
@@ -395,46 +396,75 @@ def read_words_and_boxes(
     path = Path(pdf_path)
     runner: OcrRunner = ocr_runner if ocr_runner is not None else _default_ocr_runner
 
-    pages: list[PageWords] = []
     pdfium_doc = pdfium.PdfDocument(str(path))
     try:
         with pdfplumber.open(str(path)) as plumber_doc:
-            page_count = len(pdfium_doc)
-            for page_index in range(page_count):
-                plumber_page = plumber_doc.pages[page_index]
-                width_pts = float(plumber_page.width)
-                height_pts = float(plumber_page.height)
-                width_px, height_px = _pixel_dims_from_points(width_pts, height_pts)
-
-                text_words = _text_layer_page_words(plumber_page)
-                if text_words is not None:
-                    pages.append(
-                        PageWords(
-                            page_index=page_index,
-                            source="text_layer",
-                            render_dpi=RENDER_DPI,
-                            page_pixel_dims=(width_px, height_px),
-                            words=text_words,
-                            unreadable=False,
-                        )
-                    )
-                    continue
-
-                pdfium_page = pdfium_doc[page_index]
-                try:
-                    pages.append(
-                        _ocr_page(
-                            pdfium_page,
-                            page_index,
-                            runner,
-                            per_page_ocr_timeout_s,
-                            width_px,
-                            height_px,
-                        )
-                    )
-                finally:
-                    pdfium_page.close()
+            return _read_open_documents(
+                pdfium_doc, plumber_doc, runner, per_page_ocr_timeout_s
+            )
     finally:
         pdfium_doc.close()
 
+
+def read_pdf_bytes_words_and_boxes(
+    pdf_bytes: bytes,
+    *,
+    ocr_runner: Optional[OcrRunner] = None,
+    per_page_ocr_timeout_s: float = _DEFAULT_PER_PAGE_OCR_TIMEOUT_S,
+) -> WordsBoxes:
+    """Read persisted PDF bytes without requiring a shared filesystem path."""
+
+    runner: OcrRunner = ocr_runner if ocr_runner is not None else _default_ocr_runner
+    pdfium_doc = pdfium.PdfDocument(pdf_bytes)
+    try:
+        with pdfplumber.open(BytesIO(pdf_bytes)) as plumber_doc:
+            return _read_open_documents(
+                pdfium_doc, plumber_doc, runner, per_page_ocr_timeout_s
+            )
+    finally:
+        pdfium_doc.close()
+
+
+def _read_open_documents(
+    pdfium_doc: object,
+    plumber_doc: object,
+    runner: OcrRunner,
+    per_page_ocr_timeout_s: float,
+) -> WordsBoxes:
+    pages: list[PageWords] = []
+    page_count = len(pdfium_doc)  # type: ignore[arg-type]
+    for page_index in range(page_count):
+        plumber_page = plumber_doc.pages[page_index]  # type: ignore[attr-defined]
+        width_pts = float(plumber_page.width)
+        height_pts = float(plumber_page.height)
+        width_px, height_px = _pixel_dims_from_points(width_pts, height_pts)
+
+        text_words = _text_layer_page_words(plumber_page)
+        if text_words is not None:
+            pages.append(
+                PageWords(
+                    page_index=page_index,
+                    source="text_layer",
+                    render_dpi=RENDER_DPI,
+                    page_pixel_dims=(width_px, height_px),
+                    words=text_words,
+                    unreadable=False,
+                )
+            )
+            continue
+
+        pdfium_page = pdfium_doc[page_index]  # type: ignore[index]
+        try:
+            pages.append(
+                _ocr_page(
+                    pdfium_page,
+                    page_index,
+                    runner,
+                    per_page_ocr_timeout_s,
+                    width_px,
+                    height_px,
+                )
+            )
+        finally:
+            pdfium_page.close()
     return WordsBoxes(pages=pages)

@@ -19,6 +19,8 @@ WORKER_NAME = "intake_extractor"
 class PersistedExtraction:
     artifact_ref: str
     citation_refs: tuple[str, ...] = ()
+    fields_grounded: int = 0
+    fields_unsupported: int = 0
 
 
 class ExtractionPipeline(Protocol):

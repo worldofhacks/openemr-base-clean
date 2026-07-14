@@ -111,3 +111,14 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
 # for the M4 local loop; per-ticket isolation via `openemr-cmd worktree add <branch> -b --base
 # swarm/w2-wave0` (no stack started; no git hooks in this clone).
 - Orchestrator pre-staged langgraph>=1.2,<2 in agent/pyproject.toml on swarm/w2-wave0 (W2-R1 binding; latest 1.2.9) so W2-M1 solely owns pyproject/Dockerfile within wave 0a and W2-M3 never touches the dep manifest — same-wave file-scope exclusivity preserved.
+
+## Phase 1 — tickets written + adversarially reviewed
+- Planner commit 4249dea (4 tickets + TICKETS.md). Adversarial review r1: FIX_NEEDED — 1 critical
+  (M24 tests in agent/ops/tests/ never collected by the binding pytest gate → moved to agent/tests/),
+  3 important (M4 fixtures dir moved test_scopes→file_scopes; M24 image-gen path pre-authorized
+  stdlib-only; M1/gates.md license clause aligned to permissive-family + explicit HPND allowlist).
+  Fix commit da47e36. Review r2: APPROVE (0 critical/important; 3 minor).
+- Minor findings APPLIED by orchestrator (tickets are planning artifacts, pre-freeze): M1 AC-1 now
+  smokes pdfplumber; M3 AC-6 pins the SSE opt-in to the §2a contract (test author must not invent);
+  M4 AC-7 single deterministic pass-branch + tesseract-version-tolerant assertion rule.
+- Owner checkpoint: satisfied by the dispatch prompt ("build exactly these" — W2-M1→M4, M3 ∥ M24).

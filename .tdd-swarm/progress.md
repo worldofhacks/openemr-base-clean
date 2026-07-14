@@ -198,3 +198,13 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
   lint fix + policy-doc clause-2 inversion rider -> security re-review). Minors recorded: .yaml
   extension out of documented scope; keyword-presence policy-doc lint; percentile p-range; DSN
   over-redaction; non-dict YAML silently passes; PyYAML transitive dep.
+
+## Phase 4b — W2-M24 fix micro-cycle CLOSED (separation of powers held)
+- Test-role froze 5 evasion cases @ 405c894 (additions-only, 136+/0-; 4 RED for the right reason +
+  near-miss guard green). Impl fixed lint @ 519dfed (refs/pull/N/{head,merge}, merge_commit_sha,
+  implicit github.token counts as secret access; policy-doc clause-2 inversion rephrased; frozen tests
+  untouched). Security re-review: PASS — adversarially verified (pre-fix module evades, post-fix
+  flags; dependabot near-miss passes for the right reason: no checkout leg at all). Suite 271P/6S.
+- Orchestrator re-ran gates: ALL PASS; frozen-drift none. -> W2-M24 REVIEW-PASSED.
+- Residual minors -> W2-M20 follow-ups (recorded): manual git-fetch PR-head in run: bodies is a
+  distinct undetected evasion family (recommend run:-body scan); bare pull/N/head regex relaxation.

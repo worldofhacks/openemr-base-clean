@@ -27,7 +27,7 @@ an unowned PHI surface. After resolution: **99 PRD requirements re-derived, 94 c
 | # | Question | Decision |
 |---|---|---|
 | 1 | May the graded CI eval gate make live Anthropic calls? | **Yes — W2-D8 (owner-recorded ADR):** Tier 1 offline — every PR + local hook (unit, integration-on-stubs, deterministic rubric subset; the PRD's no-live-API clause satisfied verbatim). Tier 2, the graded gate itself, is a **PR-blocking GH Actions job running the full 50 cases against live Anthropic** (real turns + pinned judge). The initial gate selection (offline PR / live-on-merge) was refined by the owner's hand-written ADR to make the live gate itself PR-blocking |
-| 2 | Reranker: Cohere (locked W2-D4) vs W2-R3's local-primary recommendation | **Cohere + dated trigger** (W2-D4 rev): `RERANKER=cohere\|local` seam; mxbai implemented + tested as shipping fallback; if the production `COHERE_API_KEY` is not in Railway by **Mon 2026-07-14 EOD**, MVP ships local |
+| 2 | Reranker: Cohere (locked W2-D4) vs W2-R3's local-primary recommendation | **Cohere + dated trigger** (W2-D4 rev): `RERANKER=cohere\|local` seam; mxbai implemented + tested as shipping fallback; if the production `COHERE_API_KEY` is not in Railway by **Mon 2026-07-13 EOD**, MVP ships local |
 | 3 | Front-desk/MA upload actor with no designed auth path | **Narrative-only**: "uploaded by the front desk" is document provenance, not an agent principal; upload rides the pinned SMART session; W2_USERS revised (dated) |
 | 4 | Async extraction job durability + write principal | **Durable Postgres job rows** + boot reconciliation; job writes under the uploader's delegated token via the persisted session store (W1 token-persistence debt pulled into MVP) |
 

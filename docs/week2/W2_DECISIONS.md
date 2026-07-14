@@ -14,7 +14,7 @@
   enable step).
 - The agent gets exactly two write capabilities: create documents, create
   vitals-class records. No update. No delete. Nothing clinician-authored is touchable.
-- **Addendum (2026-07-14, W2-F1 live verification):** mechanism confirmed end-to-end
+- **Addendum (2026-07-13, W2-F1 live verification):** mechanism confirmed end-to-end
   with corrections. Upload returns **200 `true` with no id** (id via collection GET by
   content hash); the reliable read-back is the **FHIR projection**
   (DocumentReference/uuid → Binary/uuid, byte-exact) since the standard download 500s
@@ -105,7 +105,7 @@
   seam `RERANKER=cohere|local`; `mxbai-rerank-base-v1` (Apache-2.0) is **implemented
   and integration-tested** as the shipping fallback — the PRD's "or an equivalent
   reranker." (b) **Dated trigger:** if the paid production `COHERE_API_KEY` is not in
-  the Railway env by **Monday 2026-07-14 EOD**, MVP ships `RERANKER=local`; Cohere
+  the Railway env by **Monday 2026-07-13 EOD**, MVP ships `RERANKER=local`; Cohere
   becomes the Early-checkpoint upgrade. A paid production key resolves both R3
   objections (trial terms exclude production; 10 req/min throttle). (c) The PHI-free
   contract is **enforced, not asserted**: a deterministic query builder over coded

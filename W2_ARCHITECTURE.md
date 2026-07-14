@@ -60,7 +60,7 @@ drafts, deterministic checks decide — Week 2 extends it to pixels.
 
 ---
 
-> ## Verification errata (2026-07-14 — dated revision; probe-verified facts, no decision changes)
+> ## Verification errata (2026-07-13 — dated revision; probe-verified facts, no decision changes)
 > Source: W2-F1 independent live verification (W2_AUDIT.md, findings W2-F7..F11; W2-D1
 > addendum). W2-F1 CONFIRMED — route-level 404s on FHIR POSTs with maximal write scopes.
 > Corrections binding on the sections below:
@@ -223,7 +223,7 @@ which governs agent capabilities only.
   objections (trial terms exclude production; 10 req/min throttle). `mxbai-rerank-base-v1`
   (Apache-2.0, W2-R3) is implemented and integration-tested as the shipping fallback —
   the PRD's "or an equivalent reranker." **Decision trigger (dated):** if the production
-  `COHERE_API_KEY` is not in the Railway env by **Monday 2026-07-14 EOD**, MVP ships
+  `COHERE_API_KEY` is not in the Railway env by **Monday 2026-07-13 EOD**, MVP ships
   `RERANKER=local`; Cohere becomes the Early-checkpoint upgrade. Cohere down at runtime →
   un-reranked hybrid scores, degraded, logged. CI never calls Cohere live (W2-D4).
 - **Answer composer** — citation contract v2 (W2-D6): CitationV2 on every clinical claim;
@@ -783,7 +783,7 @@ The full re-derived coverage table (99 PRD requirements, zero blank cells) is
 - **O-new (renamed)** — exact vitals-API field mapping for **intake-form vitals fields**
   (never lab values, W2-F3); resolve during /tasks-gen, before the writeback task.
 - **V2 spike** — LangGraph + SSE streaming through workers (MVP wave 1, §2a fallback named).
-- **Owner actions:** Cohere production key → Railway env (**trigger: Monday 2026-07-14
+- **Owner actions:** Cohere production key → Railway env (**trigger: Monday 2026-07-13
   EOD**, else `RERANKER=local` ships); `api:oemr` document/vital scopes + client re-enable
   (W2-F4, build-blocking checklist); verify Railway backup posture + record in
   DEPLOYMENT.md (before Final).

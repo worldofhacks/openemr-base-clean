@@ -122,3 +122,10 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
   smokes pdfplumber; M3 AC-6 pins the SSE opt-in to the §2a contract (test author must not invent);
   M4 AC-7 single deterministic pass-branch + tesseract-version-tolerant assertion rule.
 - Owner checkpoint: satisfied by the dispatch prompt ("build exactly these" — W2-M1→M4, M3 ∥ M24).
+
+## Phase 2 — wave 0a worktrees + environment-normalized baseline
+- Ticket worktrees created via openemr-cmd (no stacks): openemr-wt-ticket-w2-m1-container-spike,
+  -w2-m3-graph-skeleton, -w2-m24-tier2-spike; fresh python3.12 venvs, pip install -e '.[dev]'.
+- Baseline normalization (verified by collect-diff): fresh [dev] venv = 236 passed / 6 skipped,
+  which is EXACTLY the primary's 238/5 minus the opt-in [ui] playwright extra (test_ui_smoke:
+  2 passing params there -> 1 module skip here). Per-worktree gate number: 236 passed / 6 skipped.

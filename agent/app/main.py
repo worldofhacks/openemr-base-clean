@@ -14,9 +14,9 @@ from fastapi import FastAPI
 
 from app.config import Settings, get_settings
 from app.health import Probe, default_readiness_checks
-from app.logging import configure_logging
 from app.middleware.correlation import CorrelationIdMiddleware
 from app.routes.chat import router as chat_router
+from app.routes.evidence import router as evidence_router
 from app.routes.health import router as health_router
 from app.routes.sessions import router as sessions_router
 from app.routes.ui import router as ui_router
@@ -60,6 +60,11 @@ def create_app(
         from app.service import AgentServices
         services = AgentServices(settings)
     app.state.services = services
+    # One lazy retrieval instance is shared by the graph worker and the public evidence
+    # endpoint (W2-D4). Merely constructing the app never loads an ONNX model or vendor client.
+    evidence_retriever_factory = getattr(services, "get_evidence_retriever", None)
+    if evidence_retriever_factory is not None:
+        app.state.evidence_retriever_factory = evidence_retriever_factory
 
     # Observability first (§7): correlation id on every request, from boot.
     app.add_middleware(CorrelationIdMiddleware)
@@ -67,6 +72,7 @@ def create_app(
     app.include_router(health_router)
     app.include_router(sessions_router)
     app.include_router(chat_router)
+    app.include_router(evidence_router)
     app.include_router(ui_router)
 
     @app.get("/")

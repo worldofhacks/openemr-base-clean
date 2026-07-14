@@ -53,6 +53,8 @@ dependencies = [
     # (License verification) and .tdd-swarm/gates.md Tier-2 Dependency check.
     # AGPL stays hard-banned at every level (PyMuPDF); no torch anywhere.
     "fastembed>=0.8,<0.9",
+    # Sparse half of the W2-D4 hybrid retriever (Apache-2.0; pure Python).
+    "rank-bm25>=0.2.2,<0.3",
 ]
 
 [project.optional-dependencies]

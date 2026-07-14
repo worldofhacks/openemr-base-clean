@@ -11,12 +11,16 @@ WORKDIR /app
 # use (spike decision, recorded in the W2-M1 report: keeps the image ~1 GB
 # smaller and the W1 app boot untouched; revisit at the W2-D4 feature wave).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
+    && apt-get install -y --no-install-recommends \
+        libgomp1 \
+        tesseract-ocr \
+        tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 # Install runtime deps first (cached layer), then the app package.
 COPY pyproject.toml ./
 COPY app ./app
+COPY corpus ./corpus
 RUN pip install --no-cache-dir .
 
 # W2-M1 capacity probe (operator CLI, run in-container via `railway ssh`):

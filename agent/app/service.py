@@ -14,9 +14,13 @@ persist it encrypted alongside the pinned session.
 
 from __future__ import annotations
 
+import os
+import re
 import secrets
+import threading
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 
 from app.auth.scopes import requested_scope_string
 from app.auth.smart_client import SmartClient, TokenResponse, generate_pkce
@@ -27,10 +31,21 @@ from app.llm.provider import AnthropicLLMProvider
 from app.middleware.correlation import correlation_id_var
 from app.observability.langfuse import LangfuseSink, NullTraceSink, RequestTracer
 from app.observability.trace import AccountabilityContext
+from app.orchestrator import graph as orchestrator_graph
 from app.orchestrator.loop import BriefResult, Orchestrator, ToolRegistry
+from app.orchestrator.refs import TurnRefRegistry
+from app.orchestrator.workers.evidence_retriever import build_evidence_worker
+from app.schemas.retrieval import EvidenceSearchRequest
+from app.schemas.workers import WorkerInput, WorkerOutput
 from app.session.store import PostgresSessionStore, Session
 from app.tools.fhir_client import FhirClient
 from app.tools.fhir_tools import run_previsit_fanout
+from corpus.retrieval import (
+    HybridRetriever,
+    QueryContractError,
+    RetrievalUnavailableError,
+    build_clinical_query,
+)
 
 
 def _build_tracer(settings: Settings) -> RequestTracer:
@@ -102,6 +117,10 @@ class AgentServices:
         self.tracer = _build_tracer(settings)
         self.orchestrator = Orchestrator(self.provider, cost_cap=self.cost_cap,
                                          max_tool_iterations=settings.llm_max_tool_iterations)
+        # W2-D4: shared by POST /evidence/search and the graph retrieval worker, but built
+        # only on the first feature-flagged turn/search request. App boot remains model-free.
+        self._evidence_retriever: HybridRetriever | None = None
+        self._evidence_retriever_lock = threading.Lock()
 
     async def startup(self) -> None:
         """Ensure the session-store schema at boot (idempotent). Best-effort: a DB-down boot must
@@ -156,6 +175,106 @@ class AgentServices:
     async def resolve_session(self, session_id: str) -> Session:
         return await self.sessions.get(session_id)
 
+    def get_evidence_retriever(self) -> HybridRetriever:
+        """Return the process-wide, integrity-checked retriever, initialized lazily."""
+
+        if self._evidence_retriever is None:
+            with self._evidence_retriever_lock:
+                if self._evidence_retriever is None:
+                    default_corpus = Path(__file__).resolve().parents[1] / "corpus"
+                    corpus_dir = Path(
+                        os.getenv("EVIDENCE_CORPUS_DIR", str(default_corpus))
+                    )
+                    self._evidence_retriever = HybridRetriever(corpus_dir)
+        return self._evidence_retriever
+
+    def _accountability_context(
+        self, session: Session, token: TokenResponse, *, request_url: str
+    ) -> AccountabilityContext:
+        return AccountabilityContext(
+            correlation_id=correlation_id_var.get(),
+            client_id=self.settings.smart_client_id,
+            exercised_scopes=tuple(token.scopes),
+            request_url=request_url,
+            user_id=session.clinician_sub,
+            patient_id=session.patient_id,
+            utc_timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+
+    async def run_graph_turn(
+        self, session: Session, message: str, *, request_url: str
+    ) -> orchestrator_graph.GraphTurnResult:
+        """Run one W2-D2 graph turn with refs-only real guideline retrieval.
+
+        The user message reaches retrieval only if the deterministic builder can reduce it
+        to condition/test terms. A conversational or identifier-shaped message simply gives
+        the worker no evidence request; it is never forwarded to Cohere or another vendor.
+        B2 extraction is intentionally left on the graph's compatibility worker in this
+        integration unit and is mounted by its separately owned unit.
+        """
+
+        token = self._tokens.get(session.session_id)
+        if token is None:
+            raise ValueError("no delegated token cached for this session — re-launch")
+
+        correlation_id = correlation_id_var.get()
+        refs = TurnRefRegistry(correlation_id)
+        evidence_refs: list[str] = []
+        try:
+            query = build_clinical_query(re.split(r"[,;|]+", message))
+        except QueryContractError:
+            pass
+        else:
+            evidence_refs.append(
+                refs.put(
+                    EvidenceSearchRequest(query=query, k=5),
+                    kind="evidence-request",
+                )
+            )
+
+        worker_input = WorkerInput(
+            correlation_id=correlation_id,
+            turn=0,
+            patient_ref=f"session:{session.session_id}",
+            document_refs=[],
+            evidence_refs=evidence_refs,
+            request_kind="previsit_brief",
+        )
+
+        try:
+            retrieval_worker = build_evidence_worker(
+                self.get_evidence_retriever(), refs
+            )
+        except RetrievalUnavailableError:
+            # Retrieval is a soft dependency (§6). Preserve the W1 grounded chart brief
+            # while making the worker degradation explicit in its canonical envelope.
+            async def retrieval_worker(payload: WorkerInput) -> WorkerOutput:
+                return WorkerOutput(
+                    correlation_id=payload.correlation_id,
+                    worker="evidence_retriever",
+                    status="degraded",
+                    artifact_refs=[],
+                    citation_refs=[],
+                    reason_code=None,
+                )
+
+        async def run_brief_pinned() -> BriefResult:
+            return await self.run_brief(
+                session, message, request_url=request_url
+            )
+
+        return await orchestrator_graph.run_graph_turn(
+            run_brief=run_brief_pinned,
+            correlation_id=correlation_id,
+            tracer=self.tracer,
+            accountability=self._accountability_context(
+                session, token, request_url=request_url
+            ),
+            worker_input=worker_input,
+            retrieval_worker=retrieval_worker,
+            ref_registry=refs,
+        )
+
     async def run_brief(self, session: Session, message: str, *, request_url: str) -> BriefResult:
         token = self._tokens.get(session.session_id)
         if token is None:
@@ -168,14 +287,9 @@ class AgentServices:
         # already known (client, exercised scopes, pinned clinician + patient), so the six PHI
         # reads can each be captured as a span. Tracing is a soft dependency (§6) — begun always
         # (a NullTraceSink discards when Langfuse is unconfigured), never affecting serving.
-        accountability = AccountabilityContext(
-            correlation_id=correlation_id_var.get(),
-            client_id=self.settings.smart_client_id,
-            exercised_scopes=tuple(token.scopes),
-            request_url=request_url,
-            user_id=session.clinician_sub,
-            patient_id=session.patient_id,
-            utc_timestamp=datetime.now(timezone.utc).isoformat())
+        accountability = self._accountability_context(
+            session, token, request_url=request_url
+        )
         builder = self.tracer.begin(accountability)
 
         def _record_fhir(name: str, latency_ms: float, result) -> None:

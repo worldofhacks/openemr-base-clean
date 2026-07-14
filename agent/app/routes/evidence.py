@@ -51,6 +51,10 @@ def _get_retriever(request: Request) -> EvidenceRetriever:
     if injected is not None:
         return injected
 
+    factory = getattr(request.app.state, "evidence_retriever_factory", None)
+    if factory is not None:
+        return factory()
+
     global _default_retriever
     if _default_retriever is None:
         with _default_retriever_lock:

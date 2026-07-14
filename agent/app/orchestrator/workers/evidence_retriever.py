@@ -21,7 +21,11 @@ from app.orchestrator.workers.contracts import WorkerCallable
 from app.schemas.citations import EvidenceSnippet
 from app.schemas.retrieval import EvidenceSearchRequest
 from app.schemas.workers import WorkerInput, WorkerOutput
-from corpus.retrieval import RetrievalOutcome, build_clinical_query
+from corpus.retrieval import (
+    RetrievalOutcome,
+    RetrievalUnavailableError,
+    build_clinical_query,
+)
 
 
 WORKER_NAME = "evidence_retriever"
@@ -59,12 +63,25 @@ def build_evidence_worker(
                 re.split(r"[,;|]+", request.query),
                 demographic_strings=demographics,
             )
-            outcome = await run_in_threadpool(
-                retriever.search,
-                query,
-                k=request.k,
-                demographic_strings=demographics,
-            )
+            try:
+                outcome = await run_in_threadpool(
+                    retriever.search,
+                    query,
+                    k=request.k,
+                    demographic_strings=demographics,
+                )
+            except RetrievalUnavailableError:
+                # §6/W2-D4: unavailable is distinct from a healthy empty hit and is a
+                # soft graph degradation. Do not turn a grounded W1 chart brief into a
+                # routing failure merely because guideline augmentation is offline.
+                return WorkerOutput(
+                    correlation_id=payload.correlation_id,
+                    worker=WORKER_NAME,
+                    status="degraded",
+                    artifact_refs=[],
+                    citation_refs=[],
+                    reason_code=None,
+                )
             degraded = degraded or bool(outcome.degraded_reasons)
             for hit in outcome.items:
                 snippet = EvidenceSnippet(

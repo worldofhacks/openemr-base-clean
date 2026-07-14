@@ -4,8 +4,9 @@
 are classified:
   - HARD  (OpenEMR FHIR metadata, Anthropic, session store): if any is down the
     agent cannot serve, so /ready returns 503 and Railway pulls it from rotation.
-  - SOFT  (Langfuse): observability is off the critical path (D13/§6), so a failure
-    is reported as `degraded` but /ready still returns 200.
+  - SOFT  (Langfuse, retrieval index): observability and guideline augmentation are
+    off the W1 critical path (D13/§6), so failures report `degraded` while /ready
+    remains 200.
 
 Probes are injectable (create_app(readiness_checks=...)) so tests exercise the
 hard/soft classification without real network. The defaults below do the real work.
@@ -14,13 +15,16 @@ hard/soft classification without real network. The defaults below do the real wo
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Awaitable, Callable, Literal
 from urllib.parse import urlsplit
 
 import httpx
 
 from app.config import Settings
+from corpus.check_index_manifest import check_index_manifest
 
 Kind = Literal["hard", "soft"]
 
@@ -101,8 +105,38 @@ async def probe_langfuse(settings: Settings) -> DependencyResult:
         return DependencyResult("langfuse", "soft", False, type(exc).__name__)
 
 
+async def probe_retrieval_index(settings: Settings) -> DependencyResult:
+    """Hash-check the committed corpus without initializing either ONNX model.
+
+    Retrieval is a soft dependency: an integrity failure is visible on ``/ready`` but
+    does not pull the W1 chart path from rotation (W2-D4, §6).
+    """
+
+    del settings  # the corpus location is an integration/deploy setting, not a secret
+    default_corpus = Path(__file__).resolve().parents[1] / "corpus"
+    corpus_dir = Path(os.getenv("EVIDENCE_CORPUS_DIR", str(default_corpus)))
+    try:
+        integrity = await asyncio.to_thread(check_index_manifest, corpus_dir)
+    except Exception:  # noqa: BLE001 - readiness must never raise
+        return DependencyResult(
+            "retrieval_index", "soft", False, "integrity_check_failed"
+        )
+    return DependencyResult(
+        "retrieval_index",
+        "soft",
+        integrity.ok,
+        "ok" if integrity.ok else "integrity_check_failed",
+    )
+
+
 def default_readiness_checks() -> list[Probe]:
-    return [probe_openemr_fhir, probe_anthropic, probe_session_store, probe_langfuse]
+    return [
+        probe_openemr_fhir,
+        probe_anthropic,
+        probe_session_store,
+        probe_langfuse,
+        probe_retrieval_index,
+    ]
 
 
 # --- aggregation -----------------------------------------------------------

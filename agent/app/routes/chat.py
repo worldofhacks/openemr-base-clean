@@ -6,14 +6,10 @@ flush → the response carries ONLY the verified, re-rendered content (never raw
 plus the correlation id. The route depends on an injected `services` object (set on
 `app.state.services`) so it is testable without live OpenEMR / Anthropic.
 
-W2-M3 spike (W2_ARCHITECTURE.md §2a): behind the default-OFF `W2_GRAPH_ENABLED` flag, a
-caller may opt into SSE via `Accept: text/event-stream` content negotiation on the same
-POST body. The stream is served from the LangGraph entrypoint (`run_graph_turn`) and
-carries verified `{claim_block, citations[], verdict}` events (W1 §5a shape, CitationV2
-migration is a later ticket) ending in a terminal `done` event. Flag OFF — the default —
-keeps this route bit-identical to W1: same JSON envelope, same error mappings, and the
-graph entrypoint is never invoked. Non-opted callers keep the W1 JSON contract even with
-the flag ON (§2a: "W1 contract unchanged").
+W2_ARCHITECTURE.md §2a: behind the default-OFF `W2_GRAPH_ENABLED` flag, both JSON and SSE
+turns run through the LangGraph entrypoint. `Accept: text/event-stream` changes only the
+presentation of the verified result; non-streaming callers retain the exact W1 JSON
+envelope. Flag OFF keeps the W1 direct path bit-identical and never invokes the graph.
 """
 
 from __future__ import annotations
@@ -80,6 +76,9 @@ def _citations_for(result: BriefResult) -> list[str]:
 class ChatService(Protocol):
     async def resolve_session(self, session_id: str) -> Session: ...
     async def run_brief(self, session: Session, message: str, *, request_url: str) -> BriefResult: ...
+    async def run_graph_turn(
+        self, session: Session, message: str, *, request_url: str
+    ) -> orchestrator_graph.GraphTurnResult: ...
 
 
 def _wants_event_stream(request: Request) -> bool:
@@ -122,6 +121,29 @@ def _sse_stream(result: BriefResult, correlation_id: str) -> Iterator[str]:
     })
 
 
+async def _run_graph(
+    services: ChatService, session: Session, message: str, *, request_url: str
+) -> orchestrator_graph.GraphTurnResult:
+    """Use the production composition-root seam while retaining M3 fake compatibility.
+
+    Frozen graph-spike tests inject a minimal W1 service, so their fallback still calls the
+    request-time module attribute (and remains patchable by the flag-off tripwire). Runtime
+    ``AgentServices`` always supplies the fully wired method.
+    """
+
+    service_runner = getattr(services, "run_graph_turn", None)
+    if service_runner is not None:
+        return await service_runner(session, message, request_url=request_url)
+
+    async def run_brief_pinned() -> BriefResult:
+        return await services.run_brief(session, message, request_url=request_url)
+
+    return await orchestrator_graph.run_graph_turn(
+        run_brief=run_brief_pinned,
+        correlation_id=correlation_id_var.get(),
+    )
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request) -> ChatResponse | StreamingResponse:
     services: ChatService = request.app.state.services
@@ -143,22 +165,22 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse | StreamingRe
             raise HTTPException(status_code=403,
                                 detail="cross-patient request refused — a patient switch needs a fresh launch")
 
-    if _wants_event_stream(request) and orchestrator_graph.graph_enabled():
-        # W2-M3 flag-ON SSE path: the turn runs through the LangGraph entrypoint with
-        # the W1 loop embedded unchanged in its compose worker (W2-D2). Session pin and
-        # refusal mappings above are shared — the graph changes routing, never authZ.
+    if orchestrator_graph.graph_enabled():
+        # W2-D2 flag-ON path: JSON and SSE share one graph result. Session pin and refusal
+        # mappings above remain unchanged — the graph changes routing, never authZ.
         request_url = str(request.url)
+        graph_result = await _run_graph(
+            services, session, req.message, request_url=request_url
+        )
+        result = graph_result.brief
+        if _wants_event_stream(request):
+            return StreamingResponse(
+                _sse_stream(result, correlation_id_var.get()),
+                media_type="text/event-stream",
+            )
+    else:
+        result = await services.run_brief(session, req.message, request_url=str(request.url))
 
-        async def run_brief_pinned() -> BriefResult:
-            return await services.run_brief(session, req.message, request_url=request_url)
-
-        graph_result = await orchestrator_graph.run_graph_turn(
-            run_brief=run_brief_pinned, correlation_id=correlation_id_var.get())
-        return StreamingResponse(
-            _sse_stream(graph_result.brief, correlation_id_var.get()),
-            media_type="text/event-stream")
-
-    result = await services.run_brief(session, req.message, request_url=str(request.url))
     return ChatResponse(
         brief=result.text,
         source=result.source,

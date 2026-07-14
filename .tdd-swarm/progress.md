@@ -266,3 +266,35 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
 - Feature build (STEP B) proceeds off swarm/w2-wave0: W2-M6 schema freeze (unify NormBBox) → documents.py
   ingest+grounding+D10 writeback → graph/composer → eval gate. Retrieval lane (evidence.py/corpus) owned by
   the parallel agent — do not touch.
+
+# ============================================================================
+# STEP B (feature build) — lane split (owner directive): I own B1 schemas + B2
+# ingest/documents/grounding/writeback + the B4 CI-SECURITY workflow file; B3 graph/composer
+# and the B4 eval-HARNESS are HANDED OFF to the parallel agent via docs/week2/W2_B3_B4_HANDOFF.md.
+# Feature work on feat/w2-pipeline-gate (off wave0), merged back to swarm/w2-wave0 per unit.
+
+## B1 — W2-M6 canonical Pydantic v2 schema inventory — review-passed + merged (ea42dcd)
+- The frozen interface contract BOTH downstream lanes build against (§2/D3/D6/D10). Full
+  tdd-swarm discipline (citation contract is safety-critical):
+    - Test froze b184b3c (42 tests, test-authored field/enum snapshot — not an impl golden).
+      Caught the §2 prose miscount: FailureReason is 20 members, not 21 (verified vs §2 list).
+    - Impl d9004ac: 10 new schema files + observability/events.py; NormBBox unified into
+      schemas.extraction (reader re-exports — M4 tests green); HandoffRecord/SupervisorDecision
+      canonical in schemas.handoff (orchestrator re-exports — M3 tests green). K_MAX=20.
+      LogEventEnvelope.attributes = dict[str, scalar|list[scalar]] with single-line ≤256-char
+      strings → structurally rejects nested dicts, multi-line exception bodies, full OCR pages.
+    - Orchestrator re-ran (trust-nothing): 389P/6S; scope = 10 schema files + 2 re-export edits;
+      frozen tests + pyproject byte-untouched; no secrets.
+    - Independent Reviewer FIX_NEEDED: 1 IMPORTANT — CitationV2.page_or_section had min_length=1,
+      rejecting §2a's mandated patient_record page_or_section=null → no chart-fact citation was
+      constructible. 1 MINOR — VitalsWrite non-strict float→Decimal off-path. Confirmed the
+      safety invariants hold (grounding biconditional unbypassable except model_construct;
+      LogEventEnvelope PHI-closed; no caller attribution on VitalsWrite; genuine re-exports).
+    - Fix f39cdfe (one pass, no recursive loop): page_or_section required-but-nullable (missing
+      key still errors; None accepted); VitalsWrite strict=True. Verified: patient_record null
+      citation constructs, float bps rejected. 389P/6S.
+- Pushed to origin/swarm/w2-wave0. UNBLOCKS the retrieval lane (schemas.retrieval defines the
+  evidence.py /evidence/search contract) and B2/B3/B4.
+- Carry-forward note for the composer (handed off): §2a wants guideline/document citations to
+  carry a non-null section/page; the schema permits null broadly (chart-fact case), the
+  composer's render rule enforces completeness at the surface + the §2a regression test.

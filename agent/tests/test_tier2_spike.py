@@ -619,3 +619,139 @@ def test_policy_lint_raises_on_missing_file():
     mod = _spike()
     with pytest.raises(FileNotFoundError):
         mod.lint_policy_doc(POLICY_DOC.parent / "DOES_NOT_EXIST_W2_TIER2_CI_POLICY.md")
+
+
+# ===========================================================================
+# AC-5 (additions) — lint evasion cases being CLOSED (security finding).
+#
+# The frozen AC-5 lint above detects the three-way conjunction only for a
+# narrow set of spellings. Two evasion families defeat it while checking out
+# the exact same attacker-controlled PR code next to a live secret:
+#
+#   (a) EQUIVALENT PR-HEAD-REF SPELLINGS — the checkout leg keys on
+#       github.head_ref / pull_request.head.{sha,ref}, but policy clause 2
+#       covers "any equivalent spelling". A ref of "refs/pull/<n>/head",
+#       "refs/pull/<n>/merge", or github.event.pull_request.merge_commit_sha
+#       all check out fork-controlled PR code just the same, and slip past a
+#       literal-marker matcher.
+#
+#   (b) THE IMPLICIT WRITE-CAPABLE GITHUB_TOKEN — the secret-usage leg keys on
+#       ${{ secrets.* }} / "secrets: inherit". But under pull_request_target
+#       every job implicitly holds a write-capable GITHUB_TOKEN reachable as
+#       ${{ github.token }}. PR-head checkout + github.token usage completes
+#       the exfiltration shape with no "secrets." spelled anywhere.
+#
+# These tests are RED against the current lint (evasion undetected -> no
+# violation reported where one is required). The compliant near-miss
+# dependabot-auto-merge.yml (pull_request_target + secrets, NO PR-code
+# checkout) must STILL pass after the lint is hardened. All fixtures are
+# tmp_path only, never written to .github/workflows/, FAKE secret names only.
+# ===========================================================================
+
+# Equivalent PR-head-ref spellings that still check out attacker PR code but
+# avoid the github.head_ref / pull_request.head.{sha,ref} literals.
+_EQUIVALENT_PR_HEAD_REFS = [
+    "refs/pull/${{ github.event.pull_request.number }}/head",
+    "refs/pull/${{ github.event.pull_request.number }}/merge",
+    "${{ github.event.pull_request.merge_commit_sha }}",
+]
+
+# Violating: pull_request_target + PR-head checkout via ${{ github.head_ref }}
+# (a spelling the current checkout leg ALREADY recognizes) + the write-capable
+# implicit GITHUB_TOKEN as ${{ github.token }}, with NO "secrets." anywhere.
+# This isolates the implicit-token leg: trigger and checkout are already
+# detectable, so the only reason the current lint stays silent is that its
+# secret-usage leg never matches github.token.
+_IMPLICIT_GITHUB_TOKEN_WORKFLOW = """\
+name: synthetic implicit-token violation (test-only, never installed)
+on:
+  pull_request_target:
+    branches: [master]
+jobs:
+  exfiltrable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: use the implicit write-capable token against fork PR code
+        run: gh pr merge --auto "$PR_URL"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+"""
+
+
+@pytest.mark.parametrize(
+    "ref_expr",
+    _EQUIVALENT_PR_HEAD_REFS,
+    ids=["refs_pull_number_head", "refs_pull_number_merge", "merge_commit_sha"],
+)
+def test_lint_fires_on_equivalent_pr_head_ref_spellings_with_secrets(tmp_path, ref_expr):
+    # spec(W2-M24:AC-5)
+    # guards: a checkout leg that only matches github.head_ref /
+    # pull_request.head.{sha,ref} — policy clause 2 covers "any equivalent
+    # spelling", and refs/pull/<n>/head, refs/pull/<n>/merge, and
+    # merge_commit_sha each check out attacker-controlled PR code just the
+    # same. RED today: these spellings are unrecognized, so the three-way
+    # conjunction never fires and the exfiltration shape passes unflagged.
+    mod = _spike()
+    violating = tmp_path / "violating_workflow.yml"
+    violating.write_text(_VIOLATING_WORKFLOW.replace("__REF_EXPR__", ref_expr))
+    compliant = tmp_path / "compliant_workflow.yml"
+    compliant.write_text(_COMPLIANT_PULL_REQUEST_TRIGGER)
+
+    violations = list(mod.lint_workflows([violating, compliant]))
+    assert len(violations) >= 1
+    # The finding must identify the offending file — and only that file.
+    assert "violating_workflow.yml" in str(violations)
+    assert "compliant_workflow.yml" not in str(violations)
+
+
+def test_lint_fires_on_implicit_github_token_under_pull_request_target(tmp_path):
+    # spec(W2-M24:AC-5)
+    # guards: a secret-usage leg that only matches ${{ secrets.* }} /
+    # "secrets: inherit" — under pull_request_target every job holds a
+    # write-capable GITHUB_TOKEN reachable as ${{ github.token }}, so a
+    # PR-head checkout + github.token usage exfiltrates with NO "secrets."
+    # anywhere. RED today: the secrets leg misses github.token entirely, so
+    # the conjunction stays silent on a genuinely dangerous workflow.
+    mod = _spike()
+    # Premise: the fixture never spells "secrets." — the leg the current lint
+    # keys on is genuinely absent, so a firing lint MUST detect github.token.
+    assert "secrets." not in _IMPLICIT_GITHUB_TOKEN_WORKFLOW
+    assert "${{ github.token }}" in _IMPLICIT_GITHUB_TOKEN_WORKFLOW
+
+    violating = tmp_path / "violating_workflow.yml"
+    violating.write_text(_IMPLICIT_GITHUB_TOKEN_WORKFLOW)
+
+    violations = list(mod.lint_workflows([violating]))
+    assert len(violations) >= 1
+    assert "violating_workflow.yml" in str(violations)
+
+
+def test_dependabot_near_miss_still_passes_after_evasion_hardening():
+    # spec(W2-M24:AC-5)
+    # guards: the risk that closing the two evasion gaps above over-broadens
+    # the lint and reds the compliant near-miss the ticket is forbidden to
+    # modify — dependabot-auto-merge.yml is pull_request_target + secrets but
+    # checks out NO PR code in any spelling, so the three-way conjunction must
+    # stay unsatisfied. GREEN now and MUST stay GREEN after the lint is
+    # hardened for the equivalent-ref and implicit-token legs.
+    mod = _spike()
+    near_miss = WORKFLOWS_DIR / "dependabot-auto-merge.yml"
+    assert near_miss.exists()
+    text = near_miss.read_text()
+    # Premise: still pull_request_target + secrets, and no PR-head checkout in
+    # ANY equivalent spelling (nor the implicit-token path) — so hardening the
+    # detector for those spellings must not change this workflow's verdict.
+    assert "pull_request_target" in text
+    assert "secrets." in text
+    for spelling in _EQUIVALENT_PR_HEAD_REFS + [
+        "${{ github.head_ref }}",
+        "${{ github.event.pull_request.head.sha }}",
+        "${{ github.event.pull_request.head.ref }}",
+        "${{ github.token }}",
+    ]:
+        assert spelling not in text, f"near-miss unexpectedly contains {spelling!r}"
+
+    assert list(mod.lint_workflows([near_miss])) == []

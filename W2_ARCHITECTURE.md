@@ -54,9 +54,12 @@ pinned judge — with per-category thresholds and a committed baseline, so a gra
 prompt or behavior regression fails CI, not just a code regression. Scorer self-tests
 and a pre-submission regression drill prove the gate can go red before graders try to make
 it. Owned tradeoffs stand un-softened: Cohere is a vendor seam, LangGraph is new surface
-kept thin, OCR fidelity degrades to UNSUPPORTED rather than wrong, and scopes widen from
-read-only to read + narrow create — said plainly. The W1 thesis is unchanged: the model
-drafts, deterministic checks decide — Week 2 extends it to pixels.
+kept thin, OCR fidelity degrades to UNSUPPORTED rather than wrong, scopes widen from
+read-only to read + narrow create, and — because the OpenEMR write surface enforces no
+patient/encounter ownership, scope ceiling, vital range, or idempotency server-side — those
+containment controls live in the agent and gate the write path (W2-D9) — said plainly. The
+W1 thesis is unchanged: the model drafts, deterministic checks decide — Week 2 extends it
+to pixels.
 
 ---
 
@@ -86,6 +89,28 @@ drafts, deterministic checks decide — Week 2 extends it to pixels.
 >    MVP requires a REPLACEMENT SMART client registration** (W1+W2 scope union,
 >    authorization_code+refresh, swap SMART_CLIENT_ID/SECRET, admin-enable, disable the
 >    old client after cutover — E9 lesson). Staff ACLs must permit patients/docs write.
+
+> ## Post-audit revision (2026-07-13 — write-surface controls, cites W2-D9)
+> Source: a separate read-only adversarial re-audit of the write/upload surface
+> (W2_AUDIT.md findings W2-F12..F23; decision W2-D9). It proved OpenEMR's standard write
+> routes enforce, on create, **no** server-side launch-patient/encounter ownership
+> (W2-F13), **no** registered-scope ceiling (W2-F12), **no** category ACL (W2-F14), **no**
+> vital physiological range (W2-F15), **no** clinical attribution (W2-F16), and **no**
+> idempotency (W2-F18); and that disabling a client does **not** revoke its live access
+> tokens (W2-F17). The write **transport** decision (W2-D1) is unchanged — no
+> client-supplied FHIR CRUD exists — but the earlier "one build-time checklist item, no
+> finding blocks" posture is superseded: **the write path is sound only because it is gated
+> behind mandatory agent-side controls** (patient-pin + encounter-ownership preflight,
+> exact-scope provisioning + startup granted-scope assertion, fixed category-id + ACL,
+> vital-range bounding, no caller-supplied author, the idempotency ledger, and a
+> token-revoking cutover). These are folded into §4/§5/§6a below and threaded into the plan
+> (W2-OA3/M8/M11/W2-1). Two precision corrections carried here (not editing the errata
+> block above): the document-download **500 is raw-bytes-passed-as-`BinaryFileResponse`
+> filename, not a CSRF-key defect** (W2-F9) — the FHIR `DocumentReference/:uuid →
+> Binary/:uuid` read-back stands regardless; and a **GET is not a guarantee of no DB
+> mutation** — metadata/service-construction GETs can backfill UUIDs with table writes
+> (W2-F21), so any "read-only" claim distinguishes "no HTTP write method" from "no DB
+> write."
 
 ## §1 System overview
 
@@ -402,6 +427,18 @@ never degrades across turns (UC-W2-4).
 - Scope delta said plainly: read-only → read + narrow create (`api:oemr` document/vital
   scopes; the W2-F4 client-enable step is a build-blocking provisioning checklist item —
   the expected first-run failure is a 401 on first write if skipped).
+- **Write-side containment boundary (W2-D9; the third owned injection/authority crossing).**
+  The OpenEMR write routes do **not** validate launch-patient/encounter ownership on create
+  and the server patient-access check is a stub (W2-F13 — W1 F-S.2's "the server won't stop
+  you, so the agent must" discipline carried forward from reads to writes), and a
+  registered read scope is not an effective write ceiling (W2-F12). The agent is therefore
+  the sole enforcement point: every write is gated behind (a) the **pinned-session
+  patient-match + encounter-ownership preflight** (a supplied `encounter_id` must belong to
+  the pinned patient, verified before enqueue), (b) a **startup exact-scope assertion** that
+  refuses to write if the granted scope set differs from the expected set, and (c) writes to
+  a **provisioned fixed category id** (never a bare path, which can leave a document
+  uncategorized/accessible — W2-F14). Cross-patient/mismatched-encounter attempts are
+  refused and negative-tested (§5, §7a).
 
 ## §4a Data model & authority ledger (PRD: owner, lineage, access, validation per type)
 
@@ -434,6 +471,10 @@ lineage via the atomic content-hash constraint (W2-D1). One owner per type, stat
 | EHR write 401 (missing scope) | failed(writeback_failed); artifact retained in job state; runbook → W2-F4 one-time client-enable step |
 | EHR write fails mid-sequence (5xx/timeout) | Per-leg state + write ledger; retry re-executes only the incomplete leg; never duplicates |
 | Round-trip re-read mismatch | failed(writeback_verify_failed); logged; investigate before retry |
+| Cross-patient / mismatched-encounter write attempt (W2-F13) | Refused pre-queue at POST /documents — `patient_id`≠pinned or `encounter_id` not owned by the pinned patient → typed 4xx (`patient_mismatch`/`encounter_mismatch`), nothing enqueued; the server does not enforce this, the agent does; negative-tested (§7a) |
+| Out-of-range vital value (W2-F15) | The REST vital route bypasses OpenEMR's range validator, so the agent bounds every vitals-class value to a physiological range before POST; out-of-range → field is **artifact-only, never written as a vital** (`writeback.skipped(vital_out_of_range)`) |
+| Unexpected granted OAuth scope (W2-F12) | Startup exact-scope assertion — granted set ≠ expected set → **refuse to write** (`writeback.refused(unexpected_scope)`), fail readiness for the write path; registered scope is not a server-side ceiling |
+| Oversized / malformed / wrong-type upload (W2-F19) | Agent validates `$_FILES` error, size (≤10 MB), page count (≤20), and exact MIME before the native call and returns a controlled 4xx — the native upload skips these checks and returns an empty 404 on reject |
 | Schema violation from VLM | Hard reject (schema is the contract); per-field logging; schema_valid guards |
 | Grounding disagreement (OCR/text vs VLM) | Field renders UNSUPPORTED + "verify against source document" + overlay region |
 | Junk embedded text layer | Density sanity check → OCR fallback path |
@@ -517,8 +558,14 @@ latency), `retrieval.unavailable(reason)`, `rerank.executed` (model+version, lat
 `worker.handoff` (HandoffRecord), `writeback.created` (record type, lineage ids),
 `writeback.failed(leg, reason)`, `writeback.skipped(no_encounter)`,
 `writeback.skipped(unit_mismatch)` *(added 2026-07-13 — W2-D1 dated note)*,
+`writeback.skipped(vital_out_of_range)` *(added 2026-07-13 — W2-D9 / W2-F15)*,
+`writeback.refused(unexpected_scope)` *(added 2026-07-13 — W2-D9 / W2-F12)*,
 `writeback.verify.failed`, `job.reconciled(worker_restart)`, `encounter.summary` (§6),
-`eval.run.outcome` (per category), `breaker.state.changed` (dependency, state).
+`eval.run.outcome` (per category), `breaker.state.changed` (dependency, state). The
+pre-queue write-side refusals surface as typed `DocumentStatus.FailureReason` /
+POST-time 4xx values `patient_mismatch` and `encounter_mismatch` *(added 2026-07-13 —
+W2-D9 / W2-F13)* alongside the existing `unsupported_media_type` /
+`size_or_page_cap_exceeded` upload rejects.
 
 **CI pipeline per PR (extends the W1 eval gate):** build → ruff lint + mypy typecheck →
 pytest with coverage → **W1 eval suite (`agent/evals/`, unchanged cases — shared-path
@@ -636,7 +683,10 @@ per run.
   not-found / disagreement); **coordinate-space conversion** (both reading paths yield the
   same NormBBox for the same word); chunker + manifest license/figure-strip check; citation
   builder (incomplete-citation rejection); content-hash idempotency + write ledger; breaker
-  state machine; **retrieval query builder + outbound PHI screen**; **the 5 rubric scorers**
+  state machine; **retrieval query builder + outbound PHI screen**; **the write-side
+  containment controls (W2-D9)** — encounter-ownership preflight, startup exact-scope
+  assertion, vital-range bound, and no-caller-supplied-author (guards: the OpenEMR write
+  surface enforcing none of these server-side, W2-F12/F13/F15/F16); **the 5 rubric scorers**
   (known-fail fixtures — guards: permanently-green gate).
 - **Integration-tested (fixtures + recorded stubs, no live APIs in CI — PRD):** full
   ingestion-to-answer path on fixture documents (clean scan, degraded scan, born-digital,
@@ -645,7 +695,9 @@ per run.
   supervisor-worker contract tests (enum membership + ref resolvability); OpenAPI contract
   tests; writeback path against a mocked documents/vitals API including partial-write
   retry (ledger) and the **round-trip re-read gate**; cross-patient upload/status/page
-  fetch → refused (leak tests).
+  fetch → refused (leak tests) plus the write-side negative cases —
+  mismatched-`encounter_id`, oversized/malformed upload → controlled 4xx, and out-of-range
+  vital → artifact-only (W2-D9 / W2-F13/F15/F19).
 - **Golden-set evaluated (agent behavior):** the 50 boolean-rubric cases per §7, two tiers.
 - **Not tested, and why:** live VLM output-quality drift (nondeterministic vendor surface —
   mitigated by grounding + the Tier-2 live runs, not unit tests); Cohere rerank internals
@@ -664,7 +716,13 @@ per run.
   bound the risk; version logged per trace against score drift; CI never depends on it.
 - **The write path is a new risk class:** bounded append-only + idempotent + lineage +
   re-read verification; stated plainly (W2-D1). Scopes widened read-only → read + narrow
-  create; said, not hidden.
+  create; said, not hidden. **The adversarial re-audit (W2-D9) sharpened this: the OpenEMR
+  write surface enforces no server-side patient/encounter ownership (W2-F13), scope ceiling
+  (W2-F12), category ACL (W2-F14), vital range (W2-F15), attribution (W2-F16), or
+  idempotency (W2-F18), and client-disable does not revoke live tokens (W2-F17) — so the
+  agent is the sole containment point.** The mitigation is the §4 write-side containment
+  boundary + the §5 refuse/skip rows + the idempotency ledger + a token-revoking cutover;
+  each is negative-tested (§7a). This is the write path's honest, un-softened risk owning.
 - **Corpus is deliberately three documents:** small-and-applicable per the PRD; manifest
   makes additions one-line; do-not-ingest list + figure-strip rule prevent licensing traps
   (W2-R2).

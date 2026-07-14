@@ -1,13 +1,18 @@
-"""LangGraph skeleton — supervisor + two stub workers behind a default-OFF flag (W2-M3).
+"""B3 LangGraph topology — supervisor, two stub workers, and a composer shell.
 
-W2-D2 locks LangGraph as the router while the W1 direct loop (`loop.py`) survives
-UNCHANGED inside a worker node: the graph's compose hop awaits the injected `run_brief`
-callable and passes its `BriefResult` through byte-identical (AC-3). The graph state is
-constructed per turn and discarded at turn end — no LangGraph checkpointer
-(W2_ARCHITECTURE.md §2, locked-decision). Every hop emits a strict `HandoffRecord`
-(closed enums, §2); the per-turn step budget (§2 working value 8) terminates any
-routing loop with a terminal `reason_code=step_budget_exceeded` record surfacing as the
-W1-canonical deterministic refusal — never a hang.
+W2-D2 locks LangGraph as the router. The supervisor routes by state readiness: missing
+extraction output -> intake extractor; missing evidence output -> evidence retriever;
+both present -> composer; composed answer -> done. Budget exhaustion -> refuse. The two
+workers call clearly named stub functions. The composer shell accepts verified-fact,
+evidence-snippet, and citation lanes as refs while the B3/B4 handoff is pending, then
+delegates unchanged to the W1 direct loop (AC-3). No real extraction or composer
+verification is implemented here.
+
+Graph state is constructed per turn and discarded at turn end — no LangGraph
+checkpointer (W2_ARCHITECTURE.md §2). Every hop emits a strict `HandoffRecord` (closed
+enums, §2); the per-turn step budget (§2 working value 8) terminates any routing loop
+with a terminal `reason_code=step_budget_exceeded` record surfacing as the W1-canonical
+deterministic refusal — never a hang.
 
 Flag: env var `W2_GRAPH_ENABLED`, read per call (unset/default = OFF, "1" = ON).
 Promotion into `app/config.py` settings is a later feature ticket. With the flag OFF
@@ -38,6 +43,7 @@ from app.observability.trace import (
     hash_identifier,
     sanitize_request_url,
 )
+from app.orchestrator import composer
 # _DEFAULT_REFUSAL_TEXT is the W1-canonical refusal message (loop.py owns it; importing
 # the constant keeps the graph's budget refusal byte-identical to W1's, never a fork).
 from app.orchestrator.loop import _DEFAULT_REFUSAL_TEXT, BriefResult
@@ -57,6 +63,8 @@ STEP_BUDGET = 8
 
 _COMPOSER_NAME = "composer"
 _SUPERVISOR_NAME = "supervisor"
+_EXTRACT_NODE = "intake_extractor"
+_RETRIEVE_NODE = "evidence_retriever"
 
 RunBrief = Callable[[], Awaitable[BriefResult]]
 SupervisorPolicy = Callable[..., SupervisorDecision]
@@ -114,9 +122,14 @@ def _record(correlation_id: str, turn: int, decision: SupervisorDecision,
     )
 
 
-def _default_policy(state: GraphState) -> SupervisorDecision:
-    """The skeleton routing policy: visit both stub workers once, compose via the W1
-    loop, then finish. Replaced by real routing when W2-M9/M14 land."""
+def select_next_decision(state: GraphState) -> SupervisorDecision:
+    """Select the next topology hop from completion state.
+
+    Request-kind classification waits for the shared worker handoff. Within one planned
+    B3 turn, a missing extraction ref routes to the intake stub, a missing retrieval ref
+    routes to the evidence stub, completed worker lanes route to the composer shell, and
+    a composed brief terminates the graph.
+    """
     if state.get("extracted_ref") is None:
         return SupervisorDecision.ROUTE_EXTRACT
     if state.get("retrieved_ref") is None:
@@ -142,7 +155,7 @@ async def run_graph_turn(*, run_brief: RunBrief, correlation_id: str,
     """THE single graph entrypoint (chat.py's flag-ON path goes through it; the AC-4
     flag-OFF tripwire monkeypatches it). Builds the per-turn graph, runs it to a
     terminal decision, and discards the state — no checkpointer, nothing persisted."""
-    policy: SupervisorPolicy = supervisor if supervisor is not None else _default_policy
+    policy: SupervisorPolicy = supervisor if supervisor is not None else select_next_decision
     # Per-hop span timings for the post-hoc trace replay (name, start_ns, end_ns, hop).
     hop_spans: list[tuple[str, int, int, HandoffRecord]] = []
     turn_started_ns = time.time_ns()
@@ -178,36 +191,66 @@ async def run_graph_turn(*, run_brief: RunBrief, correlation_id: str,
             return _terminal(state, SupervisorDecision.DONE, ReasonCode.TURN_COMPLETE)
         return {"next_decision": decision}
 
-    async def _worker_hop(state: GraphState, worker_module,
-                          decision: SupervisorDecision, state_key: str) -> dict:
+    async def _worker_hop(
+        state: GraphState,
+        *,
+        runner: Callable[..., Awaitable[str]],
+        worker_name: str,
+        decision: SupervisorDecision,
+        state_key: str,
+        composer_lane: str,
+    ) -> dict:
         turn = state["turn"]
         input_ref = _state_ref(correlation_id, turn)
         started_ns = time.time_ns()
-        output_ref = await worker_module.run(
+        output_ref = await runner(
             correlation_id=correlation_id, turn=turn, input_ref=input_ref)
         record = _record(correlation_id, turn, decision,
                          _REASON_FOR_DECISION[decision],
-                         worker=worker_module.WORKER_NAME,
+                         worker=worker_name,
                          input_ref=input_ref, output_ref=output_ref)
-        hop_spans.append((f"graph.worker.{worker_module.WORKER_NAME}",
+        hop_spans.append((f"graph.worker.{worker_name}",
                           started_ns, time.time_ns(), record))
-        return {"handoffs": [record], "turn": turn + 1, state_key: output_ref}
+        return {
+            "handoffs": [record],
+            "turn": turn + 1,
+            state_key: output_ref,
+            composer_lane: (output_ref,),
+        }
 
     async def extract_node(state: GraphState) -> dict:
-        return await _worker_hop(state, stub_extractor,
-                                 SupervisorDecision.ROUTE_EXTRACT, "extracted_ref")
+        return await _worker_hop(
+            state,
+            runner=stub_extractor.run_intake_extractor_stub,
+            worker_name=stub_extractor.WORKER_NAME,
+            decision=SupervisorDecision.ROUTE_EXTRACT,
+            state_key="extracted_ref",
+            composer_lane="verified_facts",
+        )
 
     async def retrieve_node(state: GraphState) -> dict:
-        return await _worker_hop(state, stub_retriever,
-                                 SupervisorDecision.ROUTE_RETRIEVE, "retrieved_ref")
+        return await _worker_hop(
+            state,
+            runner=stub_retriever.run_evidence_retriever_stub,
+            worker_name=stub_retriever.WORKER_NAME,
+            decision=SupervisorDecision.ROUTE_RETRIEVE,
+            state_key="retrieved_ref",
+            composer_lane="evidence_snippets",
+        )
 
     async def compose_node(state: GraphState) -> dict:
-        # The W1 direct loop, embedded UNCHANGED inside a worker node (W2-D2): the
-        # graph awaits it and passes its BriefResult through byte-identical (AC-3).
+        # The shell receives all three future composition lanes, but deliberately does
+        # not implement §5 verification until W2_B3_B4_HANDOFF.md defines the shared
+        # types. It passes the W1 BriefResult through byte-identical (W2-D2 / AC-3).
         turn = state["turn"]
         input_ref = _state_ref(correlation_id, turn)
         started_ns = time.time_ns()
-        brief = await run_brief()
+        brief = await composer.compose_answer_shell(
+            verified_facts=state["verified_facts"],
+            evidence_snippets=state["evidence_snippets"],
+            citations=state["citations"],
+            run_brief=run_brief,
+        )
         output_ref = f"trace:{correlation_id}/hop-{turn}/{_COMPOSER_NAME}/brief"
         record = _record(correlation_id, turn, SupervisorDecision.COMPOSE_ANSWER,
                          ReasonCode.WORKERS_COMPLETE, worker=_COMPOSER_NAME,
@@ -218,25 +261,31 @@ async def run_graph_turn(*, run_brief: RunBrief, correlation_id: str,
     def route(state: GraphState) -> str:
         decision = state["next_decision"]
         if decision is SupervisorDecision.ROUTE_EXTRACT:
-            return "extract"
+            return _EXTRACT_NODE
         if decision is SupervisorDecision.ROUTE_RETRIEVE:
-            return "retrieve"
+            return _RETRIEVE_NODE
         if decision is SupervisorDecision.COMPOSE_ANSWER:
-            return "compose"
+            return _COMPOSER_NAME
         return END  # refuse/done — the supervisor already emitted the terminal record
 
     builder = StateGraph(GraphState)
     builder.add_node(_SUPERVISOR_NAME, supervisor_node)
-    builder.add_node("extract", extract_node)
-    builder.add_node("retrieve", retrieve_node)
-    builder.add_node("compose", compose_node)
+    builder.add_node(_EXTRACT_NODE, extract_node)
+    builder.add_node(_RETRIEVE_NODE, retrieve_node)
+    builder.add_node(_COMPOSER_NAME, compose_node)
     builder.add_edge(START, _SUPERVISOR_NAME)
     builder.add_conditional_edges(
         _SUPERVISOR_NAME, route,
-        {"extract": "extract", "retrieve": "retrieve", "compose": "compose", END: END})
-    builder.add_edge("extract", _SUPERVISOR_NAME)
-    builder.add_edge("retrieve", _SUPERVISOR_NAME)
-    builder.add_edge("compose", _SUPERVISOR_NAME)
+        {
+            _EXTRACT_NODE: _EXTRACT_NODE,
+            _RETRIEVE_NODE: _RETRIEVE_NODE,
+            _COMPOSER_NAME: _COMPOSER_NAME,
+            END: END,
+        },
+    )
+    builder.add_edge(_EXTRACT_NODE, _SUPERVISOR_NAME)
+    builder.add_edge(_RETRIEVE_NODE, _SUPERVISOR_NAME)
+    builder.add_edge(_COMPOSER_NAME, _SUPERVISOR_NAME)
     graph = builder.compile()  # no checkpointer — per-turn state only (§2)
 
     initial: GraphState = {
@@ -246,6 +295,9 @@ async def run_graph_turn(*, run_brief: RunBrief, correlation_id: str,
         "next_decision": None,
         "extracted_ref": None,
         "retrieved_ref": None,
+        "verified_facts": (),
+        "evidence_snippets": (),
+        "citations": (),
         "brief": None,
     }
     # Our own §2 budget always terminates first; LangGraph's recursion limit is set
@@ -257,12 +309,13 @@ async def run_graph_turn(*, run_brief: RunBrief, correlation_id: str,
     result = GraphTurnResult(brief=brief, handoffs=tuple(final_state["handoffs"]))
 
     if tracer is not None and accountability is not None:
-        _emit_graph_trace(tracer, accountability, result, hop_spans,
+        _emit_graph_trace(tracer, accountability, correlation_id, result, hop_spans,
                           turn_started_ns, time.time_ns())
     return result
 
 
 def _emit_graph_trace(tracer: RequestTracer, acct: AccountabilityContext,
+                      correlation_id: str,
                       result: GraphTurnResult,
                       hop_spans: list[tuple[str, int, int, HandoffRecord]],
                       started_ns: int, ended_ns: int) -> None:
@@ -283,23 +336,29 @@ def _emit_graph_trace(tracer: RequestTracer, acct: AccountabilityContext,
         client = sink._get_client()
         from langfuse import propagate_attributes  # lazy, mirroring the sink
 
-        decisions = [record.supervisor_decision.value for record in result.handoffs]
+        serialized_handoffs = [
+            record.model_dump(mode="json") for record in result.handoffs
+        ]
+        decisions = [record["supervisor_decision"] for record in serialized_handoffs]
         metadata = {
             "client_id": acct.client_id,
             "exercised_scopes": list(acct.exercised_scopes),
-            "correlation_id": acct.correlation_id,
+            # The graph argument is canonical for the records, parent trace, and session.
+            # Never split one turn across IDs if an integration supplies a stale context.
+            "correlation_id": correlation_id,
             "request_url": sanitize_request_url(acct.request_url),
             "patient_hash": hash_identifier(acct.patient_id),
             "utc_timestamp": acct.utc_timestamp,
             "hop_count": len(result.handoffs),
             "decisions": decisions,
+            "handoffs": serialized_handoffs,
             "source": result.brief.source,
             "degraded": result.brief.degraded,
             "latency_ms": (ended_ns - started_ns) / 1_000_000,
         }
         with propagate_attributes(
                 user_id=hash_identifier(acct.user_id),
-                session_id=acct.correlation_id,
+                session_id=correlation_id,
                 trace_name="graph-turn",
                 tags=[f"client:{acct.client_id}", f"source:{result.brief.source}"],
                 metadata=metadata):
@@ -307,7 +366,7 @@ def _emit_graph_trace(tracer: RequestTracer, acct: AccountabilityContext,
                     name="graph.supervisor", as_type="span", metadata=metadata,
                     end_on_exit=False) as supervisor_span:
                 for name, span_start_ns, span_end_ns, record in hop_spans:
-                    hop = client.start_observation(
+                    hop = supervisor_span.start_observation(
                         name=name, as_type="span",
                         metadata={
                             "latency_ms": (span_end_ns - span_start_ns) / 1_000_000,

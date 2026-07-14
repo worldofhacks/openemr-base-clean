@@ -38,7 +38,9 @@ dependencies = [
     # installed at the image layer (Dockerfile: tesseract-ocr, tesseract-ocr-eng).
     "pytesseract>=0.3.13",
     # ONNX embeddings + local cross-encoder reranker (Apache-2.0); brings
-    # onnxruntime (MIT) — the torch-free execution path (W2-D4).
+    # onnxruntime (MIT) — the torch-free execution path (W2-D4). Transitive
+    # tqdm is "MPL-2.0 AND MIT" — ALLOWLIST: dual-licensed, file-level weak
+    # copyleft only, unmodified upstream wheel; not GPL/AGPL (W2-M1 DoD).
     "fastembed>=0.8,<0.9",
 ]
 

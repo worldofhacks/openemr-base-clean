@@ -19,6 +19,11 @@ dependencies = [
     # (clinician, patient) pin; lazy-imported in the composition root so it is never a hard
     # import dependency for the route tests (which inject a fake service).
     "asyncpg>=0.29",
+    # W2 orchestration framework (W2-R1, W2-D2 — binding). Supervisor + worker graph
+    # lives in app/orchestrator/graph.py (W2-M3); the W1 direct loop runs unchanged
+    # inside a worker node. Pre-staged on swarm/w2-wave0 so W2-M1 (container) and
+    # W2-M3 (graph) keep exclusive file scopes within the wave.
+    "langgraph>=1.2,<2",
 ]
 
 [project.optional-dependencies]

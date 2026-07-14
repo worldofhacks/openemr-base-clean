@@ -110,3 +110,4 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
 # EMPTY (W2-OA2 pending — M24 measures on the local agent key and notes it); host tesseract installed
 # for the M4 local loop; per-ticket isolation via `openemr-cmd worktree add <branch> -b --base
 # swarm/w2-wave0` (no stack started; no git hooks in this clone).
+- Orchestrator pre-staged langgraph>=1.2,<2 in agent/pyproject.toml on swarm/w2-wave0 (W2-R1 binding; latest 1.2.9) so W2-M1 solely owns pyproject/Dockerfile within wave 0a and W2-M3 never touches the dep manifest — same-wave file-scope exclusivity preserved.

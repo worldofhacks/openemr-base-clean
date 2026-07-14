@@ -26,6 +26,7 @@ from app.auth.scopes import requested_scope_string
 from app.auth.smart_client import SmartClient, TokenResponse, generate_pkce
 from app.config import Settings
 from app.evidence.packet import build_evidence_packet
+from app.ingestion.migrations import apply_document_migrations
 from app.llm.cost import DailyCostCap
 from app.llm.provider import AnthropicLLMProvider
 from app.middleware.correlation import correlation_id_var
@@ -112,6 +113,10 @@ class AgentServices:
             idle_timeout_s=settings.session_idle_timeout_seconds,
             turn_cap=settings.session_turn_cap,
         )
+        self._document_connect = lambda: _pg_connect(
+            settings.session_store_dsn.get_secret_value()
+        )
+        self._document_schema_ready = not settings.w2_document_runtime_enabled
         # The delegated token + PKCE verifier stay in-process (per-instance): the token is a
         # bearer credential (encrypting it into the pin row is the documented next step, §5
         # known-limitations). A restart therefore keeps the durable pin but requires a re-launch
@@ -142,12 +147,18 @@ class AgentServices:
         """Ensure the session-store schema at boot (idempotent). Best-effort: a DB-down boot must
         not crash the app — the hard readiness probe reports it and requests fail closed (§6)."""
         ensure = getattr(self.sessions, "ensure_schema", None)
-        if ensure is None:
-            return
-        try:
-            await ensure()
-        except Exception:  # noqa: BLE001 - startup must not crash on a transient DB outage
-            pass
+        if ensure is not None:
+            try:
+                await ensure()
+            except Exception:  # noqa: BLE001 - readiness owns transient DB failures
+                pass
+        if self.settings.w2_document_runtime_enabled:
+            try:
+                await apply_document_migrations(self._document_connect)
+            except Exception:  # noqa: BLE001 - hard readiness reports schema failure
+                self._document_schema_ready = False
+            else:
+                self._document_schema_ready = True
 
     # --- SMART launch → pinned session ---------------------------------------
 

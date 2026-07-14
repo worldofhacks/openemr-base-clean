@@ -456,5 +456,6 @@ def test_runtime_declares_retrieval_dependency_and_packages_corpus():
 
     assert '"rank-bm25>=' in pyproject
     assert "COPY corpus ./corpus" in dockerfile
+    assert "COPY migrations ./migrations" in dockerfile
     assert "libgomp1" in dockerfile
     assert "tesseract-ocr" in dockerfile and "tesseract-ocr-eng" in dockerfile

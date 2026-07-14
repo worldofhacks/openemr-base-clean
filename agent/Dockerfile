@@ -21,6 +21,7 @@ RUN apt-get update \
 COPY pyproject.toml ./
 COPY app ./app
 COPY corpus ./corpus
+COPY migrations ./migrations
 RUN pip install --no-cache-dir .
 
 # W2-M1 capacity probe (operator CLI, run in-container via `railway ssh`):

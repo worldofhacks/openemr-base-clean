@@ -22,7 +22,11 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.auth.scopes import requested_scope_string
+from app.auth.scopes import (
+    assert_w2_scopes_granted,
+    requested_scope_string,
+    requested_w2_scope_string,
+)
 from app.auth.smart_client import SmartClient, TokenResponse, generate_pkce
 from app.config import Settings
 from app.evidence.packet import build_evidence_packet
@@ -167,11 +171,16 @@ class AgentServices:
         verifier, challenge, _method = generate_pkce()
         state = secrets.token_urlsafe(24)
         self._pkce[state] = verifier
-        scope = requested_scope_string()
+        scope = (
+            requested_w2_scope_string()
+            if self.settings.w2_document_runtime_enabled
+            else requested_scope_string()
+        )
         if launch is None:
             # Standalone launch: request patient context so OpenEMR presents a patient selector
             # (EHR launch instead carries a launch token → build_authorize_url adds `launch` scope).
-            scope += " launch/patient"
+            if "launch/patient" not in scope.split():
+                scope += " launch/patient"
         return self.smart.build_authorize_url(
             state=state, code_challenge=challenge, scope=scope, launch=launch
         )
@@ -182,6 +191,8 @@ class AgentServices:
         if verifier is None:
             raise ValueError("unknown or replayed OAuth state")
         token = await self.smart.exchange_code(code=code, code_verifier=verifier)
+        if self.settings.w2_document_runtime_enabled:
+            assert_w2_scopes_granted(token.scopes)
         patient_id = token.patient or ""
         if not patient_id:
             raise ValueError(

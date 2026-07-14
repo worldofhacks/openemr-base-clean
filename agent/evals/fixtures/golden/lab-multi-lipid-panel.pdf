@@ -1,0 +1,119 @@
+%PDF-1.4
+% Synthetic Week 2 fixture
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 1168 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+14 TL
+(SYNTHETIC TEST RECORD - NOT FOR CLINICAL USE) Tj
+T*
+(WEEK 2 GOLDEN LAB REPORT) Tj
+T*
+(Patient: ZZPHI-lab-multi-lipid-panel) Tj
+T*
+(MRN: MRN-SYN-lab-multi-lipid-panel) Tj
+T*
+(Source document ID: fixture:lab-multi-lipid-panel) Tj
+T*
+(CANARY SENTENCE: Synthetic record lab-multi-lipid-panel; no real person.) Tj
+T*
+() Tj
+T*
+(LAB RESULTS) Tj
+T*
+(Result 1) Tj
+T*
+(Test name: Total Cholesterol) Tj
+T*
+(Value: 242) Tj
+T*
+(Unit: mg/dL) Tj
+T*
+(Reference range: <200) Tj
+T*
+(Collection date: 2026-06-07) Tj
+T*
+(Abnormal flag: H) Tj
+T*
+() Tj
+T*
+(Result 2) Tj
+T*
+(Test name: HDL Cholesterol) Tj
+T*
+(Value: 38) Tj
+T*
+(Unit: mg/dL) Tj
+T*
+(Reference range: >=40) Tj
+T*
+(Collection date: 2026-06-07) Tj
+T*
+(Abnormal flag: L) Tj
+T*
+() Tj
+T*
+(Result 3) Tj
+T*
+(Test name: LDL Cholesterol) Tj
+T*
+(Value: 165) Tj
+T*
+(Unit: mg/dL) Tj
+T*
+(Reference range: <100) Tj
+T*
+(Collection date: 2026-06-07) Tj
+T*
+(Abnormal flag: H) Tj
+T*
+() Tj
+T*
+(Result 4) Tj
+T*
+(Test name: Triglycerides) Tj
+T*
+(Value: 195) Tj
+T*
+(Unit: mg/dL) Tj
+T*
+(Reference range: <150) Tj
+T*
+(Collection date: 2026-06-07) Tj
+T*
+(Abnormal flag: H) Tj
+T*
+() Tj
+T*
+(END OF SYNTHETIC REPORT) Tj
+T*
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000036 00000 n 
+0000000085 00000 n 
+0000000142 00000 n 
+0000000212 00000 n 
+0000000338 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1558
+%%EOF

@@ -1,0 +1,98 @@
+%PDF-1.4
+% Synthetic Week 2 fixture
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 445 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+14 TL
+(SYNTHETIC TEST RECORD - NOT FOR CLINICAL USE) Tj
+T*
+(WEEK 2 GOLDEN LAB REPORT) Tj
+T*
+(Patient: ZZPHI-lab-multipage-page2-citations) Tj
+T*
+(MRN: MRN-SYN-lab-multipage-page2-citations) Tj
+T*
+(Source document ID: fixture:lab-multipage-page2-citations) Tj
+T*
+(CANARY SENTENCE: Synthetic record lab-multipage-page2-citations; no real person.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Clinical result table continues on page 2.) Tj
+T*
+ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 441 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+14 TL
+(SYNTHETIC TEST RECORD - NOT FOR CLINICAL USE) Tj
+T*
+(WEEK 2 GOLDEN LAB REPORT - PAGE 2) Tj
+T*
+(Source document ID: fixture:lab-multipage-page2-citations) Tj
+T*
+() Tj
+T*
+(LAB RESULTS) Tj
+T*
+(Result 1) Tj
+T*
+(Test name: Magnesium) Tj
+T*
+(Value: 1.6) Tj
+T*
+(Unit: mg/dL) Tj
+T*
+(Reference range: 1.7-2.2) Tj
+T*
+(Collection date: 2026-06-17) Tj
+T*
+(Abnormal flag: L) Tj
+T*
+() Tj
+T*
+(END OF SYNTHETIC REPORT) Tj
+T*
+ET
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000036 00000 n 
+0000000085 00000 n 
+0000000148 00000 n 
+0000000218 00000 n 
+0000000344 00000 n 
+0000000840 00000 n 
+0000000966 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+1458
+%%EOF

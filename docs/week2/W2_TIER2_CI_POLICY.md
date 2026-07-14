@@ -34,7 +34,8 @@ and is compliant. The violation is the **three-way conjunction**:
 `pull_request_target` trigger **and** PR-head-code checkout **and** secrets
 access. Known compliant near-miss: `.github/workflows/dependabot-auto-merge.yml`
 uses `pull_request_target` **and** `secrets.AUTO_MERGE_APP_PRIVATE_KEY` but
-performs **no checkout of PR code**, so it satisfies the conjunction and passes.
+performs **no checkout of PR code**, so the three-way conjunction is not
+completed and the workflow is compliant.
 
 ## Clause 3 — Forks run Tier 1 only
 

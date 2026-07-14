@@ -17,7 +17,10 @@ Also hosts the two W2-M24 policy lints consumed by W2-M20:
 
 * ``lint_workflows`` — read-only over ``.github/workflows/*.yml``; a violation
   is the full three-way conjunction: ``pull_request_target`` trigger AND
-  checkout of PR-head code AND explicit secrets usage (W2 §6a).
+  checkout of PR-head code (any equivalent spelling, incl. ``refs/pull/<n>/
+  {head,merge}`` and ``merge_commit_sha``) AND secrets access (explicit
+  ``secrets.*`` / ``secrets: inherit`` or the implicit write-capable
+  ``github.token``) (W2 §6a).
 * ``lint_policy_doc`` — asserts the six frozen clauses of
   ``docs/week2/W2_TIER2_CI_POLICY.md``.
 
@@ -276,13 +279,23 @@ def render_report(report: Mapping[str, Any]) -> str:
 # AC-5 — workflow policy lint (read-only; three-way conjunction, W2 §6a)
 # ---------------------------------------------------------------------------
 
+# Policy clause 2 covers "any equivalent spelling" of a PR-code checkout —
+# not just the github.head_ref / pull_request.head.{sha,ref} literals.
+# merge_commit_sha and the refs/pull/<n>/{head,merge} ref paths all check out
+# attacker-controlled PR code the same way (security review, W2-D8 / §6a).
 _PR_HEAD_REF_MARKERS = (
     "github.head_ref",
     "pull_request.head.sha",
     "pull_request.head.ref",
+    "pull_request.merge_commit_sha",
 )
+_REFS_PULL_REF = re.compile(r"refs/pull/.+/(?:head|merge)\b")
 _SECRETS_EXPRESSION = re.compile(r"\$\{\{[^}]*\bsecrets\.")
 _SECRETS_INHERIT = re.compile(r"(?m)^\s*secrets\s*:\s*inherit\b")
+# Under pull_request_target every job implicitly holds a write-capable
+# GITHUB_TOKEN reachable as ${{ github.token }} — using it counts as secrets
+# access for the conjunction (no "secrets." spelling required).
+_GITHUB_TOKEN_EXPRESSION = re.compile(r"\$\{\{[^}]*\bgithub\.token\b")
 
 
 def _has_pull_request_target_trigger(data: Mapping[Any, Any]) -> bool:
@@ -298,7 +311,9 @@ def _has_pull_request_target_trigger(data: Mapping[Any, Any]) -> bool:
 
 
 def _is_pr_head_ref(ref: Any) -> bool:
-    return isinstance(ref, str) and any(m in ref for m in _PR_HEAD_REF_MARKERS)
+    if not isinstance(ref, str):
+        return False
+    return any(m in ref for m in _PR_HEAD_REF_MARKERS) or bool(_REFS_PULL_REF.search(ref))
 
 
 def _pr_head_checkout_refs(data: Mapping[Any, Any]) -> list[str]:
@@ -329,13 +344,22 @@ def _pr_head_checkout_refs(data: Mapping[Any, Any]) -> list[str]:
 
 
 def _references_secrets(raw_text: str) -> bool:
-    return bool(_SECRETS_EXPRESSION.search(raw_text) or _SECRETS_INHERIT.search(raw_text))
+    """True when the workflow text uses secret material. Only consulted after
+    the ``pull_request_target`` trigger leg holds, so the implicit
+    write-capable GITHUB_TOKEN (``${{ github.token }}``) counts alongside
+    explicit ``${{ secrets.* }}`` / ``secrets: inherit`` spellings."""
+    return bool(
+        _SECRETS_EXPRESSION.search(raw_text)
+        or _SECRETS_INHERIT.search(raw_text)
+        or _GITHUB_TOKEN_EXPRESSION.search(raw_text)
+    )
 
 
 def lint_workflows(paths: Iterable[Path | str]) -> list[str]:
     """Lint workflow files for the forbidden three-way conjunction:
-    ``pull_request_target`` trigger AND checkout of PR-head code AND explicit
-    secrets usage. Empty result == compliant. Read-only.
+    ``pull_request_target`` trigger AND checkout of PR-head code (any
+    equivalent spelling) AND secrets access (explicit or the implicit
+    ``github.token``). Empty result == compliant. Read-only.
 
     Each leg alone (or any two) is compliant — e.g. dependabot-auto-merge.yml
     (trigger + secrets, no PR-code checkout) must pass.

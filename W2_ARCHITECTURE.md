@@ -58,6 +58,35 @@ kept thin, OCR fidelity degrades to UNSUPPORTED rather than wrong, and scopes wi
 read-only to read + narrow create — said plainly. The W1 thesis is unchanged: the model
 drafts, deterministic checks decide — Week 2 extends it to pixels.
 
+---
+
+> ## Verification errata (2026-07-14 — dated revision; probe-verified facts, no decision changes)
+> Source: W2-F1 independent live verification (W2_AUDIT.md, findings W2-F7..F11; W2-D1
+> addendum). W2-F1 CONFIRMED — route-level 404s on FHIR POSTs with maximal write scopes.
+> Corrections binding on the sections below:
+> 1. **Upload contract (§2a, §3):** `POST /api/patient/:pid/document` returns **HTTP 200
+>    body `true` with NO document id** (DocumentRestController.php:120), not 201. The
+>    document id is discovered via collection GET keyed on unique filename/content-hash;
+>    `attach_and_extract` and the job's `writeback.created` lineage record account for
+>    this discovery step.
+> 2. **Read-back path (§3 re-read verification):** the standard REST document download
+>    returns **500** in this stack (CSRF-key defect via DocumentService::getFile — known
+>    issue, not ours to fix). The verified round-trip read-back is the **FHIR
+>    projection**: `DocumentReference/:uuid → Binary/:uuid`, proven byte-exact (SHA-256
+>    match). Vitals round-trip is fully proven through `GET /fhir/Observation?category=
+>    vital-signs` (15 resources from one test vital).
+> 3. **$docref wording (§3 discrepancy note):** describe as "server-generated CCD
+>    persistence" — it DOES write internally; the true claim is "no client-supplied FHIR
+>    create path," and the CapabilityStatement's `DocumentReference.create` declaration
+>    is a generator artifact (maps every POST to create — RestControllerHelper.php:445);
+>    never trust it (W2-F7).
+> 4. **Provisioning (§2a, W2-F4 resolved):** minimum scope surface `api:oemr
+>    user/document.crs user/vital.crus user/Observation.rs` (+ `user/DocumentReference.rs
+>    user/Binary.read` for read-back). **Clients cannot gain scopes post-registration:
+>    MVP requires a REPLACEMENT SMART client registration** (W1+W2 scope union,
+>    authorization_code+refresh, swap SMART_CLIENT_ID/SECRET, admin-enable, disable the
+>    old client after cutover — E9 lesson). Staff ACLs must permit patients/docs write.
+
 ## §1 System overview
 
 ```

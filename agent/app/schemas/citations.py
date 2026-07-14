@@ -49,13 +49,20 @@ class CitationV2(BaseModel):
     ``strict`` is intentionally OFF so ``source_type`` accepts its closed enum value by
     string (``"uploaded_document"``); an unknown string (``"wikipedia"``) still rejects,
     keeping the vocabulary closed.
+
+    ``page_or_section`` is REQUIRED (the key must be present — an incomplete citation is
+    invalid) but NULLABLE: §2a's binding W1→CitationV2 migration maps every chart-fact
+    (``source_type=patient_record``) citation with ``page_or_section=null`` (a record id
+    has no page/section). Guideline/uploaded_document citations carry a real section/page;
+    the composer's render rule (incomplete citation = does not render) enforces that at
+    the surface, not this schema.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     source_type: CitationSourceType
     source_id: str = Field(min_length=1)
-    page_or_section: str = Field(min_length=1)
+    page_or_section: str | None
     field_or_chunk_id: str = Field(min_length=1)
     quote_or_value: str = Field(min_length=1)
 

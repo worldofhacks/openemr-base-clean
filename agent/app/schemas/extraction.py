@@ -246,9 +246,13 @@ class VitalsWrite(BaseModel):
     ``user``/``group`` attribution fields — caller attribution is stripped (W2-F16), so
     a request body cannot spoof the write performer. ``note`` here is generated
     provenance, not an extracted field.
+
+    ``strict`` is ON so the numeric legs cannot silently accept a lossy ``float`` even if
+    a caller builds this off the grounded ``IntakeVitals`` path — the exact Decimal reading
+    is preserved to the write (§2/W2-D10; reviewer hardening).
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     bps: Optional[Decimal] = None
     bpd: Optional[Decimal] = None

@@ -34,6 +34,7 @@ class DelegatedPrincipal:
     clinician_sub: str
     patient_id: str
     access_token: SecretStr
+    patient_fhir_id: str | None = None
 
 
 class OpenEMRWriteError(Exception):
@@ -63,7 +64,9 @@ class OpenEMRRestClient:
 
     def _authorize_patient(self, patient_id: str) -> None:
         if patient_id != self._principal.patient_id:
-            raise OpenEMRWriteError("delegated principal is bound to a different patient")
+            raise OpenEMRWriteError(
+                "delegated principal is bound to a different patient"
+            )
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -86,8 +89,8 @@ class OpenEMRRestClient:
             "POST",
             f"{self._base}/api/patient/{patient_id}/document",
             headers=self._headers(),
-            data={"category": category_path},
-            files={"file": (filename, content, content_type)},
+            params={"path": category_path},
+            files={"document": (filename, content, content_type)},
         )
         # This fork returns JSON true and no id; discovery by marker/hash follows.
         body = response.json()
@@ -115,7 +118,7 @@ class OpenEMRRestClient:
         )
         body = response.json()
         if isinstance(body, dict):
-            value = body.get("id") or body.get("vital_id")
+            value = body.get("vid") or body.get("id") or body.get("vital_id")
             return str(value) if value else None
         return None
 
@@ -129,7 +132,9 @@ class OpenEMRRestClient:
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
                     response = await client.request(method, url, **kwargs)
         except httpx.TimeoutException as exc:
-            raise OpenEMRWriteError("timeout after request dispatch", ambiguous=True) from exc
+            raise OpenEMRWriteError(
+                "timeout after request dispatch", ambiguous=True
+            ) from exc
         except httpx.HTTPError as exc:
             raise OpenEMRWriteError(type(exc).__name__, ambiguous=True) from exc
         if response.status_code < 200 or response.status_code >= 300:

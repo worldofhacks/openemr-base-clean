@@ -1,10 +1,29 @@
 # W2-M24 Implementation Report — Tier-2 timing/cost/quota spike + fork-PR secret policy
 
-Ticket: `tickets/W2-M24.md` · Branch: `ticket/w2-m24-tier2-spike` · Freeze SHA: `849cbcc`
+Ticket: `tickets/W2-M24.md` · Branch: `ticket/w2-m24-tier2-spike` · Freeze SHA: `0154bd7`
+
+**Acceptance status:** **REVIEW-PASSED / DONE against the frozen acceptance contract**
+at `0154bd7`. The final implementation commit is `da09b6e`; the frozen-test hash is
+unchanged and the orchestrator re-ran every local gate successfully (`313 passed,
+6 skipped`). AC-7 live evidence from the repaired CLI is still pending: this repair
+made no provider call and claims no new live result. The prior measured planning result
+is retained as historical timing/token/cost evidence: **$0.345 and ~9.3 minutes for the
+projected 50-case run**. Its former `viable` quota verdict remains withdrawn.
+
+**DOCUMENTED RESIDUAL / deferred follow-up:** adversarial review flagged a `git -C`
+PR-head command-form edge in the `pull_request_target` workflow lint. Per owner direction,
+hardening beyond the frozen cases is explicitly deferred to the later CI-security task
+(recommend folding it into W2-M20 alongside the already-recorded run:-body scan and bare
+`pull/N/head` relaxation follow-ups); no additional evasion analysis belongs to this
+spike. This linter is accepted only against its frozen contract at `0154bd7`, not as a
+general proof over every shell-command equivalent. **The owner has confirmed (W2 Wave 0
+resume direction): this residual is ACCEPTED as a deferred CI-security follow-up, and the
+frozen tests at `0154bd7` are the acceptance contract for W2-M24.** Ticket status:
+review-passed.
 
 ## What changed
 
-Two new files, exactly the ticket's file scopes:
+Ticket-scoped implementation surfaces:
 
 1. **`agent/ops/spike_tier2.py`** (NEW) — operator measurement CLI + policy lints:
    - `extrapolate(units)` — 50× the mean per-unit aggregate of the three-call
@@ -17,20 +36,31 @@ Two new files, exactly the ticket's file scopes:
    - `build_report(units, *, rate_limit_headroom, daily_quota_statement,
      max_cost_usd, max_seconds)` — full report shape; verdict ∈
      {`viable`, `stop_escalate`} **computed by the module** against the 50-case
-     projection on both budget axes (cost AND runtime); the W2-OA2 local-key
-     substitution note is module-computed, never caller-supplied.
+     projection on independent cost and runtime axes plus fail-closed structured
+     quota evidence. Both `sufficiency.daily` and `sufficiency.spend` must be exactly
+     `sufficient`, and `statement` must be a nonblank string;
+     missing/malformed/unknown/insufficient evidence stops escalation. One exact,
+     narrowly named legacy synthetic positive string remains compatible with the
+     earlier immutable test contract; arbitrary prose is never interpreted. The W2-OA2
+     local-key substitution note is module-computed, never caller-supplied.
    - `render_report(report)` — whitelisted-fields-only text surface, plus a
      defense-in-depth scrub (secret-named env values incl. DSN password
      segments, `sk-ant-*` tokens, `Bearer` values → `[REDACTED]`).
-   - `lint_workflows(paths)` — read-only; fires **only** on the three-way
-     conjunction `pull_request_target` trigger + `actions/checkout` of PR-head
-     code (`head.sha`/`head.ref`/`github.head_ref`) + explicit secrets usage
-     (`${{ secrets.* }}` or `secrets: inherit`). Structural YAML parse
-     (PyYAML — already installed via the declared `langgraph` →
-     `langchain-core` chain; `pyproject.toml` untouched; handles the PyYAML
-     `on:`→`True` key quirk). Passes all 55 real workflows including the
-     `dependabot-auto-merge.yml` near-miss (trigger + secrets, no PR-code
-     checkout); a checkout with no `ref` override is base-repo code and passes.
+   - `lint_workflows(paths)` — read-only; fires **only** when one job has the
+     three-way conjunction `pull_request_target` trigger + PR-head execution +
+     credential access. PR-head detection covers normalized action casing,
+     dot/bracket GitHub expressions, an explicit fork `repository` with a default or
+     literal `ref`, equivalent pull refs, and `gh pr checkout`. Ordered shell parsing
+     handles command chains and wrappers (`cd … &&`, `env NAME=…`), carries PR fetch
+     aliases across steps, and recognizes checkout/switch/reset sinks. Credential
+     detection covers dot/bracket `secrets` and `github.token`, `secrets: inherit`, and
+     the default/nonblank token consumed by `actions/checkout` even without an explicit
+     expression. Structural YAML traversal ignores comments; executable parsing ignores
+     echoed examples. Base checkouts, the unprivileged `pull_request` trigger, an
+     anonymous credential-free PR job, and an isolated secret-only job remain compliant.
+     PyYAML is already installed via the declared `langgraph` → `langchain-core` chain;
+     `pyproject.toml` is untouched (including handling PyYAML's `on:`→`True` key quirk).
+     All 55 real workflows remain green, including `dependabot-auto-merge.yml`.
    - `lint_policy_doc(path)` — asserts the six frozen clauses; missing file →
      `FileNotFoundError`; a stub doc yields ≥ 6 findings.
    - Stdlib-only synthetic image generation: 5×7 bitmap font rasterized to an
@@ -41,20 +71,23 @@ Two new files, exactly the ticket's file scopes:
      pages to exercise the multi-page multiplier), measures per call via
      `client.messages.with_raw_response.create` (wall time, `usage` tokens,
      `retries_taken`, `anthropic-ratelimit-*` headers), prices from the
-     published per-MTok table, prints aggregates only.
+     published per-MTok table, prints aggregates only. Every VLM and answer call uses a
+     stable explicit temperature; every judge call explicitly uses temperature `0`.
+     Per-minute headers produce structured daily/spend `unknown` evidence and can never
+     self-certify those independent quota axes.
 
-2. **`docs/week2/W2_TIER2_CI_POLICY.md`** (NEW — the allowed new-doc exception)
+2. **`docs/week2/W2_TIER2_CI_POLICY.md`** (existing M24 deliverable; unchanged by repair)
    — freezes all six clauses (see AC-6 below). No binding doc, no
    `.github/workflows/` file, no `W2_DEVLOG.md` touched.
 
 ## Gate evidence
 
-`bash .tdd-swarm/run-local-gates.sh tickets/W2-M24.md 849cbcc`:
+`bash .tdd-swarm/run-local-gates.sh tickets/W2-M24.md 0154bd7`:
 
 ```
 GATE syntax: PASS
 GATE unit-tests: PASS
-266 passed, 6 skipped, 1 warning in 1.23s
+313 passed, 6 skipped, 1 warning in 1.31s
 GATE frozen-tests: PASS
 spec-lint: W2-M24:AC-7 -> live-measure evidence row (exempt from frozen-test mapping)
 GATE spec-lint: PASS
@@ -65,16 +98,18 @@ GATE no-skip-markers: PASS
 ALL GATES PASS
 ```
 
-- 266 passed = 236 prior + 30 new frozen W2-M24 tests; 6 skips are the
+- 313 passed = 236 prior + 77 frozen W2-M24 cases; 6 skips are the
   standing env-based self-deselects (RUN_LIVE live tests ×5, playwright ui ×1).
   Note: the recorded main baseline (238 passed, 5 skipped) differs by
   environment only — `openemr-base-clean`'s venv runs the ui smoke test
   (playwright installed there); no test was removed or weakened.
-- Frozen-test integrity: `git diff 849cbcc..HEAD -- agent/tests/` is empty.
+- Frozen-test integrity: `git diff 0154bd7..HEAD -- agent/tests/` is empty;
+  `agent/tests/test_tier2_spike.py` SHA-256 remains
+  `830575e92703b2103569ebfb35483700c518a9aec67102402c1d8bbd96d737fa`.
 
 ## AC coverage
 
-- **AC-1..AC-6**: green via the 30 frozen tests in
+- **AC-1..AC-6 plus reviewed W2-D8/§6a/§7 guards**: green via all 77 cases in
   `agent/tests/test_tier2_spike.py` (offline, provider calls faked/synthetic).
 - **AC-6 doc clauses** (all six, machine-linted + independent term floor):
   1. No repository secrets to forks.
@@ -87,9 +122,14 @@ ALL GATES PASS
   5. Same-repo PRs: least-privilege environments with approval; no secret
      echo; no artifact retention of secret material.
   6. STOP escalation — quota/runtime/cost failure never reduces the 50 cases.
-- **AC-7**: live-measure evidence below.
+- **AC-7**: pending a fresh orchestrator live run; historical measurements are retained
+  below with their verdict withdrawn.
 
-## [live-measure] AC-7 — real 5-unit run against the Anthropic API
+## Historical AC-7 run — retained measurements, verdict withdrawn
+
+**Not current AC-7 evidence.** The following run predates the fail-closed quota and
+explicit-temperature repair. No new provider call was made during this implementation
+turn. A fresh orchestrator run is required before AC-7 can be reported complete.
 
 **W2-OA2 SUBSTITUTION NOTE (required):** measured with the **local agent key
 from `agent/.env`** (env var name `ANTHROPIC_API_KEY`) because the fork repo
@@ -97,7 +137,7 @@ from `agent/.env`** (env var name `ANTHROPIC_API_KEY`) because the fork repo
 action **W2-OA2 pending** (noted, not blocking). No secret value was read into
 this report, printed, or committed; `agent/.env` is gitignored.
 
-Run: 2026-07-14, `cd agent && .venv/bin/python -m ops.spike_tier2`
+Historical run: 2026-07-14, `cd agent && .venv/bin/python -m ops.spike_tier2`
 (5 units of the real three-call shape; unit 1 = 2-page VLM extraction, so the
 multi-page multiplier was exercised; runtime-generated synthetic non-clinical
 PNGs — "SYNTHETIC INTAKE FORM - NOT A REAL PATIENT / NAME: TESTY MCTESTFACE /
@@ -138,13 +178,14 @@ DOB: 2099-01-01 ..."; raw provider outputs discarded, aggregates only).
 - output-tokens: **2,000,000 / 2,000,000 per min remaining**
 - combined tokens: **12,000,000 / 12,000,000 per min remaining**
 
-### Daily-quota statement (derived from observed limits)
+### Corrected quota interpretation
 
-No daily-cap header is exposed by the API; all observed limits are per-minute.
-The 50-case projection consumes at minimum **~0.02 minute(s)** of quota at the
-observed per-minute limits (160 calls vs 10,000 req/min; 50,250 input tok vs
-10M/min; 12,950 output tok vs 2M/min) — a single required run, and even many
-PR-gate runs per day, fit with enormous margin.
+No daily-cap or account-spend evidence was exposed; all observed headers were
+per-minute pacing limits. The historical CLI incorrectly inferred that daily capacity
+fit from those headers. Under the repaired structured contract these same observations
+produce `{"daily": "unknown", "spend": "unknown"}` and fail closed. The historical
+~0.02-minute pacing calculation may describe rate-limit throughput, but it proves
+neither daily provider capacity nor account spend capacity.
 
 ### 50-case extrapolation (50 × mean per-unit aggregate, formula per W2-D8/§7)
 
@@ -156,33 +197,34 @@ PR-gate runs per day, fit with enormous margin.
 | output tokens | **12,950** |
 | cost | **$0.345** |
 
-### Named max per-run budget + verdict
+### Named max per-run budget + corrected status
 
 - **Budget (named):** `MAX_RUN_COST_USD = $5.00`, `MAX_RUN_SECONDS = 1200`
   (20 min — PR-blocking CI ceiling).
-- **Verdict: `viable`** — projection fits both axes with ~14× cost margin and
-  ~2.1× runtime margin. (Had it not fit, the locked rule applies: STOP
-  escalation to the owner as a dependency problem — never a reduction of the
-  50 cases or a gate bypass.)
+- Historical cost/runtime projections fit their two budgets, but the old
+  **`viable` verdict is withdrawn**: daily and spend sufficiency were unknown, and the
+  calls did not explicitly pin the now-required temperatures. Current status is
+  **AC-7 pending fresh live measurement**. The locked path is STOP escalation — never a
+  reduction of the 50 cases or a gate bypass.
 
 ## Spike findings (should feed W2-M20 planning)
 
-1. **The retired "$4/run" figure was ~12× too high for this shape/model** —
-   the measured bound is **$0.345/run** on `claude-sonnet-4-6` at
+1. **Historical planning result:** the retired "$4/run" figure was ~12× above this
+   sampled shape/model — the old measured projection was **$0.345/run** on
+   `claude-sonnet-4-6` at
    representative token sizes. Even a 10× richer real-eval token profile
    (longer forms, fuller rubrics) stays under the $5 budget.
-2. **Runtime, not cost or quota, is the binding axis** — ~9.3 min sequential
+2. **Among the two measured per-run budgets, runtime was tighter than cost** — ~9.3 min sequential
    projection against a 20-min ceiling leaves only ~2.1× margin, and per-call
    latency variance is real (VLM p95 9.2 s vs p50 3.9 s — a slow-tail run
    drifts toward 12–15 min). Recommendation for W2-M20: run the 50 cases with
    modest concurrency (even 4-way brings the wall time to ~2.5 min and the
    per-minute quota supports far more), and set the CI job timeout to the
    named 20-min budget, not to the mean.
-3. **Quota is a non-issue at this key's tier** — 10,000 req/min and 10M input
-   tok/min observed; the full gate uses <1% of one minute's quota. No daily
-   cap surfaced in headers. Caveat: this is the LOCAL key's tier (W2-OA2
-   pending); if the org key placed in repo secrets is a different tier, the
-   quota reading must be re-checked — same CLI re-runs in minutes.
+3. **Per-minute pacing had ample headroom, but daily and spend quota remain unknown.**
+   The old run observed 10,000 req/min and 10M input tok/min; that cannot certify a
+   daily run or account spend ceiling. The repaired CLI reports both structured axes as
+   unknown and stop-escalates unless independent evidence marks each sufficient.
 4. **Zero SDK retries observed (amplification 1.0)** — but the sample is
    small; W2-M20 should keep the amplification term in its budget math rather
    than assuming 1.0 (the extrapolator applies it automatically when retries
@@ -203,6 +245,18 @@ PR-gate runs per day, fit with enormous margin.
   change (W2-M1-owned) and no new dependency.
 - **Verdict + substitution note computed in-module** — a caller-supplied
   verdict would be a self-grading report (pinned by the frozen tests).
+- **Quota evidence is structured and fail-closed** — only a nonblank string statement
+  plus exact lowercase daily and spend sufficiency can contribute to viability. The one
+  pre-existing synthetic string is preserved by an exact compatibility constant; no
+  narrative keyword inference.
+- **Workflow lint follows job-local executable dataflow** — parsed YAML removes
+  comments; normalized bracket expressions/action casing cover equivalent GitHub
+  contexts; ordered shell parsing tracks PR fetch destinations into checkout, switch,
+  or reset sinks across steps and recognizes `gh pr checkout`. Checkout's default token
+  counts as credential access, while isolated anonymous and secret-only jobs are not
+  combined into a false finding.
+- **Temperatures are explicit constants** — stable VLM/answer settings on every call;
+  judge temperature exactly `0` as bound by W2-D8.
 - **Render surface is whitelist-only + scrubbed** — headers/env values never
   enter the report dict; the scrub is belt-and-braces for future edits.
 - **Budget defaults named as module constants** (`MAX_RUN_COST_USD`,

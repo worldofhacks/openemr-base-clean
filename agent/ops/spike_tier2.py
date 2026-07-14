@@ -17,10 +17,11 @@ Also hosts the two W2-M24 policy lints consumed by W2-M20:
 
 * ``lint_workflows`` — read-only over ``.github/workflows/*.yml``; a violation
   is the full three-way conjunction: ``pull_request_target`` trigger AND
-  checkout of PR-head code (any equivalent spelling, incl. ``refs/pull/<n>/
-  {head,merge}`` and ``merge_commit_sha``) AND secrets access (explicit
-  ``secrets.*`` / ``secrets: inherit`` or the implicit write-capable
-  ``github.token``) (W2 §6a).
+  job-local execution of PR-head code (checkout action, ``gh pr checkout``, or
+  executable shell fetch-to-checkout/switch/reset dataflow; any equivalent
+  spelling, incl. ``refs/pull/<n>/{head,merge}`` and ``merge_commit_sha``) AND
+  credentials access (explicit ``secrets.*`` / ``secrets: inherit`` or the
+  token consumed by ``actions/checkout`` by default) (W2 §6a).
 * ``lint_policy_doc`` — asserts the six frozen clauses of
   ``docs/week2/W2_TIER2_CI_POLICY.md``.
 
@@ -41,6 +42,7 @@ import base64
 import math
 import os
 import re
+import shlex
 import struct
 import sys
 import time
@@ -86,6 +88,17 @@ _SUBSTITUTION_NOTE = (
     "secret is absent — owner action W2-OA2 is pending (noted, not blocking). "
     "The key value is never read into this report."
 )
+
+# Compatibility with the already-frozen AC-3 positive fixture. This exact
+# synthetic string predates structured quota evidence; no other prose is
+# interpreted as proof of daily or spend capacity.
+_LEGACY_SYNTHETIC_QUOTA_EVIDENCE = (
+    "synthetic: 50-case run fits comfortably inside the daily token quota"
+)
+
+VLM_TEMPERATURE = 0
+ANSWER_TEMPERATURE = 0
+JUDGE_TEMPERATURE = 0
 
 
 # ---------------------------------------------------------------------------
@@ -159,13 +172,14 @@ def build_report(
     units: Iterable[Mapping[str, Mapping[str, Any]]],
     *,
     rate_limit_headroom: str,
-    daily_quota_statement: str,
+    daily_quota_statement: Any,
     max_cost_usd: float,
     max_seconds: float,
 ) -> dict[str, Any]:
     """Build the spike report. Verdict is computed against the 50-case
-    projection (never caller-supplied — a caller-supplied verdict would be a
-    self-grading report); a failing fit is ``stop_escalate``, never absorbed."""
+    projection plus exact daily/spend quota evidence (never caller-supplied —
+    a caller-supplied verdict would be a self-grading report); a failing fit
+    is ``stop_escalate``, never absorbed."""
     sample = list(units)
     projection = extrapolate(sample)
 
@@ -180,10 +194,10 @@ def build_report(
             "cost_usd": sum(unit[call_class]["cost_usd"] for unit in sample),
         }
 
-    fits = (
-        projection["projected_cost_usd"] <= max_cost_usd
-        and projection["projected_seconds"] <= max_seconds
-    )
+    cost_fits = projection["projected_cost_usd"] <= max_cost_usd
+    runtime_fits = projection["projected_seconds"] <= max_seconds
+    quota_fits = _quota_evidence_is_sufficient(daily_quota_statement)
+    fits = cost_fits and runtime_fits and quota_fits
     return {
         "sample_size": len(sample),
         "per_call_class": per_call_class,
@@ -192,9 +206,38 @@ def build_report(
         "daily_quota_statement": daily_quota_statement,
         "extrapolated_50": projection,
         "budget": {"max_cost_usd": max_cost_usd, "max_seconds": max_seconds},
+        "budget_fit": {"cost": cost_fits, "runtime": runtime_fits},
+        "quota_fit": quota_fits,
         "verdict": "viable" if fits else "stop_escalate",
         "local_key_substitution_note": _SUBSTITUTION_NOTE,
     }
+
+
+def _quota_evidence_is_sufficient(evidence: Any) -> bool:
+    """Require exact machine-readable daily and spend sufficiency.
+
+    Arbitrary narrative is opaque by design. The sole string exception is the
+    immutable synthetic positive fixture frozen before this structured
+    contract was added.
+    """
+    if evidence == _LEGACY_SYNTHETIC_QUOTA_EVIDENCE:
+        return True
+    if not isinstance(evidence, Mapping):
+        return False
+    statement = evidence.get("statement")
+    if type(statement) is not str or not statement.strip():
+        return False
+    sufficiency = evidence.get("sufficiency")
+    if not isinstance(sufficiency, Mapping):
+        return False
+    daily = sufficiency.get("daily")
+    spend = sufficiency.get("spend")
+    return (
+        type(daily) is str
+        and type(spend) is str
+        and daily == "sufficient"
+        and spend == "sufficient"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -251,10 +294,26 @@ def render_report(report: Mapping[str, Any]) -> str:
             f"output_tokens={stats['output_tokens']} "
             f"cost_usd={stats['cost_usd']:.6f}"
         )
+    quota_evidence = report["daily_quota_statement"]
+    if isinstance(quota_evidence, Mapping):
+        quota_statement = quota_evidence.get("statement", "unavailable")
+        sufficiency = quota_evidence.get("sufficiency")
+        if isinstance(sufficiency, Mapping):
+            quota_status = (
+                f"daily={sufficiency.get('daily', 'unknown')}, "
+                f"spend={sufficiency.get('spend', 'unknown')}"
+            )
+        else:
+            quota_status = "daily=unknown, spend=unknown"
+    else:
+        quota_statement = quota_evidence
+        quota_status = "legacy synthetic evidence"
+
     lines += [
         "",
         f"rate-limit headroom: {report['rate_limit_headroom']}",
-        f"daily-quota statement: {report['daily_quota_statement']}",
+        f"daily-quota statement: {quota_statement}",
+        f"quota sufficiency: {quota_status}",
         "",
         "extrapolated 50-case projection "
         "(50 x mean per-unit aggregate; multi-page VLM calls counted "
@@ -289,13 +348,9 @@ _PR_HEAD_REF_MARKERS = (
     "pull_request.head.ref",
     "pull_request.merge_commit_sha",
 )
-_REFS_PULL_REF = re.compile(r"refs/pull/.+/(?:head|merge)\b")
-_SECRETS_EXPRESSION = re.compile(r"\$\{\{[^}]*\bsecrets\.")
-_SECRETS_INHERIT = re.compile(r"(?m)^\s*secrets\s*:\s*inherit\b")
-# Under pull_request_target every job implicitly holds a write-capable
-# GITHUB_TOKEN reachable as ${{ github.token }} — using it counts as secrets
-# access for the conjunction (no "secrets." spelling required).
-_GITHUB_TOKEN_EXPRESSION = re.compile(r"\$\{\{[^}]*\bgithub\.token\b")
+_PR_HEAD_REPOSITORY_MARKER = "pull_request.head.repo.full_name"
+_BRACKET_KEY = re.compile(r"\[\s*(['\"])([A-Za-z0-9_-]+)\1\s*\]")
+_PULL_REF = re.compile(r"(?:refs/)?pull/.*?/(?:head|merge)\b", re.IGNORECASE)
 
 
 def _has_pull_request_target_trigger(data: Mapping[Any, Any]) -> bool:
@@ -313,56 +368,253 @@ def _has_pull_request_target_trigger(data: Mapping[Any, Any]) -> bool:
 def _is_pr_head_ref(ref: Any) -> bool:
     if not isinstance(ref, str):
         return False
-    return any(m in ref for m in _PR_HEAD_REF_MARKERS) or bool(_REFS_PULL_REF.search(ref))
+    normalized = _normalize_workflow_expression(ref)
+    return any(m in normalized for m in _PR_HEAD_REF_MARKERS) or bool(
+        _PULL_REF.search(normalized)
+    )
+
+
+def _normalize_workflow_expression(value: str) -> str:
+    """Normalize GitHub expression bracket keys to their dot-form equivalent."""
+    return _BRACKET_KEY.sub(lambda match: f".{match.group(2)}", value).lower()
+
+
+def _is_pr_head_repository(repository: Any) -> bool:
+    return isinstance(repository, str) and _PR_HEAD_REPOSITORY_MARKER in (
+        _normalize_workflow_expression(repository)
+    )
+
+
+def _is_checkout_action(uses: Any) -> bool:
+    return isinstance(uses, str) and uses.lower().startswith("actions/checkout@")
+
+
+def _checkout_action_pr_head(step: Mapping[Any, Any]) -> str | None:
+    """Describe an actions/checkout step that selects attacker-controlled code."""
+    if not _is_checkout_action(step.get("uses")):
+        return None
+    with_block = step.get("with")
+    ref = with_block.get("ref") if isinstance(with_block, Mapping) else None
+    repository = (
+        with_block.get("repository") if isinstance(with_block, Mapping) else None
+    )
+    if _is_pr_head_repository(repository):
+        return f"fork repository={repository!s}, ref={ref if ref is not None else '<default>'}"
+    if _is_pr_head_ref(ref):
+        return f"PR-head ref={ref!s}"
+    return None
+
+
+def _checkout_action_uses_credentials(step: Mapping[Any, Any]) -> bool:
+    """actions/checkout receives github.token unless ``token`` is explicitly blank.
+
+    ``persist-credentials`` defaults true, but setting it false only prevents
+    persistence; a nonblank/default token is still credential access during fetch.
+    """
+    if not _is_checkout_action(step.get("uses")):
+        return False
+    with_block = step.get("with")
+    if not isinstance(with_block, Mapping) or "token" not in with_block:
+        return True
+    token = with_block.get("token")
+    return not (isinstance(token, str) and not token.strip())
+
+
+def _shell_command_segments(run: Any) -> list[list[str]]:
+    """Tokenize executable shell chains while preserving quoted echo text."""
+    if not isinstance(run, str):
+        return []
+    commands: list[list[str]] = []
+    for line in run.splitlines():
+        try:
+            lexer = shlex.shlex(line, posix=True, punctuation_chars=";&|")
+            lexer.whitespace_split = True
+            lexer.commenters = "#"
+            tokens = list(lexer)
+        except ValueError:
+            continue
+        segment: list[str] = []
+        for token in tokens:
+            if token and set(token) <= {";", "&", "|"}:
+                if segment:
+                    commands.append(segment)
+                    segment = []
+            else:
+                segment.append(token)
+        if segment:
+            commands.append(segment)
+    return commands
+
+
+def _unwrap_shell_command(tokens: Sequence[str]) -> tuple[str, list[str]] | None:
+    """Unwrap assignments, ``env``, ``command``, and ``sudo`` prefixes."""
+    if not tokens:
+        return None
+    index = 0
+    assignment = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
+    while index < len(tokens) and assignment.fullmatch(tokens[index]):
+        index += 1
+    if index < len(tokens) and tokens[index] == "env":
+        index += 1
+        while index < len(tokens) and (
+            tokens[index].startswith("-") or assignment.fullmatch(tokens[index])
+        ):
+            index += 1
+    while index < len(tokens) and tokens[index] in {"command", "sudo"}:
+        index += 1
+    if index >= len(tokens):
+        return None
+    return Path(tokens[index]).name.lower(), list(tokens[index + 1 :])
+
+
+def _git_subcommand(args: Sequence[str]) -> tuple[str, list[str]] | None:
+    """Split git-global options from the actual subcommand."""
+    index = 0
+    options_with_values = {"-c", "--git-dir", "--work-tree"}
+    while index < len(args) and args[index].startswith("-"):
+        option = args[index].split("=", 1)[0]
+        index += 1
+        if (option in options_with_values or option.lower() == "-c") and "=" not in args[
+            index - 1
+        ]:
+            index += 1
+    if index >= len(args):
+        return None
+    return args[index].lower(), list(args[index + 1 :])
+
+
+def _canonical_git_ref(value: str) -> str:
+    ref = _normalize_workflow_expression(value).lstrip("+")
+    for prefix in ("refs/remotes/", "refs/heads/"):
+        if ref.startswith(prefix):
+            return ref[len(prefix) :]
+    return ref
+
+
+def _pr_fetch_aliases(args: Sequence[str]) -> set[str]:
+    """Return destinations created by a PR-head fetch; empty means trusted fetch."""
+    normalized = _normalize_workflow_expression(" ".join(args))
+    is_pr_source = bool(
+        _PULL_REF.search(normalized)
+        or _PR_HEAD_REPOSITORY_MARKER in normalized
+        or "pull_request.head.sha" in normalized
+        or "pull_request.head.ref" in normalized
+    )
+    if not is_pr_source:
+        return set()
+
+    aliases = {"fetch_head"}
+    for arg in args:
+        normalized_arg = _normalize_workflow_expression(arg)
+        match = re.search(r"/(?:head|merge):(.+)$", normalized_arg)
+        if match:
+            aliases.add(_canonical_git_ref(match.group(1)))
+    return aliases
+
+
+def _git_sink_uses_alias(args: Sequence[str], aliases: set[str]) -> bool:
+    for arg in args:
+        if arg.startswith("-"):
+            continue
+        candidate = _canonical_git_ref(arg)
+        if candidate in aliases or _is_pr_head_ref(candidate):
+            return True
+    return False
+
+
+def _job_pr_head_execution(job: Mapping[Any, Any]) -> list[str]:
+    """Track attacker refs from sources to executable sinks within one job."""
+    findings: list[str] = []
+    fetched_aliases: set[str] = set()
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return findings
+    for step in steps:
+        if not isinstance(step, Mapping):
+            continue
+        action_finding = _checkout_action_pr_head(step)
+        if action_finding:
+            findings.append(action_finding)
+        for tokens in _shell_command_segments(step.get("run")):
+            command = _unwrap_shell_command(tokens)
+            if command is None:
+                continue
+            executable, args = command
+            if executable == "gh" and len(args) >= 2 and [a.lower() for a in args[:2]] == [
+                "pr",
+                "checkout",
+            ]:
+                findings.append("executable gh pr checkout")
+                continue
+            if executable != "git":
+                continue
+            git_command = _git_subcommand(args)
+            if git_command is None:
+                continue
+            subcommand, subcommand_args = git_command
+            if subcommand == "fetch":
+                fetched_aliases.update(_pr_fetch_aliases(subcommand_args))
+            elif subcommand in {"checkout", "switch", "reset"} and _git_sink_uses_alias(
+                subcommand_args, fetched_aliases
+            ):
+                findings.append(f"executable git {subcommand} of fetched PR-head ref")
+    return findings
+
+
+def _job_uses_credentials(job: Mapping[Any, Any]) -> bool:
+    if _references_secrets(job):
+        return True
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return False
+    return any(
+        isinstance(step, Mapping) and _checkout_action_uses_credentials(step)
+        for step in steps
+    )
 
 
 def _pr_head_checkout_refs(data: Mapping[Any, Any]) -> list[str]:
-    """Refs of actions/checkout steps that check out PR-head code. A checkout
-    with no ``ref`` override checks out the BASE repo under
-    ``pull_request_target`` and is compliant."""
-    refs: list[str] = []
+    """Compatibility helper returning all job-local PR-head execution findings."""
     jobs = data.get("jobs")
-    if not isinstance(jobs, dict):
-        return refs
-    for job in jobs.values():
-        if not isinstance(job, dict):
-            continue
-        steps = job.get("steps")
-        if not isinstance(steps, list):
-            continue
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
-            uses = step.get("uses")
-            if not isinstance(uses, str) or not uses.startswith("actions/checkout"):
-                continue
-            with_block = step.get("with")
-            ref = with_block.get("ref") if isinstance(with_block, dict) else None
-            if _is_pr_head_ref(ref):
-                refs.append(ref)
-    return refs
+    if not isinstance(jobs, Mapping):
+        return []
+    return [
+        finding
+        for job in jobs.values()
+        if isinstance(job, Mapping)
+        for finding in _job_pr_head_execution(job)
+    ]
 
 
-def _references_secrets(raw_text: str) -> bool:
-    """True when the workflow text uses secret material. Only consulted after
-    the ``pull_request_target`` trigger leg holds, so the implicit
-    write-capable GITHUB_TOKEN (``${{ github.token }}``) counts alongside
-    explicit ``${{ secrets.* }}`` / ``secrets: inherit`` spellings."""
-    return bool(
-        _SECRETS_EXPRESSION.search(raw_text)
-        or _SECRETS_INHERIT.search(raw_text)
-        or _GITHUB_TOKEN_EXPRESSION.search(raw_text)
+def _references_secrets(value: Any) -> bool:
+    """Inspect parsed YAML values, so comments never satisfy the secret leg."""
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            if isinstance(key, str) and key.lower() == "secrets" and child == "inherit":
+                return True
+            if _references_secrets(child):
+                return True
+        return False
+    if isinstance(value, list):
+        return any(_references_secrets(child) for child in value)
+    if not isinstance(value, str):
+        return False
+    normalized = _normalize_workflow_expression(value)
+    return "${{" in normalized and (
+        "secrets." in normalized or "github.token" in normalized
     )
 
 
 def lint_workflows(paths: Iterable[Path | str]) -> list[str]:
     """Lint workflow files for the forbidden three-way conjunction:
-    ``pull_request_target`` trigger AND checkout of PR-head code (any
-    equivalent spelling) AND secrets access (explicit or the implicit
-    ``github.token``). Empty result == compliant. Read-only.
+    ``pull_request_target`` trigger AND execution of PR-head code (checkout
+    action, ``gh pr checkout``, or shell fetch-to-ref-sink dataflow, including
+    equivalent spellings) AND credential access (explicit or checkout's
+    default token). Empty result == compliant. Read-only.
 
-    Each leg alone (or any two) is compliant — e.g. dependabot-auto-merge.yml
-    (trigger + secrets, no PR-code checkout) must pass.
+    The execution and credential legs must occur in the same job. Each leg
+    alone (or any two) is compliant — e.g. dependabot-auto-merge.yml (trigger
+    + secrets, no PR-code checkout) must pass.
     """
     findings: list[str] = []
     for entry in paths:
@@ -380,16 +632,25 @@ def lint_workflows(paths: Iterable[Path | str]) -> list[str]:
             continue
         if not _has_pull_request_target_trigger(data):
             continue
-        head_refs = _pr_head_checkout_refs(data)
-        if not head_refs:
+        jobs = data.get("jobs")
+        if not isinstance(jobs, Mapping):
             continue
-        if not _references_secrets(raw_text):
-            continue
-        findings.append(
-            f"{path.name}: checks out PR-head code (ref {head_refs[0]!r}) under a "
-            "pull_request_target trigger with secrets access — forbidden "
-            "three-way conjunction (W2 §6a / W2-M24 AC-5)"
-        )
+        inherited = {key: value for key, value in data.items() if key != "jobs"}
+        inherited_credentials = _references_secrets(inherited)
+        for job_name, job in jobs.items():
+            if not isinstance(job, Mapping):
+                continue
+            execution = _job_pr_head_execution(job)
+            if not execution:
+                continue
+            if not (inherited_credentials or _job_uses_credentials(job)):
+                continue
+            findings.append(
+                f"{path.name}: job {job_name!r} executes PR-head code "
+                f"({execution[0]}) under pull_request_target with credential "
+                "access — forbidden three-way conjunction "
+                "(W2 §6a / W2-M24 AC-5)"
+            )
     return findings
 
 
@@ -603,10 +864,14 @@ def _measured_call(
     *,
     messages: list[dict[str, Any]],
     max_tokens: int,
+    temperature: int | float,
 ) -> dict[str, Any]:
     started = time.monotonic()
     raw = client.messages.with_raw_response.create(
-        model=model, max_tokens=max_tokens, messages=messages
+        model=model,
+        max_tokens=max_tokens,
+        messages=messages,
+        temperature=temperature,
     )
     elapsed = time.monotonic() - started
     message = raw.parse()
@@ -657,7 +922,8 @@ def _run_unit(
 ) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
     """Run one real three-call unit: per-page VLM extraction + answer + judge.
 
-    Raw provider text is throwaway — it flows through the chain and is
+    Every provider call carries an explicit stable temperature; the judge is
+    pinned to zero. Raw provider text is throwaway — it flows through the chain and is
     discarded; only aggregates leave this function alongside the last
     response's anthropic-ratelimit-* headers.
     """
@@ -688,6 +954,7 @@ def _run_unit(
                 }
             ],
             max_tokens=512,
+            temperature=VLM_TEMPERATURE,
         )
         _accumulate(vlm, call)
         extraction_parts.append(call["text"])
@@ -704,6 +971,7 @@ def _run_unit(
             {"role": "user", "content": _ANSWER_PROMPT.format(extraction=extraction)}
         ],
         max_tokens=1024,
+        temperature=ANSWER_TEMPERATURE,
     )
     _accumulate(answer, answer_call)
     headers = answer_call["ratelimit_headers"] or headers
@@ -722,6 +990,7 @@ def _run_unit(
             }
         ],
         max_tokens=512,
+        temperature=JUDGE_TEMPERATURE,
     )
     _accumulate(judge, judge_call)
     headers = judge_call["ratelimit_headers"] or headers
@@ -738,7 +1007,14 @@ def _headroom_statement(headers: Mapping[str, str]) -> str:
 
 def _daily_quota_statement(
     headers: Mapping[str, str], projection: Mapping[str, Any]
-) -> str:
+) -> dict[str, Any]:
+    """Describe observed rate limits without inventing daily/spend evidence.
+
+    Anthropic's ``anthropic-ratelimit-*-limit`` response headers are
+    per-minute pacing evidence. They do not establish an account's daily
+    capacity or spend ceiling, so both decision axes remain explicitly
+    unknown until independently supplied evidence exists.
+    """
     def limit(name: str) -> float | None:
         value = headers.get(f"anthropic-ratelimit-{name}-limit")
         try:
@@ -750,10 +1026,14 @@ def _daily_quota_statement(
     input_limit = limit("input-tokens") or limit("tokens")
     output_limit = limit("output-tokens")
     if not any((requests_limit, input_limit, output_limit)):
-        return (
-            "no per-minute or daily quota headers observed — quota fit cannot "
-            "be stated from this run"
+        statement = (
+            "no per-minute rate-limit headers were observed; neither daily "
+            "provider capacity nor account spend capacity is known"
         )
+        return {
+            "statement": statement,
+            "sufficiency": {"daily": "unknown", "spend": "unknown"},
+        }
     minutes: list[float] = []
     if requests_limit:
         minutes.append(projection["projected_calls"] / requests_limit)
@@ -762,14 +1042,17 @@ def _daily_quota_statement(
     if output_limit:
         minutes.append(projection["projected_output_tokens"] / output_limit)
     pacing = max(minutes)
-    return (
-        "no daily-cap header is exposed; observed limits are per-minute "
+    statement = (
+        "observed limits are per-minute only "
         f"(requests={requests_limit or 'n/a'}, input-tokens={input_limit or 'n/a'}, "
         f"output-tokens={output_limit or 'n/a'}). The 50-case projection "
-        f"consumes at minimum ~{pacing:.2f} minute(s) of quota at the observed "
-        "per-minute limits, so a single daily run fits with wide margin; even "
-        "several PR-gate runs per day stay far below the observed limits."
+        f"would require at least ~{pacing:.2f} minute(s) at those limits; this "
+        "does not establish daily provider capacity or account spend capacity"
     )
+    return {
+        "statement": statement,
+        "sufficiency": {"daily": "unknown", "spend": "unknown"},
+    }
 
 
 def main(argv: Sequence[str] | None = None) -> int:

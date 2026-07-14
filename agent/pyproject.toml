@@ -9,6 +9,8 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.5",
     "httpx>=0.27",
+    # Multipart document uploads for POST /documents (W2_ARCHITECTURE §2a).
+    "python-multipart>=0.0.20,<0.1",
     # LLM provider (Zone C, D4). Reached only through app/llm/provider.py's
     # llm.complete() seam, so the model is swappable by config, not code.
     "anthropic>=0.40",

@@ -2,10 +2,24 @@
 
 Ticket: `tickets/W2-M24.md` · Branch: `ticket/w2-m24-tier2-spike` · Freeze SHA: `0154bd7`
 
-**Repair status:** deterministic implementation is green. AC-7 live evidence is
-**pending a fresh orchestrator run of the repaired CLI**. This repair made no provider
-call and claims no new live result. The older run is retained below as historical
-timing/token/cost evidence only; its `viable` verdict is withdrawn.
+**Acceptance status:** **REVIEW-PASSED / DONE against the frozen acceptance contract**
+at `0154bd7`. The final implementation commit is `da09b6e`; the frozen-test hash is
+unchanged and the orchestrator re-ran every local gate successfully (`313 passed,
+6 skipped`). AC-7 live evidence from the repaired CLI is still pending: this repair
+made no provider call and claims no new live result. The prior measured planning result
+is retained as historical timing/token/cost evidence: **$0.345 and ~9.3 minutes for the
+projected 50-case run**. Its former `viable` quota verdict remains withdrawn.
+
+**DOCUMENTED RESIDUAL / deferred follow-up:** adversarial review flagged a `git -C`
+PR-head command-form edge in the `pull_request_target` workflow lint. Per owner direction,
+hardening beyond the frozen cases is explicitly deferred to the later CI-security task
+(recommend folding it into W2-M20 alongside the already-recorded run:-body scan and bare
+`pull/N/head` relaxation follow-ups); no additional evasion analysis belongs to this
+spike. This linter is accepted only against its frozen contract at `0154bd7`, not as a
+general proof over every shell-command equivalent. **The owner has confirmed (W2 Wave 0
+resume direction): this residual is ACCEPTED as a deferred CI-security follow-up, and the
+frozen tests at `0154bd7` are the acceptance contract for W2-M24.** Ticket status:
+review-passed.
 
 ## What changed
 

@@ -322,6 +322,89 @@ def test_agent_services_passes_real_retrieval_worker_and_ref_registry(monkeypatc
     assert request.query == "type 2 diabetes hba1c"
 
 
+def test_agent_services_hydrates_complete_documents_and_real_extraction_worker(
+    monkeypatch,
+):
+    """W2-D2/D3/§3: graph turns re-read persisted artifacts, never VLM state."""
+
+    import app.service as service_module
+    from app.orchestrator.workers.intake_extractor import PersistedExtraction
+
+    captured: dict = {}
+
+    async def fake_graph_turn(**kwargs):
+        captured.update(kwargs)
+        return GraphTurnResult(brief=_brief("graph verified brief"), handoffs=())
+
+    class Documents:
+        async def list_for_patient(self, patient_id: str, *, state: str | None = None):
+            assert (patient_id, state) == ("synthetic-patient", "complete")
+            return [type("Document", (), {"document_id": "document-synthetic"})()]
+
+    class Artifacts:
+        def __init__(self) -> None:
+            self.warmed: list[str] = []
+
+        async def warm_for_documents(self, document_ids: list[str]) -> None:
+            self.warmed = document_ids
+
+        def resolve(self, ref: str):
+            if ref == "document:synthetic:artifact":
+                return {"persisted": True}
+            return None
+
+    class Pipeline:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def extract_document(
+            self, document_ref: str, *, patient_ref: str, correlation_id: str
+        ) -> PersistedExtraction:
+            self.calls += 1
+            assert document_ref == "document-synthetic"
+            assert patient_ref == "patient:synthetic-patient"
+            return PersistedExtraction(
+                artifact_ref="document:synthetic:artifact",
+                citation_refs=("document:synthetic:citation:0",),
+            )
+
+    services = object.__new__(service_module.AgentServices)
+    services._tokens = {
+        "synthetic-session": TokenResponse(
+            access_token="synthetic-token",
+            scope="openid patient/Patient.read",
+            patient="synthetic-patient",
+        )
+    }
+    services.settings = type(
+        "SettingsStub", (), {"smart_client_id": "synthetic-client"}
+    )()
+    services.tracer = object()
+    services.get_evidence_retriever = lambda: _FixtureRetriever()
+    services.run_brief = lambda *_args, **_kwargs: None
+    services.document_repository = Documents()
+    services.artifact_store = Artifacts()
+    services.extraction_pipeline = Pipeline()
+    monkeypatch.setattr(
+        service_module.orchestrator_graph, "run_graph_turn", fake_graph_turn
+    )
+
+    asyncio.run(
+        services.run_graph_turn(
+            _session(), "type 2 diabetes; HbA1c", request_url="https://agent.test/chat"
+        )
+    )
+
+    assert captured["worker_input"].document_refs == ["document-synthetic"]
+    assert services.artifact_store.warmed == ["document-synthetic"]
+    extraction = asyncio.run(captured["extraction_worker"](captured["worker_input"]))
+    assert extraction.artifact_refs == ["document:synthetic:artifact"]
+    assert services.extraction_pipeline.calls == 1
+    assert captured["ref_registry"].resolve("document:synthetic:artifact") == {
+        "persisted": True
+    }
+
+
 def test_graph_retrieval_unavailable_is_distinct_degradation_not_a_failed_hop():
     class UnavailableRetriever:
         def search(self, query: str, *, k: int, demographic_strings=()):

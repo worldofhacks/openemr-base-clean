@@ -23,6 +23,12 @@ class RefResolver(Protocol):
     def resolve(self, ref: str) -> object: ...
 
 
+class PersistentRefResolver(Protocol):
+    """Read-only persistent authority; a miss is represented by ``None``."""
+
+    def resolve(self, ref: str) -> object | None: ...
+
+
 class TurnRefRegistry:
     """Small deterministic ref map scoped to one correlation id and graph turn."""
 
@@ -46,3 +52,34 @@ class TurnRefRegistry:
             return self._values[ref]
         except KeyError as exc:
             raise KeyError("unresolvable graph reference") from exc
+
+
+class CompositeRefResolver:
+    """Keep graph writes turn-local while resolving durable extraction refs.
+
+    The turn registry remains the only mutable graph authority. Persistent stores are
+    warmed before the turn and are consulted read-only on a turn miss, so clinical
+    artifacts never need to cross a refs-only worker handoff (W2-D2/D3; §2/§3).
+    """
+
+    def __init__(
+        self,
+        turn: TurnRefRegistry,
+        *persistent: PersistentRefResolver,
+    ) -> None:
+        self._turn = turn
+        self._persistent = persistent
+
+    def put(self, value: object, *, kind: str) -> str:
+        return self._turn.put(value, kind=kind)
+
+    def resolve(self, ref: str) -> object:
+        try:
+            return self._turn.resolve(ref)
+        except KeyError:
+            pass
+        for resolver in self._persistent:
+            value = resolver.resolve(ref)
+            if value is not None:
+                return value
+        raise KeyError("unresolvable graph reference")

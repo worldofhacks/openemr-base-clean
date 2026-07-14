@@ -33,7 +33,8 @@ from app.observability.langfuse import LangfuseSink, NullTraceSink, RequestTrace
 from app.observability.trace import AccountabilityContext
 from app.orchestrator import graph as orchestrator_graph
 from app.orchestrator.loop import BriefResult, Orchestrator, ToolRegistry
-from app.orchestrator.refs import TurnRefRegistry
+from app.orchestrator.refs import CompositeRefResolver, RefResolver, TurnRefRegistry
+from app.orchestrator.workers.extraction_adapter import build_extraction_worker
 from app.orchestrator.workers.evidence_retriever import build_evidence_worker
 from app.schemas.retrieval import EvidenceSearchRequest
 from app.schemas.workers import WorkerInput, WorkerOutput
@@ -54,9 +55,12 @@ def _build_tracer(settings: Settings) -> RequestTracer:
             host=str(settings.langfuse_host) if settings.langfuse_host else None,
             public_key=settings.langfuse_public_key.get_secret_value(),
             secret_key=settings.langfuse_secret_key.get_secret_value(),
-            log_content=settings.langfuse_log_content)
+            log_content=settings.langfuse_log_content,
+        )
     else:
-        sink = NullTraceSink()  # observability optional (§6 soft dep) — serving is unaffected
+        sink = (
+            NullTraceSink()
+        )  # observability optional (§6 soft dep) — serving is unaffected
     return RequestTracer(sink)
 
 
@@ -67,7 +71,9 @@ def _patient_header(packet) -> dict[str, str] | None:
     if not records:
         return None
     fields = records[0].fields
-    header = {k: str(fields[k]) for k in ("name", "gender", "birth_date") if fields.get(k)}
+    header = {
+        k: str(fields[k]) for k in ("name", "gender", "birth_date") if fields.get(k)
+    }
     return header or None
 
 
@@ -101,22 +107,32 @@ class AgentServices:
         # root and the /ready probe are now aligned on the SAME backend — no more serving from
         # memory while probing an unused DB. Fails closed if unreachable (SessionStoreUnavailable).
         self.sessions = PostgresSessionStore(
-            dsn=settings.session_store_dsn.get_secret_value(), connect=_pg_connect,
-            idle_timeout_s=settings.session_idle_timeout_seconds, turn_cap=settings.session_turn_cap)
+            dsn=settings.session_store_dsn.get_secret_value(),
+            connect=_pg_connect,
+            idle_timeout_s=settings.session_idle_timeout_seconds,
+            turn_cap=settings.session_turn_cap,
+        )
         # The delegated token + PKCE verifier stay in-process (per-instance): the token is a
         # bearer credential (encrypting it into the pin row is the documented next step, §5
         # known-limitations). A restart therefore keeps the durable pin but requires a re-launch
         # to re-mint the token — the canonical expiry/re-launch path (§3a), never a silent serve.
-        self._tokens: dict[str, TokenResponse] = {}   # per-session delegated-token cache (§2)
-        self._pkce: dict[str, str] = {}               # oauth state → PKCE code_verifier
+        self._tokens: dict[
+            str, TokenResponse
+        ] = {}  # per-session delegated-token cache (§2)
+        self._pkce: dict[str, str] = {}  # oauth state → PKCE code_verifier
         self.provider = AnthropicLLMProvider(
             api_key=settings.anthropic_api_key.get_secret_value(),
-            model=settings.llm_model, max_tokens=settings.llm_max_tokens,
-            timeout=settings.llm_timeout_seconds)
+            model=settings.llm_model,
+            max_tokens=settings.llm_max_tokens,
+            timeout=settings.llm_timeout_seconds,
+        )
         self.cost_cap = DailyCostCap(cap_usd=settings.daily_cost_cap_usd)
         self.tracer = _build_tracer(settings)
-        self.orchestrator = Orchestrator(self.provider, cost_cap=self.cost_cap,
-                                         max_tool_iterations=settings.llm_max_tool_iterations)
+        self.orchestrator = Orchestrator(
+            self.provider,
+            cost_cap=self.cost_cap,
+            max_tool_iterations=settings.llm_max_tool_iterations,
+        )
         # W2-D4: shared by POST /evidence/search and the graph retrieval worker, but built
         # only on the first feature-flagged turn/search request. App boot remains model-free.
         self._evidence_retriever: HybridRetriever | None = None
@@ -146,7 +162,8 @@ class AgentServices:
             # (EHR launch instead carries a launch token → build_authorize_url adds `launch` scope).
             scope += " launch/patient"
         return self.smart.build_authorize_url(
-            state=state, code_challenge=challenge, scope=scope, launch=launch)
+            state=state, code_challenge=challenge, scope=scope, launch=launch
+        )
 
     async def complete_callback(self, *, code: str, state: str) -> Session:
         """Exchange the code (PKCE) and create a session pinned to (clinician, launched patient)."""
@@ -156,19 +173,26 @@ class AgentServices:
         token = await self.smart.exchange_code(code=code, code_verifier=verifier)
         patient_id = token.patient or ""
         if not patient_id:
-            raise ValueError("no launch/patient context in the token — cannot pin a session")
+            raise ValueError(
+                "no launch/patient context in the token — cannot pin a session"
+            )
         # Provider attribution (D9/D5): pin the session to the REAL launching clinician decoded
         # from the token's id_token (fhirUser preferred, else sub), falling back to the demo
         # placeholder only when the token carried no decodable id_token.
         session = await self.sessions.create(
-            clinician_sub=token.clinician_sub or "openemr-clinician", patient_id=patient_id,
-            token_expires_at=self._token_deadline())
+            clinician_sub=token.clinician_sub or "openemr-clinician",
+            patient_id=patient_id,
+            token_expires_at=self._token_deadline(),
+        )
         self._tokens[session.session_id] = token
         return session
 
     def _token_deadline(self) -> datetime:
         from datetime import timedelta
-        return datetime.now(timezone.utc) + timedelta(seconds=self.settings.token_lifetime_seconds)
+
+        return datetime.now(timezone.utc) + timedelta(
+            seconds=self.settings.token_lifetime_seconds
+        )
 
     # --- the two operations the routes call -----------------------------------
 
@@ -218,7 +242,31 @@ class AgentServices:
             raise ValueError("no delegated token cached for this session — re-launch")
 
         correlation_id = correlation_id_var.get()
-        refs = TurnRefRegistry(correlation_id)
+        turn_refs = TurnRefRegistry(correlation_id)
+        refs: RefResolver = turn_refs
+        document_refs: list[str] = []
+        extraction_worker = None
+        document_repository = getattr(self, "document_repository", None)
+        artifact_store = getattr(self, "artifact_store", None)
+        extraction_pipeline = getattr(self, "extraction_pipeline", None)
+        if document_repository is not None and artifact_store is not None:
+            completed = await document_repository.list_for_patient(
+                session.patient_id, state="complete"
+            )
+            document_refs = [record.document_id for record in completed]
+            await artifact_store.warm_for_documents(document_refs)
+            refs = CompositeRefResolver(turn_refs, artifact_store)
+        if extraction_pipeline is not None:
+            bound_extraction = build_extraction_worker(extraction_pipeline)
+
+            async def extraction_worker(payload: WorkerInput) -> WorkerOutput:
+                # The supervisor carries only the opaque session ref. Patient resolution
+                # happens inside the worker boundary before B2 enforces its patient pin.
+                pinned = payload.model_copy(
+                    update={"patient_ref": f"patient:{session.patient_id}"}
+                )
+                return await bound_extraction(pinned)
+
         evidence_refs: list[str] = []
         try:
             query = build_clinical_query(re.split(r"[,;|]+", message))
@@ -236,7 +284,7 @@ class AgentServices:
             correlation_id=correlation_id,
             turn=0,
             patient_ref=f"session:{session.session_id}",
-            document_refs=[],
+            document_refs=document_refs,
             evidence_refs=evidence_refs,
             request_kind="previsit_brief",
         )
@@ -259,30 +307,36 @@ class AgentServices:
                 )
 
         async def run_brief_pinned() -> BriefResult:
-            return await self.run_brief(
-                session, message, request_url=request_url
-            )
+            return await self.run_brief(session, message, request_url=request_url)
 
-        return await orchestrator_graph.run_graph_turn(
-            run_brief=run_brief_pinned,
-            correlation_id=correlation_id,
-            tracer=self.tracer,
-            accountability=self._accountability_context(
+        graph_kwargs = {
+            "run_brief": run_brief_pinned,
+            "correlation_id": correlation_id,
+            "tracer": self.tracer,
+            "accountability": self._accountability_context(
                 session, token, request_url=request_url
             ),
-            worker_input=worker_input,
-            retrieval_worker=retrieval_worker,
-            ref_registry=refs,
+            "worker_input": worker_input,
+            "retrieval_worker": retrieval_worker,
+            "ref_registry": refs,
+        }
+        if extraction_worker is not None:
+            graph_kwargs["extraction_worker"] = extraction_worker
+        return await orchestrator_graph.run_graph_turn(
+            **graph_kwargs,
         )
 
-    async def run_brief(self, session: Session, message: str, *, request_url: str) -> BriefResult:
+    async def run_brief(
+        self, session: Session, message: str, *, request_url: str
+    ) -> BriefResult:
         token = self._tokens.get(session.session_id)
         if token is None:
             raise ValueError("no delegated token cached for this session — re-launch")
         client = FhirClient(
             base_url=str(self.settings.openemr_fhir_base_url).rstrip("/"),
             access_token=token.access_token.get_secret_value(),
-            per_call_timeout=self.settings.fhir_per_call_timeout_seconds)
+            per_call_timeout=self.settings.fhir_per_call_timeout_seconds,
+        )
         # Begin the accountable trace BEFORE the FHIR fan-out (CXR-05/§7): all accountability is
         # already known (client, exercised scopes, pinned clinician + patient), so the six PHI
         # reads can each be captured as a span. Tracing is a soft dependency (§6) — begun always
@@ -298,23 +352,30 @@ class AgentServices:
             # including timeouts/budget failures. Operational fields remain PHI-minimized; the
             # exact typed result is a D16-marked payload that exports only under the synthetic
             # deployment's explicit content opt-in.
-            builder.step(f"fhir.{name}", latency_ms=latency_ms,
-                         status=result.status.value, records=len(result.records),
-                         missing_reason=result.missing_reason or "",
-                         content=_fhir_trace_content(result))
+            builder.step(
+                f"fhir.{name}",
+                latency_ms=latency_ms,
+                status=result.status.value,
+                records=len(result.records),
+                missing_reason=result.missing_reason or "",
+                content=_fhir_trace_content(result),
+            )
 
         fanout = await run_previsit_fanout(
-            client, session.patient_id,
+            client,
+            session.patient_id,
             per_call_timeout=self.settings.fhir_per_call_timeout_seconds,
             turn_budget=self.settings.turn_total_budget_seconds,
-            on_call=_record_fhir)
+            on_call=_record_fhir,
+        )
         packet = build_evidence_packet(session.patient_id, fanout)
         await self.sessions.record_turn(session.session_id)
         # UC1: the packet is pre-built deterministically (D10); the LLM narrates it in typed
         # claims (empty tool registry → only submit_claims), which are verified and re-rendered.
         # The trace begun above is threaded in so the LLM/verify spans join the FHIR spans.
         result = await self.orchestrator.run_previsit_brief(
-            packet, message, tools=ToolRegistry([]), builder=builder)
+            packet, message, tools=ToolRegistry([]), builder=builder
+        )
         # Attach the patient header (presentation-only, T-E9 UI) from the already-fetched Patient
         # record — the UI draws a chart header from it; verification/serving are untouched.
         return replace(result, patient=_patient_header(packet))

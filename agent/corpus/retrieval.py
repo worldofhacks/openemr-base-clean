@@ -24,10 +24,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from app.schemas.retrieval import K_MAX
 from corpus.check_index_manifest import check_index_manifest
 
 
-K_MAX = 10
 CANDIDATE_POOL = 30
 RRF_CONSTANT = 60
 DENSE_MIN_SIMILARITY = 0.60

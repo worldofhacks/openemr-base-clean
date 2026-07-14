@@ -54,7 +54,8 @@ make a live vendor call.
 
 The route declares named, strict `EvidenceSearchRequest`, `EvidenceSnippet`, and
 `EvidenceSearchResponse` models at `POST /evidence/search`. Its query accepts condition/test
-terms only, `k` is bounded to 1–10, a healthy miss is an empty 200 response, and a corrupt
+terms only, `k` is bounded to the frozen `K_MAX` (currently 20), a healthy miss is an empty
+200 response, and a corrupt
 index or production embedder outage is a distinct 503. The composition layer can attach
 the current pinned session's demographic strings at
 `request.state.evidence_demographic_strings`; those values are checked at the final Cohere

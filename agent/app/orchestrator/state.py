@@ -20,6 +20,7 @@ import operator
 from typing import Annotated, TypedDict
 
 from app.orchestrator.loop import BriefResult
+from app.schemas.workers import WorkerInput, WorkerOutput
 
 # The CANONICAL home for these classes is app.schemas.handoff (W2-M6, §2). They are
 # re-exported here (by identity, not a copy) so the M3 orchestrator and the schema
@@ -41,11 +42,13 @@ class GraphState(TypedDict):
     turn: int
     handoffs: Annotated[list[HandoffRecord], operator.add]
     next_decision: SupervisorDecision | None
-    extracted_ref: str | None   # trace-addressable stub-extraction artifact ref
-    retrieved_ref: str | None   # trace-addressable stub-retrieval artifact ref
-    # B3 composer-shell inputs are trace-addressable refs only until the shared
-    # WorkerInput/WorkerOutput + CitationV2 handoff lands. Keeping the slots in the
-    # topology now avoids coupling this skeleton to a parallel clinical-value shape.
+    worker_input: WorkerInput
+    extraction_output: WorkerOutput | None
+    retrieval_output: WorkerOutput | None
+    extracted_ref: str | None
+    retrieved_ref: str | None
+    routing_failed: bool
+    # Only trace-addressable refs cross from worker output to composition.
     verified_facts: tuple[str, ...]
     evidence_snippets: tuple[str, ...]
     citations: tuple[str, ...]

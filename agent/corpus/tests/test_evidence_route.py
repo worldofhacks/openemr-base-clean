@@ -5,14 +5,18 @@ from __future__ import annotations
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
-
 from app.middleware.correlation import CorrelationIdMiddleware
 from app.routes import evidence
 from app.routes.evidence import (
     EvidenceSearchRequest,
     EvidenceSearchResponse,
     EvidenceSnippet,
+)
+from app.schemas.citations import EvidenceSnippet as CanonicalEvidenceSnippet
+from app.schemas.retrieval import (
+    K_MAX,
+    EvidenceSearchRequest as CanonicalEvidenceSearchRequest,
+    EvidenceSearchResponse as CanonicalEvidenceSearchResponse,
 )
 from corpus.retrieval import EvidenceHit, RetrievalOutcome, RetrievalUnavailableError
 
@@ -67,6 +71,9 @@ def _client(retriever: _FakeRetriever) -> TestClient:
 
 
 def test_models_are_named_strict_and_field_for_field_typed() -> None:
+    assert EvidenceSearchRequest is CanonicalEvidenceSearchRequest
+    assert EvidenceSearchResponse is CanonicalEvidenceSearchResponse
+    assert EvidenceSnippet is CanonicalEvidenceSnippet
     assert EvidenceSearchRequest.model_config["extra"] == "forbid"
     assert EvidenceSearchResponse.model_config["extra"] == "forbid"
     assert set(EvidenceSearchRequest.model_fields) == {"query", "k"}
@@ -78,8 +85,8 @@ def test_models_are_named_strict_and_field_for_field_typed() -> None:
     }
 
 
-def test_response_model_rejects_duplicate_or_cross_version_evidence() -> None:
-    snippet = EvidenceSnippet(
+def test_route_validation_rejects_duplicate_or_cross_version_evidence() -> None:
+    hit = EvidenceHit(
         source_id=f"vadod-hypertension-2020@{MANIFEST_HASH}",
         section="Recommendations",
         chunk_id="chunk-1",
@@ -87,17 +94,30 @@ def test_response_model_rejects_duplicate_or_cross_version_evidence() -> None:
         score=0.9,
         corpus_version=CORPUS_VERSION,
     )
-    with pytest.raises(ValidationError):
-        EvidenceSearchResponse(
-            items=[snippet, snippet],
-            corpus_version=CORPUS_VERSION,
-            correlation_id="corr-1",
+    with pytest.raises(RetrievalUnavailableError):
+        evidence._validated_items(
+            RetrievalOutcome(
+                items=(hit, hit),
+                corpus_version=CORPUS_VERSION,
+                manifest_hash=MANIFEST_HASH,
+                degraded_reasons=(),
+            )
         )
-    with pytest.raises(ValidationError):
-        EvidenceSearchResponse(
-            items=[snippet.model_copy(update={"corpus_version": "other@" + "b" * 64})],
-            corpus_version=CORPUS_VERSION,
-            correlation_id="corr-1",
+    with pytest.raises(RetrievalUnavailableError):
+        evidence._validated_items(
+            RetrievalOutcome(
+                items=(
+                    EvidenceHit(
+                        **{
+                            **hit.__dict__,
+                            "corpus_version": "other@" + "b" * 64,
+                        }
+                    ),
+                ),
+                corpus_version=CORPUS_VERSION,
+                manifest_hash=MANIFEST_HASH,
+                degraded_reasons=(),
+            )
         )
 
 
@@ -131,8 +151,8 @@ def test_request_bounds_extra_fields_and_phi_are_rejected_before_retrieval() -> 
     client = _client(retriever)
     bad_payloads = [
         {"query": "hypertension", "k": 0},
-        {"query": "hypertension", "k": 11},
-        {"query": "hypertension", "k": True},
+        {"query": "hypertension", "k": K_MAX + 1},
+        {"query": "hypertension", "k": "not-an-int"},
         {"query": "What should I tell my patient?", "k": 3},
         {"query": "hypertension MRN AB123456", "k": 3},
         {"query": "hypertension", "k": 3, "patient_id": "synthetic"},

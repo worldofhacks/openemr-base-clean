@@ -15,12 +15,16 @@ from pathlib import Path
 from typing import Protocol
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from starlette.concurrency import run_in_threadpool
 
 from app.middleware.correlation import correlation_id_var
-from corpus.retrieval import (
+from app.schemas.citations import EvidenceSnippet
+from app.schemas.retrieval import (
     K_MAX,
+    EvidenceSearchRequest,
+    EvidenceSearchResponse,
+)
+from corpus.retrieval import (
     HybridRetriever,
     QueryContractError,
     RetrievalOutcome,
@@ -30,60 +34,6 @@ from corpus.retrieval import (
 
 
 router = APIRouter()
-
-
-class EvidenceSearchRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
-
-    query: str = Field(min_length=1, max_length=180)
-    k: int = Field(default=5, ge=1, le=K_MAX)
-
-    @field_validator("query")
-    @classmethod
-    def validate_clinical_query(cls, value: str) -> str:
-        # Separators let trusted callers pass several coded condition/test terms
-        # without turning this endpoint into a free-form conversation surface.
-        terms = re.split(r"[,;|]+", value)
-        try:
-            return build_clinical_query(terms)
-        except QueryContractError as exc:
-            raise ValueError("query must contain PHI-free condition/test terms only") from exc
-
-
-class EvidenceSnippet(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
-
-    source_id: str = Field(min_length=1)
-    section: str = Field(min_length=1)
-    chunk_id: str = Field(min_length=1)
-    quote: str = Field(min_length=1)
-    score: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
-    corpus_version: str = Field(min_length=1)
-
-
-class EvidenceSearchResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
-
-    items: list[EvidenceSnippet]
-    corpus_version: str = Field(min_length=1)
-    correlation_id: str = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def validate_versioned_items(self) -> EvidenceSearchResponse:
-        if len(self.items) > K_MAX:
-            raise ValueError("evidence response exceeds the result cap")
-        chunk_ids = [item.chunk_id for item in self.items]
-        if len(set(chunk_ids)) != len(chunk_ids):
-            raise ValueError("evidence response contains duplicate chunks")
-        _corpus_id, separator, manifest_hash = self.corpus_version.rpartition("@")
-        if not separator or re.fullmatch(r"[0-9a-f]{64}", manifest_hash) is None:
-            raise ValueError("corpus version is not manifest-bound")
-        for item in self.items:
-            if item.corpus_version != self.corpus_version:
-                raise ValueError("evidence response mixes corpus versions")
-            if not item.source_id.endswith("@" + manifest_hash):
-                raise ValueError("evidence source is not manifest-bound")
-        return self
 
 
 class EvidenceRetriever(Protocol):
@@ -122,6 +72,42 @@ def _request_demographic_strings(request: Request) -> tuple[str, ...]:
     return tuple(raw)
 
 
+def _validated_items(outcome: RetrievalOutcome) -> list[EvidenceSnippet]:
+    """Keep corpus-integrity checks without creating a parallel response schema."""
+
+    if len(outcome.items) > K_MAX:
+        raise RetrievalUnavailableError("evidence response exceeds the result cap")
+    _corpus_id, separator, manifest_hash = outcome.corpus_version.rpartition("@")
+    if not separator or re.fullmatch(r"[0-9a-f]{64}", manifest_hash) is None:
+        raise RetrievalUnavailableError("corpus version is not manifest-bound")
+    if manifest_hash != outcome.manifest_hash:
+        raise RetrievalUnavailableError("retrieval manifest version mismatch")
+
+    items: list[EvidenceSnippet] = []
+    seen: set[str] = set()
+    for hit in outcome.items:
+        if hit.chunk_id in seen:
+            raise RetrievalUnavailableError("evidence response contains duplicate chunks")
+        if hit.corpus_version != outcome.corpus_version:
+            raise RetrievalUnavailableError("evidence response mixes corpus versions")
+        if not hit.source_id.endswith("@" + manifest_hash):
+            raise RetrievalUnavailableError("evidence source is not manifest-bound")
+        if not hit.section.strip() or not hit.quote.strip() or not 0.0 <= hit.score <= 1.0:
+            raise RetrievalUnavailableError("retrieval returned an invalid evidence item")
+        seen.add(hit.chunk_id)
+        items.append(
+            EvidenceSnippet(
+                source_id=hit.source_id,
+                section=hit.section,
+                chunk_id=hit.chunk_id,
+                quote=hit.quote,
+                score=hit.score,
+                corpus_version=hit.corpus_version,
+            )
+        )
+    return items
+
+
 @router.post(
     "/evidence/search",
     response_model=EvidenceSearchResponse,
@@ -133,12 +119,17 @@ async def search_evidence(
     try:
         retriever = _get_retriever(request)
         demographic_strings = _request_demographic_strings(request)
+        query = build_clinical_query(
+            re.split(r"[,;|]+", payload.query),
+            demographic_strings=demographic_strings,
+        )
         outcome = await run_in_threadpool(
             retriever.search,
-            payload.query,
+            query,
             k=payload.k,
             demographic_strings=demographic_strings,
         )
+        items = _validated_items(outcome)
     except QueryContractError:
         raise HTTPException(
             status_code=422,
@@ -148,17 +139,7 @@ async def search_evidence(
         raise HTTPException(status_code=503, detail="guideline retrieval unavailable") from None
 
     return EvidenceSearchResponse(
-        items=[
-            EvidenceSnippet(
-                source_id=item.source_id,
-                section=item.section,
-                chunk_id=item.chunk_id,
-                quote=item.quote,
-                score=item.score,
-                corpus_version=item.corpus_version,
-            )
-            for item in outcome.items
-        ],
+        items=items,
         corpus_version=outcome.corpus_version,
         correlation_id=correlation_id_var.get(),
     )

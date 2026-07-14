@@ -2,7 +2,8 @@
 
 > Decomposed 2026-07-13 by /tasks-gen from the **binding repo-root `W2_ARCHITECTURE.md`**
 > (15 §-anchors; finalized 2026-07-13). Supporting inputs: `docs/week2/W2_DECISIONS.md`
-> (W2-D1..D8 + dated revisions), `docs/week2/W2_AUDIT.md` (W2-F1..F6),
+> (W2-D1..D8 + dated revisions), `docs/week2/W2_AUDIT.md` (W2-F1..F11 — F7..F11 added by
+> the 2026-07-13 W2-F1 live verification; this plan updated the same day to match),
 > `docs/week2/W2_RESEARCH.md` (W2-R1..R6), `docs/week2/W2_USERS.md` (UC-W2-1..4),
 > `docs/week2/W2_gap-audit.md` (99-req coverage), `docs/week2/Week_2_AgentForge.pdf` (PRD).
 >
@@ -32,7 +33,8 @@
 | **Early** | **Thu 2026-07-16 11:59 PM** | Overlay polish + follow-up flows; W2 dashboards/alerts/runbooks; baselines vs W1 (closes W2-O1/W2-O2/debt #2); OpenAPI + Bruno |
 | **Final** | **Sun 2026-07-19 12:00 PM** | Hardening; regression drill (4 injected breaks → 4 red runs linked); full cost/latency report; Railway backup verification; demo video (six contents); final live E2E |
 
-**Dependency spine:** W2-OA3 → W2-M2 → W2-M8 → W2-M11; W2-M5 → {W2-M8, W2-M11} (job rows
+**Dependency spine:** W2-OA3 → W2-M8 → W2-M11 (W2-M2 ✅ verified-by-audit 2026-07-13 —
+its outputs now bind M8/M11 directly); W2-M5 → {W2-M8, W2-M11} (job rows
 carry session_ref; writes ride the persisted delegated token); W2-M1 → W2-M4 (reader spike
 needs the container's tesseract/pdfium unless run host-only); W2-M7 → {W2-M9, W2-M17};
 W2-M6 → nearly everything; W2-M8 → W2-M16 (page renders fetch the OpenEMR-stored source
@@ -86,8 +88,9 @@ code-verified in this fork:
   intake form on this US-units instance), the field's vitals leg is **skipped** — the
   value persists in the `ExtractionArtifact` only, verbatim with its on-page unit. The
   agent **never converts** (a converted number is a derived value not on the page —
-  W2-D1/W2-D3). The typed skip-reason name for this case needs a one-line addendum
-  (see Needs architecture); the behavior itself is fully backed.
+  W2-D1/W2-D3). Typed as `writeback.skipped(unit_mismatch)` — added to the §6a event
+  inventory 2026-07-13 with a dated W2-D1 note (the pre-authorized addendum this plan
+  flagged; see Needs architecture item 1, resolved).
 
 ---
 
@@ -107,20 +110,37 @@ done or their dated triggers fired; no feature task starts blocked on an unknown
   (mxbai) per W2-D4 rev; Cohere becomes the Early upgrade (W2-E6). Blocks nothing except
   the shipped seam value — W2-M14 builds both paths regardless.
   Anchors: §2 (decision trigger), W2-D4 rev 2026-07-13.
-  *Owned date correction (2026-07-13):* the architecture and W2-D4 rev print
-  "**Monday** 2026-07-14 EOD" — but 2026-07-14 is a **Tuesday** (MVP day); the weekday
-  and date contradict each other in the binding docs. The only coherent reading (and the
-  owner's instruction to this pass) is **Monday 2026-07-13 EOD**, used here. This plan
-  cannot edit the architecture; the typo is routed to the owner for a dated fix.
+  *Date note (resolved 2026-07-13):* the binding docs briefly printed
+  "Monday 2026-07-14 EOD" (2026-07-14 is a Tuesday); the owner-approved correction to
+  **Monday 2026-07-13 EOD** has landed in the architecture, W2-D4 rev, and the
+  gap-audit — all sources now agree with this task's trigger.
 - [ ] **W2-OA2 — `ANTHROPIC_API_KEY` into GitHub Actions repo secrets.**
   **Trigger: Monday 2026-07-13, before the first Tier-2 CI run.**
   **Blocking: Tier 2 (W2-M20) cannot run without it.** Anchors: §7 Tier 2, W2-D8.
-- [ ] **W2-OA3 — `api:oemr` document/vital write scopes registered on the SMART client +
-  admin re-enable.** **Trigger: Monday 2026-07-13, before/with W2-M2.**
-  **Blocking: build-blocking provisioning checklist item** — the expected first-run
-  failure if skipped is a **silent 401 on first write**. Runbook step recorded (register
-  scopes → admin-enable → re-run W2-M2 probe).
-  Anchors: W2-F4, §4 (scope delta), §5 (EHR write 401 row).
+- [ ] **W2-OA3 — REPLACEMENT SMART client registration (W1+W2 scope union) + verified
+  cutover.** **Trigger: Monday 2026-07-13, before the first deployed write (W2-M11).**
+  **Blocking: build-blocking provisioning checklist item.** The W2-F1 live verification
+  proved (W2-F4 resolved) that **existing clients cannot gain scopes post-registration
+  and the admin screen cannot edit scope sets** — W1's client cannot be extended; MVP
+  requires a fresh registration. Steps (verified sequence recorded in the W2_AUDIT.md
+  verification section, incl. the registration payload):
+  1. Register a new confidential client with the **W1+W2 scope union**: all W1 read
+     scopes + `api:oemr user/document.crs user/vital.crus user/Observation.rs
+     user/DocumentReference.rs user/Binary.read` (the last two for FHIR read-back);
+     grants: `authorization_code` + `refresh_token` — **never password grant in
+     production** (the verification client was local-only password-grant, since
+     disabled).
+  2. Admin-enable it (registers DISABLED): Administration → System → API Clients.
+  3. Verify **staff ACLs** independently permit patients/docs write.
+  4. Swap `SMART_CLIENT_ID`/`SECRET` in the Railway env; verify the launch + a probe
+     write under the new client.
+  5. **Disable the OLD W1 client only AFTER the verified cutover** — single-launcher
+     check, the W1 E9 duplicate-launcher lesson.
+  The expected failure if skipped is still a **silent 401 on first write**; the runbook
+  entry points here.
+  Anchors: W2-F4 (resolved), W2-F11 (scope/discovery drift — trust the verified set, not
+  discovery or docs), W2-D1 addendum (2026-07-13 verification), §4 (scope delta), §5
+  (EHR write 401 row), architecture Verification errata #4.
 - [ ] **W2-OA4 — Push `main` to origin (GitHub) and to the GitLab mirror.**
   **Trigger: Monday 2026-07-13, before the first CI run that needs the remote (W2-M19);
   re-verify at each checkpoint deadline.** GitHub is the canonical CI remote (branch
@@ -147,25 +167,33 @@ done or their dated triggers fired; no feature task starts blocked on an unknown
   (extended) asserts OCR/pdfium/ONNX importability — guards: MVP deploy discovering broken
   native deps on Tuesday night.
 
-- [ ] **W2-M2 — Documents-API write-path spike, live against deployed OpenEMR.**
-  Files: `agent/ops/spike_document_write.py` (NEW, throwaway probe kept as ops script);
-  runbook addition in `docs/observability/runbooks.md` (extended).
-  Anchors: W2-F2, W2-F4, §3 (write principal), W2-R5; depends W2-OA3.
-  Accept:
-  - `POST /api/patient/:pid/document` succeeds under a **delegated token** (never
-    `client_credentials`) against the deployed OpenEMR; created document readable back via
-    the companion GET (the round-trip primitive W2-M11 will formalize).
-  - **Expected first-run failure reproduced deliberately:** with scopes unprovisioned the
-    write 401s silently; the runbook entry (register `api:oemr` scopes + admin-enable →
-    retry) is verified to fix it.
-  - Vitals probe: `POST /api/patient/:pid/encounter/:eid/vital` accepted with the O-new
-    field mapping against a known demo encounter.
-  - Category path for the "AI-Extractions" document category confirmed; if missing, it is
-    created as a **one-time admin provisioning step** recorded in the same runbook entry
-    as the W2-OA3 scope registration — never by agent code (W2-D1: exactly two write
-    capabilities; the runtime treats a missing category as an error, see W2-M11).
-  Test: probe script exits nonzero on 401/mismatch and prints the runbook pointer —
-  guards: silent-401 scope failure surfacing for the first time inside the MVP demo.
+- [x] **W2-M2 — Documents-API write-path spike — VERIFIED BY AUDIT (2026-07-13).**
+  The W2-F1 independent live verification (W2_AUDIT.md, "W2-F1 independent verification"
+  section; findings W2-F7..F11, W2-F4 resolved) executed this spike's substance against
+  the local live stack (production read-only — not written to). Verified outcomes,
+  binding on downstream tasks:
+  - `POST /api/patient/:pid/document` under a real token: returns **HTTP 200 body `true`
+    with NO document id** (DocumentRestController.php:120) — not 201; the id is
+    discovered via **collection GET keyed on unique filename/content-hash** (W2-F9).
+  - **Read-back:** the standard REST download **returns 500** in this stack (CSRF-key
+    defect — known issue, not ours to fix); the verified byte-exact round-trip is the
+    **FHIR projection** `DocumentReference/:uuid → Binary/:uuid` (SHA-256 match, W2-F9).
+  - Vitals: `POST .../vital` → **201 {vid}** → standard GET returns values → **FHIR
+    `Observation?category=vital-signs`** surfaces the Observation resources (W2-F10) —
+    the O-new mapping path is fully proven end-to-end.
+  - Provisioning sequence verified live (register → created DISABLED → admin enable;
+    scope minimums; replacement-client constraint) — carried into W2-OA3.
+  - **Residual (not covered by the verification):** the "AI-Extractions" category-path
+    check — carried into W2-OA3's runbook step as one-time admin provisioning, never
+    agent code (W2-D1: exactly two write capabilities; runtime treats a missing category
+    as `failed(writeback_failed)`, see W2-M11).
+  Retained artifact: the probe flow is recorded in the audit section (registration
+  payload + call sequence); `agent/ops/spike_document_write.py` is authored during
+  W2-M11 as the regression-able probe, exits nonzero on 401/mismatch with the runbook
+  pointer — guards: silent-401 scope failure surfacing for the first time inside the
+  MVP demo.
+  Anchors: W2-F2, W2-F4 (resolved), W2-F9, W2-F10, §3 (write principal), W2-R5
+  (verified live 2026-07-13), architecture Verification errata #1–#2.
 
 - [ ] **W2-M3 — LangGraph skeleton + SSE spike (V2): supervisor + 2 stub workers,
   handoffs, span nesting, W1 loop embedded.**
@@ -301,7 +329,8 @@ GitHub + GitLab; video + initial report delivered.
   (extended — boot reconciliation hook).
   Anchors: §2 (attach_and_extract), §2a (POST /documents, status endpoint), §3 (ingestion
   lifecycle, states, boot reconciliation), §3a (retention rows), §5 (upload/restart/OCR
-  rows), §6a events, UC-W2-1/2.
+  rows), §6a events, UC-W2-1/2, W2-F9 (upload contract + read-back), architecture
+  Verification errata #1–#2.
   Accept:
   - Auth invariants: every endpoint requires the pinned session; `patient_id` ≠ pinned
     patient → canonical W1 refusal (403-class); status reads verify document ownership;
@@ -315,7 +344,10 @@ GitHub + GitLab; video + initial report delivered.
   - **Atomic insert-or-return** on UNIQUE(patient_id, content_hash): duplicate → 200 with
     existing `{document_id, status_url}`, zero new records; concurrent duplicates resolve
     race-safely to one document. New upload → source stored in OpenEMR, durable job row,
-    202 + status_url.
+    202 + status_url. **OpenEMR store contract (verified, W2-F9):** the documents POST
+    returns **200 body `true` with no id** — the store step immediately **discovers the
+    OpenEMR document id via collection GET keyed on unique filename/content-hash** and
+    records it on the job row; discovery failure → `failed(storage_write_failed)`.
   - Job pipeline through states `{queued|extracting|grounding|writing|complete|failed(reason)}`;
     status endpoint reads **durable rows only** (never process memory); queue depth derives
     from rows; boot reconciliation marks non-terminal jobs at process start
@@ -323,7 +355,10 @@ GitHub + GitLab; video + initial report delivered.
     idempotently from the stored source. Words+boxes layer: text-first, junk-check, OCR
     fallback, per-page subprocess timeout (failed page → fields UNSUPPORTED; all pages
     fail → `failed(ocr_failed)`); the layer lives in **job memory only — never persisted**
-    to the job row, disk, or logs (§3a; re-derived from the stored source on re-run).
+    to the job row, disk, or logs (§3a; re-derived from the stored source on re-run —
+    fetched via the **FHIR `DocumentReference/:uuid → Binary/:uuid` projection**, the
+    verified byte-exact read path; the standard REST download 500s in this stack, a
+    known issue, not a dependency — W2-F9).
   - Retention + events (§3a/§6a): temp file deleted after OpenEMR store succeeds; the
     job's delegated-token ref cleared at job terminal state; terminal job/status rows
     **purged after 30 days** (retention step in the job store, test proves rows age out);
@@ -394,8 +429,9 @@ GitHub + GitLab; video + initial report delivered.
   client lives in the writeback package; `agent/app/tools/fhir_client.py` is untouched),
   `agent/app/ingestion/service.py` (extended — write step).
   Anchors: §3 (write principal, ordering + ledger, lab/vitals rule, round-trip
-  verification), W2-D1 + addendum, W2-F2/F3/F4, §4a ledger rows, O-new mapping (above),
-  W2-O3 (provenance flag).
+  verification), W2-D1 + both addenda (incl. the 2026-07-13 verification addendum),
+  W2-F2/F3, W2-F4 (resolved), W2-F9/F10 (verified contracts), §4a ledger rows, O-new
+  mapping (above), W2-O3 (provenance flag), architecture Verification errata #1–#2.
   Accept:
   - Order: `ExtractionArtifact` (application/json, category "AI-Extractions", documents
     API) first; vitals second — and the vitals leg fires **only** for intake-form
@@ -403,8 +439,9 @@ GitHub + GitLab; video + initial report delivered.
     explicit encounter_id** (already validated against the pinned patient, W2-M8);
     otherwise skipped with `writeback.skipped(no_encounter)`. Lab values NEVER route to
     vitals (W2-F3). **Unit mismatch** (on-page unit absent/differs from the instance's
-    unit system) → that field's vitals leg skipped, artifact-only, never converted
-    (O-new rule above). Missing "AI-Extractions" category at runtime →
+    unit system) → that field's vitals leg skipped with
+    `writeback.skipped(unit_mismatch)`, artifact-only, never converted (O-new rule
+    above; §6a event added 2026-07-13). Missing "AI-Extractions" category at runtime →
     `failed(writeback_failed)` + runbook pointer — the writeback code **never creates
     categories** (provisioning is W2-M2/W2-OA3's runbook step; W2-D1: two write
     capabilities only).
@@ -414,9 +451,16 @@ GitHub + GitLab; video + initial report delivered.
   - **Write ledger** keyed (content_hash, field_id) written transactionally around each
     create; retry after partial failure (5xx/timeout mid-sequence) re-executes only the
     incomplete leg — provably no duplicates.
-  - **Round-trip verification:** every created record re-read via the same REST API and
-    compared to the sent payload; only on match does the job flip `complete`;
-    mismatch/absence → `failed(writeback_verify_failed)` + `writeback.verify.failed` event.
+  - **Round-trip verification (verified paths, W2-F9/F10):** the artifact leg's create
+    returns 200 `true` with no id — the created record's id is **discovered via
+    collection GET by unique filename/content-hash** (the ledger stores the discovered
+    id); the re-read is the **FHIR projection `DocumentReference/:uuid → Binary/:uuid`**,
+    compared byte-exact (SHA-256) against the sent payload — the standard REST download
+    500s in this stack (known issue, never a dependency). The vitals leg re-read uses
+    the vitals GET and may additionally cite **FHIR `Observation?category=vital-signs`**
+    surfacing the created values (the proven cross-surface round-trip). Only on match
+    does the job flip `complete`; mismatch/absence → `failed(writeback_verify_failed)` +
+    `writeback.verify.failed` event.
   - Records visibly machine-authored: lineage {source document id, page, bbox, correlation
     id, content_hash} + provenance flag in the artifact (W2-O3's flag; UI treatment lands
     with the core flow via W2-M21 UI + W2-E1 polish). Append-only: no update/delete call
@@ -424,9 +468,11 @@ GitHub + GitLab; video + initial report delivered.
   Test: unit tests for `ledger.py` (key derivation + retry-consults-ledger logic — §7a
   unit list); integration against a mocked documents/vitals API — partial-write retry
   (ledger), re-read mismatch, 401-scope, no-encounter skip, unit-mismatch skip,
-  missing-category error, auth-expiry mid-job; live probe reuses W2-M2 — guards:
-  duplicate or untraceable records from retries (PRD hard problem: OpenEMR integrity)
-  and silent unverified writes.
+  missing-category error, auth-expiry mid-job, **id-discovery failure** (list GET finds
+  no match after a 200 `true`); the live probe (`agent/ops/spike_document_write.py`,
+  authored here) replays the audit-verified sequence against the deployed stack —
+  guards: duplicate or untraceable records from retries (PRD hard problem: OpenEMR
+  integrity) and silent unverified writes.
 
 - [ ] **W2-M12 — LangGraph production graph: typed state, step budget, routing recovery,
   encounter summary.**
@@ -556,8 +602,11 @@ GitHub + GitLab; video + initial report delivered.
   requirement), §5/§7a (leak test).
   Accept:
   - Page PNG rendered **on demand** at canonical DPI from the OpenEMR-stored source
-    (fetched with the delegated token); bounded in-memory short-TTL cache; **never written
-    to disk, never logged or traced** (§3a page-render row).
+    (fetched with the delegated token via the **FHIR `DocumentReference/:uuid →
+    Binary/:uuid` projection** — the verified byte-exact read path; the standard REST
+    download 500s in this stack, known issue, not a dependency — W2-F9); bounded
+    in-memory short-TTL cache; **never written to disk, never logged or traced** (§3a
+    page-render row).
   - Pinned session + patient-match on every fetch; cross-patient page fetch → 403.
   - Overlay draws boxes only for `grounded=true` fields (boxes only where grounding
     justifies them); UNSUPPORTED fields render the flag + overlay region per §2 grounding
@@ -1005,16 +1054,13 @@ Work identified during decomposition that lacks sufficient §/ADR backing. Route
 - **None blocking.** All planned work traces to §-anchors, ADRs, findings, or PRD
   coverage rows. Four items flagged for visibility; two need a one-line ADR/architecture
   addendum from the owner, none blocks the build:
-  1. **Typed skip-reason for the vitals unit-mismatch rule (O-new)** — the behavior
-     (skip the vitals leg, artifact-only, never convert) is fully backed by W2-D1/W2-D3,
-     but §6a's closed event list has only `writeback.skipped(no_encounter)`. A new
-     reason value (e.g. `writeback.skipped(unit_mismatch)`) extends a closed enum —
-     **needs a one-line dated ADR addendum** before W2-M11 lands; until then the plan
-     does not invent the name.
-  2. **Cohere trigger-date typo in the binding docs** — W2_ARCHITECTURE.md:197/757 and
-     W2-D4 rev say "Monday 2026-07-14 EOD" but 2026-07-14 is a Tuesday; this plan uses
-     the only coherent reading (Monday 2026-07-13 EOD, the owner's instruction). **Owner
-     should apply a dated one-line correction** to the architecture/ADR.
+  1. ~~Typed skip-reason for the vitals unit-mismatch rule (O-new)~~ **RESOLVED
+     2026-07-13 (pre-authorized):** `writeback.skipped(unit_mismatch)` added to the §6a
+     event inventory alongside `writeback.skipped(no_encounter)`, with a dated one-line
+     note under W2-D1. W2-M11 may use the name.
+  2. ~~Cohere trigger-date typo in the binding docs~~ **RESOLVED 2026-07-13:** the
+     owner-approved correction to Monday 2026-07-13 EOD landed in the architecture,
+     W2-D4 rev, and the gap-audit.
   3. **Upload-affordance UI placement** — backed only narratively (UC-W2-1 "upload from
      the chart"; gap-audit note on W2-REQ-06). Treatment resolved in-build inside W2-M21;
      if it grows beyond a chart-page affordance (new routes/surfaces), stop and route

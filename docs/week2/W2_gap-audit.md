@@ -22,6 +22,22 @@ undesigned states (durability, write principal, partial writes), and the bbox ov
 an unowned PHI surface. After resolution: **99 PRD requirements re-derived, 94 covered,
 5 out-of-scope (stretch tier, PRD-sanctioned), 0 uncovered, 0 blank cells.**
 
+> **Post-verification note (2026-07-13 — W2-F1 live verification; see W2_AUDIT.md
+> "W2-F1 independent verification").** The write-path coverage rows below were written
+> against code-reading evidence; the live run confirmed them with contract corrections
+> now binding via the architecture "Verification errata" block: **W2-REQ-16** (store
+> source) — upload verified live, but the POST returns 200 `true` with **no id**; id via
+> collection GET by content hash (W2-F9). **W2-REQ-18** (persist derived facts) — the
+> "or OpenEMR records" transport is live-proven; vitals POST → 201 {vid} (W2-F10), which
+> also retires the findings-register I3 concern about server-assigned vitals IDs.
+> **W2-REQ-96** (round-trip without duplicates/untraceability) — round-trip proven
+> byte-exact via the FHIR DocumentReference→Binary projection (the standard download
+> 500s in this stack — known issue, not a dependency); vitals round-trip proven through
+> FHIR `Observation?category=vital-signs`. Provisioning (W2-F4) resolved with a verified
+> minimum scope set and a **replacement-client** constraint (clients cannot gain scopes
+> post-registration — W2-F11). No coverage-status changes — the corrections are at the
+> contract-detail level, not the requirement level.
+
 ## Owner decisions at the gate (2026-07-13)
 
 | # | Question | Decision |

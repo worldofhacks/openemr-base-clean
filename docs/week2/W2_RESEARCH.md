@@ -153,6 +153,14 @@ for DocumentReference, no FHIR Observation write, in this fork.
   derived facts as a structured machine-authored extraction artifact linked to the
   source (plus vitals API where applicable). To verify at build: the standard API
   (`api:oemr`) scope set on the SMART client registration (D14-class enable step).
+- **Verified live 2026-07-13** — independent probe run against the local live stack
+  (production read-only): verdict **CONFIRMED and strengthened** (route-level 404s on
+  FHIR POSTs even with maximal write scopes). See W2_AUDIT.md "W2-F1 independent
+  verification" for the corrections that bind the build: upload returns 200 `true`
+  with no id (W2-F9), FHIR DocumentReference→Binary is the byte-exact read-back (the
+  standard download 500s — known issue), vitals proven end-to-end incl. FHIR
+  Observation reads (W2-F10), replacement-client provisioning constraint (W2-F4
+  resolved), CapabilityStatement untrustworthy (W2-F7), scope/discovery drift (W2-F11).
 
 ## W2-R6. PDF text-layer + page-rendering library — ADDED 2026-07-13 (/arch-finalize; license-vetted, verify at build)
 

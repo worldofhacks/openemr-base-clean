@@ -516,6 +516,7 @@ never the value), `extraction.schema.violation`, `retrieval.query.executed` (hit
 latency), `retrieval.unavailable(reason)`, `rerank.executed` (model+version, latency),
 `worker.handoff` (HandoffRecord), `writeback.created` (record type, lineage ids),
 `writeback.failed(leg, reason)`, `writeback.skipped(no_encounter)`,
+`writeback.skipped(unit_mismatch)` *(added 2026-07-13 — W2-D1 dated note)*,
 `writeback.verify.failed`, `job.reconciled(worker_restart)`, `encounter.summary` (§6),
 `eval.run.outcome` (per category), `breaker.state.changed` (dependency, state).
 

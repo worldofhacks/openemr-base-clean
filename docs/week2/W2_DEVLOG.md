@@ -63,3 +63,28 @@
   reference artifact.
 - Result: presearch committed pre-defense; W2_RESEARCH.md queued next.
 - Stage: PRE-DEFENSE.
+
+## [2026-07-13] W2-F1 live verification + post-verification consistency pass · type: milestone
+- What: independent live verification of W2-F1 (local live stack; production read-only):
+  verdict **CONFIRMED** — route-level 404s on FHIR POSTs even with maximal write scopes.
+  New findings W2-F7..F11; W2-F4 **resolved** with the verified minimum scope set and a
+  hard constraint: clients cannot gain scopes post-registration → **replacement SMART
+  client** required at MVP. Contract corrections: upload returns 200 `true` with no id
+  (id via collection GET by content hash); byte-exact read-back is the FHIR
+  DocumentReference→Binary projection (standard download 500s — known CSRF-key defect);
+  vitals proven end-to-end through FHIR Observation reads. Binding doc gained an
+  owner-approved "Verification errata" block + the Cohere-trigger date fix (Monday
+  2026-07-13; 07-14 is Tuesday). Consistency pass then aligned the implementation plan
+  (W2-OA3 → replacement-client task; W2-M2 marked verified-by-audit; M8/M11/M16 carry
+  the id-discovery + FHIR read-back contracts), W2_RESEARCH R5 (verified-live pointer),
+  W2_gap-audit (dated write-path note), and W2_DEFENSE_PREP (live-evidence addendum).
+  One pre-authorized decision-level addition only: `writeback.skipped(unit_mismatch)`
+  added to §6a + dated W2-D1 note (never convert units — a converted number is a
+  derived value not on the page).
+- Why: the tasks-gen plan (f55f046) predated part of the verification; docs must agree
+  exactly with probed reality before build starts.
+- Result: plan/research/gap-audit/defense/devlog aligned; **the leftover "W2-F1
+  Verification Local" API client was found still ENABLED in the local dev stack and was
+  disabled** (`is_enabled=0` confirmed) — the W1 E9 duplicate-launcher lesson applied;
+  it was local-only, password-grant, never production.
+- Stage: PLANNING COMPLETE → Wave 0 build next.

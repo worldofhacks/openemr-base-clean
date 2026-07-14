@@ -55,6 +55,21 @@ wrong writes). Week 2 requires storing documents and persisting derived facts.
   of clinician-authored data. Scopes widen from read-only to read + narrow create; say it
   plainly, do not pretend it is still read-only.
 
+> **Live-evidence addendum (2026-07-13 — post-defense; W2-F1 independent verification,
+> W2_AUDIT.md).** The write story above now has probe evidence, not just design: FHIR
+> POSTs for our targets return route-level 404 even with maximal write scopes (W2-F1
+> CONFIRMED — this fork literally cannot do the FHIR create this section's draft wording
+> assumed; the shipping transport is the documents/vitals API per W2-R5/W2-D1, so read
+> "create DocumentReference / create Observation" above as its era's shorthand for
+> "create document / create vitals record"). Upload verified live: 200 `true`, id via
+> collection GET by content hash (W2-F9); round-trip proven **byte-exact** via the FHIR
+> DocumentReference→Binary projection, and vitals proven end-to-end through FHIR
+> Observation reads (W2-F10) — the PRD's round-trip requirement is demonstrated, not
+> asserted. Provisioning is a verified sequence with a hard constraint: clients cannot
+> gain scopes post-registration → **replacement SMART client** at MVP (W2-F4 resolved).
+> Defense line for grill Q1/Q9: "we probed it live — here is the 404, here is the
+> SHA-256 match."
+
 ### B. "You refused frameworks last week (D6). The assignment names LangGraph."
 D6 documented its own invalidation: "wk2-3 multi-agent requirements (migration seam: tool
 registry + orchestrator interface stay framework-shaped)." That clause fired.

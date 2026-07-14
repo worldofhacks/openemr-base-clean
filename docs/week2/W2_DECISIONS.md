@@ -24,6 +24,10 @@
   cannot gain scopes post-registration → MVP requires a REPLACEMENT SMART client
   registration** (W1+W2 scope union, auth-code+refresh, swap credentials, disable the
   old client after cutover — E9 lesson). Staff ACLs must permit patients/docs write.
+- **Note (2026-07-13, pre-authorized via /tasks-gen Needs-architecture item):** metric
+  value on a US-units vitals instance → skip the vitals leg with reason `unit_mismatch`
+  (`writeback.skipped(unit_mismatch)`, added to the binding doc §6a event inventory),
+  never convert — a converted number is a derived value not on the page (grounding rule).
 - Idempotent: content-hash on files, deterministic IDs on facts. Re-upload creates
   nothing. That is the PRD round-trip requirement.
 - Discrepancy note (owner-flagged 2026-07-13): the PRD's engineering section says

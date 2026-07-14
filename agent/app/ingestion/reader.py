@@ -24,8 +24,9 @@ The single ingestion read path behind ``read_words_and_boxes``:
 The reader stack is **pypdfium2 + pdfplumber + Tesseract only**. PyMuPDF is banned
 (AGPL, W2-R6) and is never imported here.
 
-``NormBBox`` is defined here for the spike; when W2-M6 freezes schemas it is the
-shape unified into the canonical §2 contract module — no second shape is improvised.
+``NormBBox`` is the canonical §2 box, defined in ``app.schemas.extraction`` (W2-M6) and
+re-exported here by identity — the M4 reader and the schema inventory share ONE class
+object, so no second coordinate space is ever improvised.
 
 @package   OpenEMR — Clinical Co-Pilot agent
 @link      https://www.open-emr.org
@@ -45,7 +46,13 @@ import pdfplumber
 import pypdfium2 as pdfium
 import pytesseract
 from PIL import Image
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict
+
+# NormBBox's CANONICAL home is app.schemas.extraction (W2-M6, §2). It is re-exported
+# here (by identity, not a copy) so the M4 reader and the schema inventory can never
+# drift into two divergent coordinate spaces. The former local definition — a byte-for-
+# byte-equivalent FROZEN, strict, [0,1] / x0<x1 / y0<y1 model — was UNIFIED into schemas.
+from app.schemas.extraction import NormBBox
 
 # --- locked constants -----------------------------------------------------------------
 
@@ -75,34 +82,9 @@ _WORDLIKE_RE = re.compile(r"[A-Za-z0-9]")
 
 
 # --- the canonical box ----------------------------------------------------------------
-
-
-class NormBBox(BaseModel):
-    """Canonical normalized page-relative box (§2).
-
-    Coordinates are normalized to ``[0, 1]``, origin TOP-LEFT, y-DOWN (a word near the
-    page top has SMALL ``y0``). Frozen and strict: construction validates the range and
-    non-degenerate/non-inverted invariants, unknown fields are rejected.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    x0: float
-    y0: float
-    x1: float
-    y1: float
-
-    @model_validator(mode="after")
-    def _validate_canonical(self) -> "NormBBox":
-        for name in ("x0", "y0", "x1", "y1"):
-            value = getattr(self, name)
-            if not (0.0 <= value <= 1.0):
-                raise ValueError(f"{name}={value} escaped canonical range [0, 1]")
-        if not self.x0 < self.x1:
-            raise ValueError(f"degenerate/inverted box: x0={self.x0} !< x1={self.x1}")
-        if not self.y0 < self.y1:
-            raise ValueError(f"degenerate/inverted box: y0={self.y0} !< y1={self.y1}")
-        return self
+#
+# ``NormBBox`` is imported (re-exported) from ``app.schemas.extraction`` above — its
+# canonical home per W2-M6 §2. No second definition lives here.
 
 
 class Word(BaseModel):

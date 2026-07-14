@@ -16,74 +16,21 @@ is reconstructable from the correlation ID alone (§6).
 
 from __future__ import annotations
 
-import enum
 import operator
 from typing import Annotated, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
 from app.orchestrator.loop import BriefResult
 
-
-class SupervisorDecision(enum.Enum):
-    """Closed §2 decision vocabulary — exactly the locked five-member set."""
-
-    ROUTE_EXTRACT = "route_extract"
-    ROUTE_RETRIEVE = "route_retrieve"
-    COMPOSE_ANSWER = "compose_answer"
-    REFUSE = "refuse"
-    DONE = "done"
-
-
-class ReasonCode(enum.Enum):
-    """Closed reason-code vocabulary; each member is legal for exactly one decision
-    (§2: "a closed reason_code enum per decision" — see `_ALLOWED_REASONS`)."""
-
-    # route_extract
-    EXTRACTION_REQUESTED = "extraction_requested"
-    # route_retrieve
-    RETRIEVAL_REQUESTED = "retrieval_requested"
-    # compose_answer
-    WORKERS_COMPLETE = "workers_complete"
-    # refuse — step-budget exhaustion is the only refusal this skeleton produces (§2)
-    STEP_BUDGET_EXCEEDED = "step_budget_exceeded"
-    # done
-    TURN_COMPLETE = "turn_complete"
-
-
-# The per-decision closed sets (§2). A HandoffRecord pairing a decision with a reason
-# outside its set fails validation — the vocabulary is closed in both dimensions.
-_ALLOWED_REASONS: dict[SupervisorDecision, frozenset[ReasonCode]] = {
-    SupervisorDecision.ROUTE_EXTRACT: frozenset({ReasonCode.EXTRACTION_REQUESTED}),
-    SupervisorDecision.ROUTE_RETRIEVE: frozenset({ReasonCode.RETRIEVAL_REQUESTED}),
-    SupervisorDecision.COMPOSE_ANSWER: frozenset({ReasonCode.WORKERS_COMPLETE}),
-    SupervisorDecision.REFUSE: frozenset({ReasonCode.STEP_BUDGET_EXCEEDED}),
-    SupervisorDecision.DONE: frozenset({ReasonCode.TURN_COMPLETE}),
-}
-
-
-class HandoffRecord(BaseModel):
-    """One supervisor-worker hop, emitted per hop in emission order (§2, UC-W2-3/4)."""
-
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
-
-    correlation_id: str = Field(min_length=1)
-    turn: int = Field(ge=0)  # per-turn hop counter; strictly increasing within one turn
-    supervisor_decision: SupervisorDecision
-    reason_code: ReasonCode
-    worker: str = Field(min_length=1)
-    input_ref: str = Field(min_length=1)   # trace-addressable id — never a raw value
-    output_ref: str = Field(min_length=1)  # trace-addressable id — never a raw value
-    handoff_ts: str = Field(min_length=1)  # ISO-8601 UTC
-
-    @model_validator(mode="after")
-    def _reason_matches_decision(self) -> "HandoffRecord":
-        if self.reason_code not in _ALLOWED_REASONS[self.supervisor_decision]:
-            raise ValueError(
-                f"reason_code {self.reason_code.value!r} is not in the closed set for "
-                f"decision {self.supervisor_decision.value!r}"
-            )
-        return self
+# The CANONICAL home for these classes is app.schemas.handoff (W2-M6, §2). They are
+# re-exported here (by identity, not a copy) so the M3 orchestrator and the schema
+# inventory share ONE HandoffRecord/SupervisorDecision family and can never drift apart.
+# The former local definitions were UNIFIED into schemas.handoff unchanged.
+from app.schemas.handoff import (  # noqa: F401  (re-export)
+    _ALLOWED_REASONS,
+    HandoffRecord,
+    ReasonCode,
+    SupervisorDecision,
+)
 
 
 class GraphState(TypedDict):

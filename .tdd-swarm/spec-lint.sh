@@ -16,6 +16,11 @@ for AC in $ACS; do
     echo "spec-lint: $TID:$AC -> eval-harness case (exempt from frozen-test mapping)"
     continue
   fi
+  # live-measure criteria are recorded operational evidence (deployed/live runs), not frozen tests
+  if grep -qE "\b$AC\b.*\[live-measure\]|\[live-measure\].*\b$AC\b" "$TICKET_FILE"; then
+    echo "spec-lint: $TID:$AC -> live-measure evidence row (exempt from frozen-test mapping)"
+    continue
+  fi
   if ! grep -rqE "spec\($TID:$AC\)" agent/tests/ agent/ops/ agent/evals/ 2>/dev/null; then
     echo "spec-lint: MISSING test tagged spec($TID:$AC)"
     FAIL=1

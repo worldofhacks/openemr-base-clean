@@ -230,3 +230,39 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
   Secret scan on main..wave0: clean (no .env / keys committed).
 - STATUS: W2-M1 / W2-M3 / W2-M24 all REVIEW-PASSED and INTEGRATED into swarm/w2-wave0. Wave 0a COMPLETE.
   Next: Wave 0b W2-M4 (PDF words+boxes reader spike) — RED→GREEN→verify→merge, then owner go/no-go.
+
+## Phase 2-5 — Wave 0b W2-M4 (PDF words+boxes reader spike) COMPLETE — review-passed + merged
+- Full tdd-swarm cycle, separation of powers enforced by distinct agents + orchestrator gates:
+    - Ticket worktree ticket/w2-m4-reader-spike off wave0 @ 294a5f5 (openemr-cmd, no stack); own venv.
+    - Test Agent froze test_reader_geometry.py @ 81ebb04 (592 lines, AC-1..5/7; AC-6 live-measure exempt).
+      Orchestrator re-verified RED for the right reason (ModuleNotFoundError app.ingestion; prior 340 green)
+      + test-design review (named tol constant, y-flip proof, bounded AC-4 wall-clock, anti-lazy guards). FROZEN.
+    - Impl Agent @ b44ca27 (app/ingestion/{__init__,reader}.py, ops/spike_reader.py, 3 synthetic fixtures +
+      generate_fixtures.py, report). Contract: frozen strict NormBBox (pydantic v2, range+non-inverted),
+      text-layer(pypdfium2/pdfplumber, y-flipped) | content-based junk-density → OCR(Tesseract 200 DPI),
+      hard per-page OCR timeout via multiprocessing.Process.terminate() [ProcessPoolExecutor.cancel_futures
+      does NOT kill a running worker — spike trap]. AC-1 cross-engine max Δ 0.0087 vs tol 0.02 (56% headroom).
+      AC-6 winner: pdfplumber.extract_words (native y-down word boxes) over pypdfium2 (char y-up + manual flip).
+    - Orchestrator re-ran (trust-nothing): 347 passed / 6 skipped; run-local-gates.sh ALL PASS; frozen tests +
+      pyproject + Dockerfile byte-untouched; scope = 8 impl files only; secret/PHI scan clean.
+    - Reviewer APPROVE + Security PASS (6 independent, 0 crit/imp). Verified y-flip real, junk heuristic
+      content-based (not filename/index), OCR kill real (120s sleeper killed in 0.83s, no orphan children).
+- Recorded Minor findings — carried FORWARD to the feature build (W2-M6+ real write/read path), NOT spike-blocking:
+    (1) The pdfium RENDER step runs in the PARENT before the per-page OCR timeout boundary → decompression-bomb /
+        oversized-page DoS window is unbounded; the upload read path must bound render too (size/dimension caps or
+        render-inside-the-timed-child).
+    (2) No path allowlisting / upload size+page-count caps — gate before serving real uploads.
+    (3) Corrupt/empty/missing PDFs raise instead of a typed document-level `unreadable` outcome — the write path
+        wants a typed malformed-upload outcome mirroring the per-page one.
+    (4) _make_bbox silently DROPS grossly-out-of-range boxes (clamps then drops degenerate) — log/count dropped
+        boxes so a coordinate-space regression is observable, not silent (unify into W2-M6 NormBBox).
+- Merged into swarm/w2-wave0 @ 67d91d8 (--no-ff). Repo-gate suite on merged wave0: 347 passed / 6 skipped.
+
+## ===== WAVE 0 COMPLETE (0a {M1,M3,M24} + 0b {M4}) — STOP for owner go/no-go =====
+- All four de-risking spikes review-passed + integrated on swarm/w2-wave0 (pushed to origin/GitHub).
+- GO signals: container/RSS gate PASS (9.8x headroom, local reranker unblocked); LangGraph skeleton + SSE
+  verdict recorded; Tier-2 gate $0.345/9.3min viable + fork-PR secret policy frozen; reader emits ONE canonical
+  NormBBox space on clean+degraded fixtures with a real y-flip + real OCR-kill. Suite 347P/6S, all gates green.
+- Feature build (STEP B) proceeds off swarm/w2-wave0: W2-M6 schema freeze (unify NormBBox) → documents.py
+  ingest+grounding+D10 writeback → graph/composer → eval gate. Retrieval lane (evidence.py/corpus) owned by
+  the parallel agent — do not touch.

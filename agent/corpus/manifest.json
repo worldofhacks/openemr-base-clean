@@ -1,0 +1,266 @@
+{
+  "schema_version": "1.0",
+  "corpus_id": "vadod-cpg-trio",
+  "ingest_date": "2026-07-14",
+  "publisher": "U.S. Department of Veterans Affairs and U.S. Department of Defense",
+  "curation": {
+    "rule": "Ingest recommendation and management sections plus compact clinician cards; exclude methodology and evidence-review appendices.",
+    "text_only": true,
+    "figures_excluded": true,
+    "normalization": [
+      "Unicode NFC",
+      "soft-hyphen removal",
+      "whitespace collapse",
+      "repeated running-header and page-footer removal"
+    ],
+    "verbatim_policy": "Every quote is a contiguous span of normalized source text; no summarization or paraphrase.",
+    "chunking": {
+      "target_words": 140,
+      "max_words": 180,
+      "overlap_sentences": 1
+    }
+  },
+  "license_policy": {
+    "status": "verified",
+    "basis": "U.S. Government work; government-produced VA website material is not copyright protected under the VA policy.",
+    "policy_url": "https://department.va.gov/copyright-policy/",
+    "scope_note": "Text-layer ingestion only. Embedded figures, seals, logos, and explicitly attributed third-party material are excluded."
+  },
+  "documents": [
+    {
+      "source_id": "vadod-diabetes-2023",
+      "title": "VA/DoD Clinical Practice Guideline for the Management of Type 2 Diabetes Mellitus",
+      "artifact_type": "full_guideline",
+      "version": "6.0-2023",
+      "publication_date": "2023-05",
+      "evidence_review_through": "2022-04-11",
+      "landing_page_url": "https://www.healthquality.va.gov/guidelines/CD/diabetes/",
+      "source_url": "https://www.healthquality.va.gov/HEALTHQUALITY/guidelines/CD/diabetes/VADOD-Diabetes-CPG_Final_508.pdf",
+      "source_pdf_sha256": "cc5f24ac1b38560d00a2e85e5361d4f741ea2b7be9f7df354c6104b385836a5d",
+      "curated_file": "sources/vadod-diabetes-2023.jsonl",
+      "curated_sha256": "f3322b731184b8611bdfe49f1a98c9116115f3febd9af3e3c7c79136be4feba5",
+      "license": {
+        "status": "verified",
+        "name": "U.S. Government work; not copyright protected per VA policy",
+        "policy_url": "https://department.va.gov/copyright-policy/"
+      },
+      "curation": {
+        "included_printed_page_ranges": [[24, 71], [97, 106], [145, 146]],
+        "included_sections": [
+          "IX. Recommendations",
+          "Appendix B: Glycemic Control Targets and Monitoring",
+          "Appendix C: Pharmacotherapy",
+          "Appendix I: Alternative Text Descriptions of Algorithm"
+        ],
+        "excluded_sections": [
+          "X. Research Priorities",
+          "Appendix A: Guideline Development Methodology",
+          "Appendix E: Evidence Table",
+          "Appendix H: Literature Review Search Terms and Strategy",
+          "References"
+        ],
+        "boundary_note": "Printed page 71 is clipped immediately before X. Research Priorities.",
+        "figure_policy": "Graphical algorithm pages excluded; VA-authored text alternative used."
+      },
+      "chunk_count": 216
+    },
+    {
+      "source_id": "vadod-diabetes-2023-quick-reference",
+      "title": "VA/DoD Clinical Practice Guideline for the Management of Type 2 Diabetes Mellitus: Quick Reference Guide",
+      "artifact_type": "quick_reference_guide",
+      "version": "6.0-2023",
+      "publication_date": "2023-05",
+      "landing_page_url": "https://www.healthquality.va.gov/guidelines/CD/diabetes/",
+      "source_url": "https://www.healthquality.va.gov/HEALTHQUALITY/guidelines/CD/diabetes/VADOD-Diabetes-CPG-Quick-Reference-Guide_final_508.pdf",
+      "source_pdf_sha256": "f10e4025f3682ed0d4a6971699fd8213cb3aea474da08bb0f0d625455c23315d",
+      "curated_file": "sources/vadod-diabetes-2023-quick-reference.jsonl",
+      "curated_sha256": "2d85b0dfec778b92cf76407ed24237eff3c275607f5a59810f8d1373498e6bfd",
+      "license": {
+        "status": "verified",
+        "name": "U.S. Government work; not copyright protected per VA policy",
+        "policy_url": "https://department.va.gov/copyright-policy/"
+      },
+      "curation": {
+        "included_printed_page_ranges": [[1, 6]],
+        "included_sections": ["All nonblank recommendation and algorithm pages"],
+        "excluded_sections": ["Cover-only and blank physical PDF pages"],
+        "boundary_note": "The current Version 6.0 release has no artifact titled Pocket Card; this is the official compact clinician guide.",
+        "figure_policy": "Text layer only; no embedded graphics or logos retained."
+      },
+      "chunk_count": 14
+    },
+    {
+      "source_id": "vadod-hypertension-2020",
+      "title": "VA/DoD Clinical Practice Guideline for the Diagnosis and Management of Hypertension in the Primary Care Setting",
+      "artifact_type": "full_guideline",
+      "version": "4.0-2020",
+      "publication_date": "2020-03",
+      "evidence_review_through": "2019-03-25",
+      "landing_page_url": "https://www.healthquality.va.gov/guidelines/CD/htn/",
+      "source_url": "https://www.healthquality.va.gov/HEALTHQUALITY/guidelines/CD/htn/VADODHypertensionCPG508Corrected792020.pdf",
+      "source_pdf_sha256": "7f2f56d3536350c832f00ecf7ae0680257ec069648e0eb2ccd97e933dc43a122",
+      "curated_file": "sources/vadod-hypertension-2020.jsonl",
+      "curated_sha256": "4e1dded49c555678986500a29486cfddadf1688c6d8255888276dea832f022dc",
+      "license": {
+        "status": "verified",
+        "name": "U.S. Government work; not copyright protected per VA policy",
+        "policy_url": "https://department.va.gov/copyright-policy/"
+      },
+      "curation": {
+        "included_printed_page_ranges": [[23, 27], [29, 61], [97, 101], [121, 123]],
+        "included_sections": [
+          "VII. Recommendations except adapted third-party measurement tables",
+          "Appendix E: Dietary Information",
+          "Appendix F: Drug Dosage Table",
+          "Appendix K: Alternative Text Descriptions of Algorithms"
+        ],
+        "excluded_sections": [
+          "Printed page 28 adapted AHA measurement table",
+          "Opening adapted AHA cuff-size table on printed page 29",
+          "VIII. Research Priorities",
+          "Appendix A: Evidence Review Methodology",
+          "Appendix C: Evidence Table",
+          "Appendix G: Guidance for Conducting Office Blood Pressure Measurement",
+          "Appendix H: Guidance for Conducting Home Blood Pressure Measurement",
+          "Appendix J: Literature Review Search Terms and Strategy",
+          "References"
+        ],
+        "boundary_note": "Printed page 29 begins after the adapted cuff-size table, at the VA/DoD discussion.",
+        "figure_policy": "Graphical algorithm pages excluded; VA-authored text alternative used."
+      },
+      "chunk_count": 197
+    },
+    {
+      "source_id": "vadod-hypertension-2020-pocket-card",
+      "title": "VA/DoD Hypertension Clinical Practice Guideline Pocket Card",
+      "artifact_type": "pocket_card",
+      "version": "4.0-2020-companion",
+      "publication_date": "2020-03",
+      "landing_page_url": "https://www.healthquality.va.gov/guidelines/CD/htn/",
+      "source_url": "https://www.healthquality.va.gov/HEALTHQUALITY/guidelines/CD/htn/VADODHypertensionCPGPocketCard462020.pdf",
+      "source_pdf_sha256": "82d5be76a22bf67dcb3bed2e0861d0823c09ff0c91caf0233fd48025afaac542",
+      "curated_file": "sources/vadod-hypertension-2020-pocket-card.jsonl",
+      "curated_sha256": "3bf7560a8b029d8d6c0b05bdffa17a6f8084f7e7878eac217ab3a87e95324189",
+      "license": {
+        "status": "verified",
+        "name": "U.S. Government work; not copyright protected per VA policy",
+        "policy_url": "https://department.va.gov/copyright-policy/"
+      },
+      "curation": {
+        "included_printed_page_ranges": [[1, 2]],
+        "included_sections": ["VA/DoD screening, diagnosis, treatment, goals, and treatment-optimization text"],
+        "excluded_sections": [
+          "Office and home blood-pressure measurement blocks adapted from AHA material",
+          "Diet-protocol tables on the graphical card"
+        ],
+        "figure_policy": "Text layer only; third-party-adapted blocks and embedded graphics excluded."
+      },
+      "chunk_count": 12
+    },
+    {
+      "source_id": "vadod-lipids-2025",
+      "title": "VA/DoD Clinical Practice Guideline on Lipid Management for Cardiovascular Disease Risk Reduction",
+      "artifact_type": "full_guideline",
+      "version": "5.0-2025",
+      "publication_date": "2025-12",
+      "evidence_review_through": "2025-01-15",
+      "landing_page_url": "https://www.healthquality.va.gov/guidelines/CD/lipids/",
+      "source_url": "https://www.healthquality.va.gov/HEALTHQUALITY/guidelines/CD/lipids/Lipids-CPG_2025-Guideline_final_20260106.pdf",
+      "source_pdf_sha256": "2cf05fab73dd52241d51624440597248d0fecc0d471a81eba02945f6bf0c585c",
+      "curated_file": "sources/vadod-lipids-2025.jsonl",
+      "curated_sha256": "e2ead5531cfcbb237f72bd8efa312ad7b0868834ffc303d50de1b5d41e014f39",
+      "license": {
+        "status": "verified",
+        "name": "U.S. Government work; not copyright protected per VA policy",
+        "policy_url": "https://department.va.gov/copyright-policy/"
+      },
+      "curation": {
+        "included_printed_page_ranges": [[24, 62], [125, 134]],
+        "included_sections": [
+          "IX. Recommendations",
+          "Appendix G: Alternative Text Description of Algorithm",
+          "Appendix H: CVD Risk Calculators",
+          "Appendix I: Pharmacotherapy",
+          "Appendix J: Lifestyle Medicine Interventions"
+        ],
+        "excluded_sections": [
+          "X. Research Priorities",
+          "Appendix A: Guideline Development Methodology",
+          "Appendix B: Evidence Table",
+          "Appendix F: Literature Review Search Terms and Strategy",
+          "Appendix K: Familial Hypercholesterolemia (adapted third-party tables)",
+          "Appendix L: Pharmacogenomic Testing (table reproduced with permission)",
+          "References"
+        ],
+        "figure_policy": "Graphical algorithm pages excluded; VA-authored text alternative used."
+      },
+      "chunk_count": 208
+    },
+    {
+      "source_id": "vadod-lipids-2025-pocket-card",
+      "title": "VA/DoD Lipid Management for Cardiovascular Disease Risk Reduction Pocket Card",
+      "artifact_type": "pocket_card",
+      "version": "5.0-2025-companion",
+      "publication_date": "2025-12",
+      "landing_page_url": "https://www.healthquality.va.gov/guidelines/CD/lipids/",
+      "source_url": "https://www.healthquality.va.gov/HEALTHQUALITY/guidelines/CD/lipids/Lipids-CPG_2025-Pocket-Card_final_20251217.pdf",
+      "source_pdf_sha256": "fe8bd7d9d24082154df1ac0252b4ae34df2f857d220be02620cd2d026e681cc3",
+      "curated_file": "sources/vadod-lipids-2025-pocket-card.jsonl",
+      "curated_sha256": "e018787ba8fa1dbe22ff91ba0753cacfabeebfc0b198378019dd866d9e123277",
+      "license": {
+        "status": "verified",
+        "name": "U.S. Government work; not copyright protected per VA policy",
+        "policy_url": "https://department.va.gov/copyright-policy/"
+      },
+      "curation": {
+        "included_printed_page_ranges": [[1, 1]],
+        "included_sections": ["Management algorithm text and clinical sidebars"],
+        "excluded_sections": ["Embedded graphics, seals, and logos"],
+        "figure_policy": "Text layer only; no embedded graphics retained."
+      },
+      "chunk_count": 6
+    }
+  ],
+  "excluded_sources": [
+    {
+      "name": "ADA Standards of Care",
+      "reason": "License explicitly restricts text/data mining and machine learning use."
+    },
+    {
+      "name": "AHA/ACC",
+      "reason": "All-rights-reserved guideline content; permission required."
+    },
+    {
+      "name": "JNC 8",
+      "reason": "JAMA/AMA copyrighted content."
+    },
+    {
+      "name": "GINA",
+      "reason": "All-rights-reserved content."
+    },
+    {
+      "name": "KDIGO",
+      "reason": "Conflicting reuse terms and embedded third-party figures."
+    },
+    {
+      "name": "JAMA PDFs",
+      "reason": "AMA reserves text/data-mining and AI-training rights."
+    },
+    {
+      "name": "Diabetes Pocket Card (2017)",
+      "reason": "Excluded as a Version 5.0/2017 version mismatch; the current 2023 release provides a Version 6.0 Quick Reference Guide instead."
+    },
+    {
+      "name": "HTN AHA-adapted measurement blocks",
+      "reason": "Downstream license is unclear; excluded without further investigation."
+    },
+    {
+      "name": "Lipids third-party appendices K-L",
+      "reason": "Contain adapted or permission-reproduced third-party tables with unclear downstream rights."
+    }
+  ],
+  "totals": {
+    "documents": 6,
+    "chunks": 653
+  }
+}

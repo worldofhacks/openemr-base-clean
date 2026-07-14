@@ -36,7 +36,7 @@ RUN_LIVE/[ui] extra).
 |---|---|
 | Full suite ≥ baseline | fresh venv in integration worktree; `pytest -q` count ≥ 238 passed |
 | Container build | `docker build agent/` succeeds locally (W2-M1 adds native deps); Railway build green (M1 evidence) |
-| Dependency check | `pip check` clean; **two-tier license gate (amended 2026-07-14, W2 Wave 0 — see note below):** FIRST-PARTY + DIRECT deps strict-permissive (Apache/BSD/MIT family; permissive-equivalent identifiers e.g. pillow HPND only via explicit allowlist + justification; no GPL/LGPL/MPL identifier on a direct dep); documented non-infecting TRANSITIVE runtime deps accepted by owner exception (tqdm `MPL-2.0 AND MIT`; libgfortran in the Linux numpy wheel under `GCC-exception-3.1`); **AGPL hard-banned at every level (W2-R6 — PyMuPDF)**; no torch anywhere (W2-M1 AC-2) |
+| Dependency check | `pip check` clean; **two-tier license gate (amended 2026-07-14, W2 Wave 0 — see note below):** FIRST-PARTY + DIRECT deps strict-permissive (Apache/BSD/MIT family; permissive-equivalent identifiers e.g. pillow HPND only via explicit allowlist + justification; no GPL/LGPL/MPL identifier on a direct dep); documented non-infecting TRANSITIVE runtime deps accepted by owner exception per a **criterion** (MPL-2.0 file-level weak copyleft on unmodified wheels — tqdm/certifi/orjson; and libgfortran in the Linux numpy wheel under `GCC-exception-3.1`); **AGPL hard-banned at every level (W2-R6 — PyMuPDF)**; no torch anywhere (W2-M1 AC-2) |
 | Secret scan | `gitleaks detect` (if installed) else `git diff main...HEAD` grep for key patterns (sk-ant-, api key literals, Bearer); `.env` files never committed |
 | PHI check | wave diff + fixtures are synthetic/non-clinical only; no PHI in logs/traces/fixtures |
 | Write-surface freeze | wave diff contains NO OpenEMR PHP/routes/schema file and NO OpenEMR write-path enablement (W2-D2/D9; W2-M8/M11 out of scope) |
@@ -55,18 +55,27 @@ license gate is a DoD/doc clause, not a pytest. The gate is two-tier:
   only via an explicit allowlist entry with a justification comment. No GPL/LGPL/MPL/AGPL
   identifier on any direct dep. PyMuPDF is banned (AGPL, W2-R6). No `torch` anywhere
   (frozen AC-2 test enforces torch absence).
-- **Transitive runtime deps — documented accepted exceptions for non-infecting licenses.**
-  Two transitive deps pulled in by `fastembed` are accepted with recorded rationale
-  because neither infects first-party code:
-  - **tqdm** — `MPL-2.0 AND MIT`. MPL-2.0 is file-level weak copyleft: its obligations
-    attach only to modified MPL-covered files that are redistributed, never to the
-    combined/larger work. tqdm ships as an unmodified wheel; we neither modify nor
-    redistribute modified tqdm source. Non-viral, non-GPL.
+- **Transitive runtime deps — documented accepted exceptions for non-infecting licenses,
+  by criterion (non-exhaustive).** ACCEPTANCE RULE: a transitive dep whose only
+  non-permissive identifier is file-level weak copyleft (MPL-2.0) on an unmodified wheel,
+  or a runtime-library GPL exception, is accepted; AGPL and viral/strong copyleft
+  (GPL/LGPL without a runtime exception) are never accepted. Full `importlib.metadata`
+  scan of the installed environment (2026-07-14, 94 dists — the only MPL/copyleft
+  identifiers found):
+  - **MPL-2.0, file-level weak copyleft, unmodified wheels** — its obligations attach only
+    to modified MPL-covered files that are redistributed, never to the combined/larger
+    work: **tqdm** `MPL-2.0 AND MIT` (via fastembed), **certifi** `MPL-2.0` (via httpx),
+    **orjson** `MPL-2.0 AND (Apache-2.0 OR MIT)` (via langgraph → langgraph-sdk). We
+    neither modify nor redistribute modified source of any of them. Non-viral, non-GPL.
   - **libgfortran** — bundled inside the Linux `numpy` binary wheel;
     `GPL-3.0-or-later WITH GCC-exception-3.1`. The GCC Runtime Library Exception exists
     specifically so linking against the GCC runtime does not impose GPL on the resulting
     work. The identifier contains "GPL-3.0" but the exception means our use/distribution
-    triggers no GPL copyleft.
+    triggers no GPL copyleft. (A Linux-wheel binary artifact; absent on the macOS dev
+    venv, present on the Railway/Linux deploy wheel.)
+  - *Scan hygiene for the future automated gate (W2-M20):* a naive substring scan
+    false-positives on `mmh3` (its MIT license text contains "IMPLIED" ⊃ "MPL"); mmh3 is
+    MIT, not MPL.
 - **AGPL is hard-banned at every level** (direct or transitive) — the one license no
   exception covers (PyMuPDF, W2-R6).
 

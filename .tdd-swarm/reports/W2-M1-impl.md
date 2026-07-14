@@ -8,9 +8,10 @@ Date: 2026-07-14 (all times UTC)
 **Capacity status: PASS.** The repaired probe was deployed and remeasured against the
 container-wide cgroup v2 peak. **Overall DoD status: SATISFIED.** The one remaining item —
 the binding license contract — was resolved on 2026-07-14 by an owner-granted documented
-exception that refines the gate to strict-on-first-party/direct deps and accepts two
-documented non-infecting transitive runtime deps (tqdm, libgfortran); see License
-verification.
+exception that refines the gate to strict-on-first-party/direct deps and accepts the
+documented non-infecting transitive runtime deps by criterion (MPL-2.0 weak-copyleft
+unmodified wheels — tqdm, certifi, orjson; and libgfortran under the GCC Runtime Library
+Exception); see License verification.
 
 | Measure | Value | Source |
 |---|---|---|
@@ -211,16 +212,28 @@ license-adjacent frozen test, AC-2, checks torch absence + `pip check`, both sti
   langfuse MIT, asyncpg Apache-2.0), with pillow's `MIT-CMU`/HPND admitted via the
   explicit allowlist entry + justification (pyproject comment). No GPL/LGPL/MPL/AGPL
   identifier on any direct dep.
-- **Two transitive runtime deps of fastembed — accepted as non-infecting:**
-  - **tqdm** — metadata expression `MPL-2.0 AND MIT`. MPL-2.0 is file-level weak copyleft:
-    its obligations attach only to modified MPL-covered files that are redistributed,
-    never to the combined/larger work. tqdm is consumed as an unmodified wheel; we neither
-    modify nor redistribute modified tqdm source. Non-viral, non-GPL — ACCEPTED.
+- **Transitive runtime deps carrying a non-permissive identifier — accepted as
+  non-infecting, by criterion (non-exhaustive).** ACCEPTANCE RULE: a transitive dep whose
+  only non-permissive identifier is (i) file-level weak copyleft (MPL-2.0) on an
+  unmodified wheel, or (ii) a runtime-library GPL exception, is accepted; AGPL and
+  viral/strong copyleft (GPL/LGPL without a runtime exception) are never accepted at any
+  level. Full `importlib.metadata` scan of the installed environment (2026-07-14, 94
+  dists — these are the ONLY MPL/copyleft identifiers found):
+  - **MPL-2.0 — file-level weak copyleft, consumed as unmodified wheels** (obligations
+    attach only to modified MPL-covered files that are redistributed, never to the
+    combined/larger work; we neither modify nor redistribute modified source): **tqdm**
+    `MPL-2.0 AND MIT` (via fastembed), **certifi** `MPL-2.0` (via httpx), **orjson**
+    `MPL-2.0 AND (Apache-2.0 OR MIT)` (via langgraph → langgraph-sdk). Non-viral, non-GPL —
+    ACCEPTED.
   - **libgfortran** — bundled in the Linux NumPy binary wheel;
     `GPL-3.0-or-later WITH GCC-exception-3.1`. The GCC Runtime Library Exception exists
     precisely so linking against the GCC runtime does not impose GPL on the resulting
     work; the identifier contains "GPL-3.0" but the exception means our use/distribution
-    triggers no GPL copyleft — ACCEPTED.
+    triggers no GPL copyleft — ACCEPTED. (Absent on the macOS dev venv — a
+    Linux-manylinux-wheel binary artifact; applies to the Railway/Linux deploy wheel.)
+  - *Scan hygiene note (for the W2-M20 automated gate):* a naive substring scan
+    false-positives on `mmh3` — its MIT license text contains "IMPLIED" ⊃ "MPL"; mmh3 is
+    MIT, not MPL. No AGPL and no strong GPL/LGPL identifier appears on any of the 94 dists.
 - **AGPL hard-banned at every level** (direct or transitive). The locked W2-R6 and
   execution-path invariants hold: **PyMuPDF and AGPL are absent, and torch is absent** in
   the current-head image (frozen AC-2 test proves torch absence).

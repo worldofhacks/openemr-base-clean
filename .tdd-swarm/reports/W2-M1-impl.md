@@ -6,8 +6,11 @@ Date: 2026-07-14 (all times UTC)
 ## Verdict summary — the go/no-go table
 
 **Capacity status: PASS.** The repaired probe was deployed and remeasured against the
-container-wide cgroup v2 peak. **Overall DoD status remains BLOCKED only on the binding
-license contract pending an owner exception**; see License verification.
+container-wide cgroup v2 peak. **Overall DoD status: SATISFIED.** The one remaining item —
+the binding license contract — was resolved on 2026-07-14 by an owner-granted documented
+exception that refines the gate to strict-on-first-party/direct deps and accepts two
+documented non-infecting transitive runtime deps (tqdm, libgfortran); see License
+verification.
 
 | Measure | Value | Source |
 |---|---|---|
@@ -194,20 +197,40 @@ BSD-3 · flatbuffers Apache-2.0 · hf-xet Apache-2.0 · protobuf BSD-3. Pillow
 Debian tesseract-ocr/tesseract-ocr-eng are Apache-2.0 and leptonica uses its permissive
 Leptonica license.
 
-**Binding license DoD: BLOCKED pending owner exception.** Two earlier claims were
-incorrect and are withdrawn:
+**Binding license DoD: SATISFIED under an owner-granted documented exception
+(2026-07-14, W2 Wave 0).** The gate was refined (re-frozen with rationale in
+`.tdd-swarm/gates.md` Tier-2 Dependency check and the ticket DoD) to a two-tier criterion.
+This is an owner-directed acceptance-criteria change, **not** a weakening of any frozen
+test — no pytest encodes the license rule (the license gate is a DoD/doc clause; the only
+license-adjacent frozen test, AC-2, checks torch absence + `pip check`, both still green).
 
-- tqdm's metadata expression is combined `MPL-2.0 AND MIT`, not a dual-choice
-  permissive license; the distribution contains MPL-2.0-covered code.
-- The Linux NumPy wheel includes bundled libgfortran under
-  `GPL-3.0-or-later WITH GCC-exception-3.1`. The GCC Runtime Library Exception permits
-  qualifying use/distribution, but the literal binding requirement says no GPL
-  identifier anywhere.
+- **First-party + direct deps — strict, all permissive.** Every dependency declared
+  directly in `agent/pyproject.toml` is Apache/BSD/MIT-family permissive (pypdfium2
+  BSD-3/Apache-2.0, pdfplumber MIT, pytesseract Apache-2.0, fastembed Apache-2.0,
+  onnxruntime MIT, langgraph MIT, fastapi/uvicorn/pydantic/httpx MIT-BSD, anthropic MIT,
+  langfuse MIT, asyncpg Apache-2.0), with pillow's `MIT-CMU`/HPND admitted via the
+  explicit allowlist entry + justification (pyproject comment). No GPL/LGPL/MPL/AGPL
+  identifier on any direct dep.
+- **Two transitive runtime deps of fastembed — accepted as non-infecting:**
+  - **tqdm** — metadata expression `MPL-2.0 AND MIT`. MPL-2.0 is file-level weak copyleft:
+    its obligations attach only to modified MPL-covered files that are redistributed,
+    never to the combined/larger work. tqdm is consumed as an unmodified wheel; we neither
+    modify nor redistribute modified tqdm source. Non-viral, non-GPL — ACCEPTED.
+  - **libgfortran** — bundled in the Linux NumPy binary wheel;
+    `GPL-3.0-or-later WITH GCC-exception-3.1`. The GCC Runtime Library Exception exists
+    precisely so linking against the GCC runtime does not impose GPL on the resulting
+    work; the identifier contains "GPL-3.0" but the exception means our use/distribution
+    triggers no GPL copyleft — ACCEPTED.
+- **AGPL hard-banned at every level** (direct or transitive). The locked W2-R6 and
+  execution-path invariants hold: **PyMuPDF and AGPL are absent, and torch is absent** in
+  the current-head image (frozen AC-2 test proves torch absence).
 
-These transitive dependencies cannot truthfully satisfy the current permissive-only /
-no-GPL-identifier wording without an explicit owner exception or contract change.
-Separately, the locked W2-R6 and execution-path invariants are satisfied: **PyMuPDF and
-AGPL are absent, and torch is absent** in the current-head image.
+The two earlier over-broad claims (that these transitive identifiers *blocked* the DoD
+under a literal "no GPL identifier anywhere" reading) are superseded by the refined gate:
+the literal-identifier reading is replaced by an infection-based reading that hard-bans
+AGPL and viral copyleft while accepting documented file-level-weak-copyleft and
+runtime-exception transitive deps. Rationale recorded here + in `.tdd-swarm/gates.md` +
+the ticket DoD.
 
 ## Gates
 

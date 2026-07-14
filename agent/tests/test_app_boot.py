@@ -242,3 +242,265 @@ def test_installed_environment_passes_pip_check():
         "pip check reports a broken dependency tree for this environment:\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
+
+
+# ---------------------------------------------------------------------------
+# W2-M1 independent-review freeze additions (AC-5). These exercise only the
+# operator probe's deterministic seams: synthetic data, fake cgroup files, and
+# fake model loaders. They never download a model, open a socket, or run OCR.
+# ---------------------------------------------------------------------------
+
+import json
+
+
+_MIB = 1024**2
+_IMMUTABLE_HF_REVISION_RE = re.compile(r"[0-9a-f]{40}")
+_EXPECTED_HF_MODEL_REVISIONS = {
+    "qdrant/bge-small-en-v1.5-onnx-q": "52398278842ec682c6f32300af41344b1c0b0bb2",
+    "mixedbread-ai/mxbai-rerank-base-v1": "800f24c113213a187e65bde9db00c15a2bb12738",
+}
+
+
+def _fake_cgroup_v2_files(
+    monkeypatch,
+    spike,
+    tmp_path,
+    *,
+    limit_bytes: int | None,
+    current_bytes: int | None,
+    peak_bytes: int | None,
+) -> None:
+    """Point every cgroup-v2 probe path at a deterministic local fixture."""
+
+    cgroup = tmp_path / "fake-cgroup-v2"
+    cgroup.mkdir()
+
+    values = {
+        "memory.max": "max" if limit_bytes is None else str(limit_bytes),
+        "memory.current": None if current_bytes is None else str(current_bytes),
+        "memory.peak": None if peak_bytes is None else str(peak_bytes),
+    }
+    for filename, value in values.items():
+        if value is not None:
+            (cgroup / filename).write_text(value, encoding="ascii")
+
+    monkeypatch.setattr(spike, "CGROUP_V2_LIMIT", str(cgroup / "memory.max"))
+    monkeypatch.setattr(
+        spike, "CGROUP_V1_LIMIT", str(cgroup / "missing-v1-limit")
+    )
+    # These two path constants are the required test seam for container-wide
+    # usage. ``raising=False`` keeps this a clean RED assertion on today's
+    # process-only implementation while freezing the names for the repair.
+    monkeypatch.setattr(
+        spike, "CGROUP_V2_CURRENT", str(cgroup / "memory.current"), raising=False
+    )
+    monkeypatch.setattr(
+        spike, "CGROUP_V2_PEAK", str(cgroup / "memory.peak"), raising=False
+    )
+
+
+def _stub_probe_work(monkeypatch, spike) -> None:
+    """Replace quick-probe OCR/image work; numpy/BM25 remain real and local."""
+
+    monkeypatch.setattr(spike, "synthetic_chunks", lambda count: ["synthetic"] * count)
+    monkeypatch.setattr(spike, "make_synthetic_page_200dpi", lambda: object())
+    monkeypatch.setattr(spike, "run_ocr", lambda _image: "SYNTHETIC")
+    monkeypatch.setattr(spike.time, "sleep", lambda _seconds: None)
+
+
+def _probe_report(stdout: str) -> dict[str, object]:
+    """Decode the JSON object that precedes the final human-readable log line."""
+
+    start = stdout.index('{\n  "mode"')
+    report, _end = json.JSONDecoder().raw_decode(stdout[start:])
+    return report
+
+
+def _run_quick_probe(monkeypatch, capsys, spike) -> tuple[int, dict[str, object]]:
+    _stub_probe_work(monkeypatch, spike)
+    exit_code = spike.main(["--quick", "--chunks", "1"])
+    return exit_code, _probe_report(capsys.readouterr().out)
+
+
+# spec(W2-M1:AC-5)
+# guards: certifying only the short-lived probe process while another process
+# (the serving app or runtime) owns most of the deployed container's memory.
+def test_capacity_peak_includes_cgroup_container_memory(
+    monkeypatch, tmp_path, capsys
+):
+    """The reported peak is container-wide, not merely /proc/self VmHWM."""
+
+    spike = importlib.import_module("ops.spike_rss")
+    _fake_cgroup_v2_files(
+        monkeypatch,
+        spike,
+        tmp_path,
+        limit_bytes=512 * _MIB,
+        current_bytes=220 * _MIB,
+        peak_bytes=300 * _MIB,
+    )
+    monkeypatch.setattr(spike, "best_rss_mb", lambda: 64.0)
+    monkeypatch.setattr(spike, "peak_rss_mb", lambda: 64.0)
+
+    exit_code, report = _run_quick_probe(monkeypatch, capsys, spike)
+
+    assert report["peak_rss_mb"] == 300, (
+        "AC-5 must compare the ceiling with container-wide cgroup memory; "
+        "the fake cgroup's post-workload current usage is 220 MiB and its "
+        "actual peak is 300 MiB while the probe process peaked at 64 MiB, "
+        f"but the report recorded {report['peak_rss_mb']!r} MiB"
+    )
+    assert report["verdict"] == "PASS" and exit_code == 0, (
+        "a fully measured 300 MiB container peak under the 409 MiB ceiling "
+        "must produce PASS and exit zero (an always-NO-VERDICT repair is not "
+        f"valid); got verdict={report['verdict']!r}, exit_code={exit_code}"
+    )
+
+
+# spec(W2-M1:AC-5)
+# guards: an UNKNOWN limit or an unavailable peak falling through ``ok =
+# not errors`` and being emitted as a successful operator command.
+@pytest.mark.parametrize("missing_measurement", ["limit", "peak"])
+def test_capacity_probe_no_verdict_exits_nonzero_when_measurement_unavailable(
+    monkeypatch, tmp_path, capsys, missing_measurement
+):
+    """Missing either required AC-5 measurement can never certify capacity."""
+
+    spike = importlib.import_module("ops.spike_rss")
+    _fake_cgroup_v2_files(
+        monkeypatch,
+        spike,
+        tmp_path,
+        limit_bytes=None if missing_measurement == "limit" else 512 * _MIB,
+        current_bytes=None if missing_measurement == "peak" else 96 * _MIB,
+        peak_bytes=None if missing_measurement == "peak" else 128 * _MIB,
+    )
+    if missing_measurement == "peak":
+        monkeypatch.setattr(spike, "best_rss_mb", lambda: None)
+        monkeypatch.setattr(spike, "peak_rss_mb", lambda: None)
+    else:
+        monkeypatch.setattr(spike, "best_rss_mb", lambda: 48.0)
+        monkeypatch.setattr(spike, "peak_rss_mb", lambda: 64.0)
+
+    exit_code, report = _run_quick_probe(monkeypatch, capsys, spike)
+
+    assert "NO-VERDICT" in str(report["verdict"]) and exit_code != 0, (
+        f"missing {missing_measurement} must emit NO-VERDICT and return nonzero; "
+        f"got verdict={report['verdict']!r}, exit_code={exit_code}"
+    )
+
+
+# spec(W2-M1:AC-5)
+# guards: the exact ONNX weights used for the measured bge/mxbai stack drifting
+# at an unpinned Hugging Face branch after this capacity evidence is approved.
+def test_capacity_models_use_explicit_immutable_huggingface_revisions(
+    monkeypatch, tmp_path, capsys
+):
+    """Both measured model loads carry a lowercase immutable 40-hex revision."""
+
+    spike = importlib.import_module("ops.spike_rss")
+    fastembed = importlib.import_module("fastembed")
+    cross_encoder = importlib.import_module("fastembed.rerank.cross_encoder")
+    huggingface_hub = importlib.import_module("huggingface_hub")
+
+    embed_source_repo = next(
+        model["sources"]["hf"]
+        for model in fastembed.TextEmbedding.list_supported_models()
+        if model["model"] == spike.EMBED_MODEL
+    )
+    constructor_calls: dict[str, tuple[str, dict[str, object]]] = {}
+    registration_calls: list[dict[str, object]] = []
+    download_calls: list[tuple[object, object, str]] = []
+
+    class FakeTextEmbedding:
+        def __init__(self, model_name, **kwargs):
+            constructor_calls["embedding"] = (model_name, kwargs)
+
+        def embed(self, texts):
+            return ([0.0] * spike.EMBED_DIM for _text in texts)
+
+    class FakeTextCrossEncoder:
+        @classmethod
+        def add_custom_model(cls, **kwargs):
+            registration_calls.append(kwargs)
+
+        def __init__(self, model_name, **kwargs):
+            constructor_calls["reranker"] = (model_name, kwargs)
+
+        def rerank(self, _query, documents):
+            return [1.0 for _document in documents]
+
+    def fake_snapshot_download(*args, **kwargs):
+        destination = str(tmp_path / f"snapshot-{len(download_calls)}")
+        repo_id = kwargs.get("repo_id", args[0] if args else None)
+        download_calls.append((repo_id, kwargs.get("revision"), destination))
+        return destination
+
+    monkeypatch.setattr(fastembed, "TextEmbedding", FakeTextEmbedding)
+    monkeypatch.setattr(cross_encoder, "TextCrossEncoder", FakeTextCrossEncoder)
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot_download)
+    # Also cover an implementation that imports snapshot_download at module scope.
+    monkeypatch.setattr(spike, "snapshot_download", fake_snapshot_download, raising=False)
+    monkeypatch.setattr(spike, "make_synthetic_page_200dpi", lambda: object())
+    monkeypatch.setattr(spike, "run_ocr", lambda _image: "SYNTHETIC")
+    monkeypatch.setattr(spike, "http_get", lambda _url: 200)
+    monkeypatch.setattr(spike, "best_rss_mb", lambda: 32.0)
+    monkeypatch.setattr(spike, "peak_rss_mb", lambda: 48.0)
+    monkeypatch.setattr(spike.time, "sleep", lambda _seconds: None)
+    _fake_cgroup_v2_files(
+        monkeypatch,
+        spike,
+        tmp_path,
+        limit_bytes=512 * _MIB,
+        current_bytes=40 * _MIB,
+        peak_bytes=48 * _MIB,
+    )
+
+    spike.main(
+        ["--chunks", "1", "--app-url", "http://probe.invalid/health", "--cache-dir", str(tmp_path)]
+    )
+    capsys.readouterr()
+
+    reranker_registration = registration_calls[-1] if registration_calls else {}
+    reranker_sources = reranker_registration.get("sources")
+    reranker_source_repo = getattr(reranker_sources, "hf", None)
+
+    def pinned_source_for(
+        model_kind: str, constructor_source_repo: object
+    ) -> tuple[object, object]:
+        _model_name, constructor_kwargs = constructor_calls[model_kind]
+        if "revision" in constructor_kwargs:
+            return constructor_source_repo, constructor_kwargs["revision"]
+        model_path = constructor_kwargs.get("specific_model_path")
+        for repo_id, revision, destination in download_calls:
+            if model_path == destination:
+                return repo_id, revision
+        return constructor_source_repo, None
+
+    observed_sources = dict(
+        (
+            pinned_source_for("embedding", embed_source_repo),
+            pinned_source_for("reranker", reranker_source_repo),
+        )
+    )
+    canonical_model_wiring = (
+        constructor_calls["embedding"][0] == spike.EMBED_MODEL
+        and constructor_calls["reranker"][0] == spike.RERANK_MODEL
+        and reranker_registration.get("model") == spike.RERANK_MODEL
+        and reranker_source_repo == spike.RERANK_MODEL
+    )
+    assert (
+        canonical_model_wiring
+        and observed_sources == _EXPECTED_HF_MODEL_REVISIONS
+        and all(
+            isinstance(revision, str)
+            and _IMMUTABLE_HF_REVISION_RE.fullmatch(revision) is not None
+            for revision in observed_sources.values()
+        )
+    ), (
+        "AC-5 must measure the canonical FastEmbed models at the approved "
+        "immutable revisions (bogus 40-hex values are not acceptable), and "
+        "mxbai must traverse register_reranker(); expected "
+        f"{_EXPECTED_HF_MODEL_REVISIONS!r}, got sources={observed_sources!r}, "
+        f"registration={reranker_registration!r}"
+    )

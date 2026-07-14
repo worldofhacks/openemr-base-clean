@@ -175,3 +175,26 @@ Tests own: agent/tests/ (frozen by Test Agent). Src own: agent/app/verify/ (Impl
   retired $4 claim. Policy doc with all six frozen clauses committed.
 - Secret scan on all three diffs: clean; no .env committed anywhere. Live /health re-verified 200.
 - Review + Security panel (6 independent agents) dispatched.
+
+## Phase 4 — verification panel verdicts (6 independent agents; re-run after session-limit interrupt)
+- W2-M1: Reviewer APPROVE (every DoD/AC met with file:line evidence; AC-5 concurrency verified in code,
+  all arithmetic re-checked; tqdm MPL-2.0-AND-MIT allowlist CONFIRMED acceptable — unmodified wheel,
+  file-level weak copyleft, explicit-allowlist mechanism is exactly the DoD's). Security PASS.
+  Minors recorded: probe measures probe-process RSS not container-wide (tesseract subprocess +
+  uvicorn app excluded — headroom 9.8x dwarfs it); NO-VERDICT exits 0; tqdm "dual-licensed" wording;
+  quick-mode rerank_top1 key; SSH key left registered (also security minor — owner decision at
+  go/no-go: keep for ops or remove); no HF revision pin for runtime model fetch; pytesseract no upper
+  bound. -> REVIEW-PASSED.
+- W2-M3: Reviewer APPROVE; Security PASS. Minors recorded: graph stack eagerly imported on flag-OFF
+  path (import cost only, behavior identical — frozen AC-4 proves it); sink private-accessor use
+  adjudicated ACCEPTABLE for the spike (promotion request documented for observability owner);
+  span replay omits start_time (durations distorted in Langfuse view); REFUSE recorded as
+  step_budget_exceeded reason; _DEFAULT_REFUSAL_TEXT private import; Accept-header substring match
+  (also security minor; hardening note for W2-M9/M14). -> REVIEW-PASSED.
+- W2-M24: Reviewer APPROVE (extrapolation/percentile math verified; near-miss passes for the right
+  reason; arithmetic re-checked). Security: 1 IMPORTANT — lint clause-2 evadable via equivalent
+  PR-ref spellings (refs/pull/N/head|/merge, merge_commit_sha) + implicit github.token counts as
+  secret access under pull_request_target. FIX MICRO-CYCLE dispatched (frozen evasion tests first ->
+  lint fix + policy-doc clause-2 inversion rider -> security re-review). Minors recorded: .yaml
+  extension out of documented scope; keyword-presence policy-doc lint; percentile p-range; DSN
+  over-redaction; non-dict YAML silently passes; PyYAML transitive dep.

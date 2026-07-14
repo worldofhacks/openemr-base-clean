@@ -1,4 +1,4 @@
-"""Per-turn typed graph state + HandoffRecord closed contracts (W2-M3, W2_ARCHITECTURE.md §2).
+"""Per-turn graph state + frozen handoff contracts (W2-M3/B3, W2_ARCHITECTURE.md §2).
 
 `SupervisorDecision` and `ReasonCode` are the CLOSED enums of the supervisor-worker
 boundary (§2 locked-decision): a worker cannot smuggle a new decision or an invented
@@ -43,4 +43,10 @@ class GraphState(TypedDict):
     next_decision: SupervisorDecision | None
     extracted_ref: str | None   # trace-addressable stub-extraction artifact ref
     retrieved_ref: str | None   # trace-addressable stub-retrieval artifact ref
+    # B3 composer-shell inputs are trace-addressable refs only until the shared
+    # WorkerInput/WorkerOutput + CitationV2 handoff lands. Keeping the slots in the
+    # topology now avoids coupling this skeleton to a parallel clinical-value shape.
+    verified_facts: tuple[str, ...]
+    evidence_snippets: tuple[str, ...]
+    citations: tuple[str, ...]
     brief: BriefResult | None   # the W1 loop's answer, passed through unchanged (W2-D2)

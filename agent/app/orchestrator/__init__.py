@@ -1,1 +1,1 @@
-"""Orchestrator — the direct Anthropic tool-use loop (ARCHITECTURE.md §3, D6)."""
+"""W1 direct loop plus the B3 LangGraph topology shell (W2-D2, §2/§5)."""

@@ -5,17 +5,34 @@ delegated token → the six FHIR reads fan out → EvidencePacket → orchestrat
 flush → the response carries ONLY the verified, re-rendered content (never raw model prose)
 plus the correlation id. The route depends on an injected `services` object (set on
 `app.state.services`) so it is testable without live OpenEMR / Anthropic.
+
+W2-M3 spike (W2_ARCHITECTURE.md §2a): behind the default-OFF `W2_GRAPH_ENABLED` flag, a
+caller may opt into SSE via `Accept: text/event-stream` content negotiation on the same
+POST body. The stream is served from the LangGraph entrypoint (`run_graph_turn`) and
+carries verified `{claim_block, citations[], verdict}` events (W1 §5a shape, CitationV2
+migration is a later ticket) ending in a terminal `done` event. Flag OFF — the default —
+keeps this route bit-identical to W1: same JSON envelope, same error mappings, and the
+graph entrypoint is never invoked. Non-opted callers keep the W1 JSON contract even with
+the flag ON (§2a: "W1 contract unchanged").
 """
 
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Iterator
 from typing import Protocol
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.middleware.correlation import correlation_id_var
+# Module-attribute access (not `from ... import run_graph_turn`): the graph entrypoint
+# is resolved at REQUEST time, so a test/tool that patches
+# `app.orchestrator.graph.run_graph_turn` (the AC-4 tripwire, the AC-6 spy) always
+# governs this route, regardless of module import order.
+from app.orchestrator import graph as orchestrator_graph
 from app.orchestrator.loop import BriefResult
 from app.session.store import (
     CrossPatientError,
@@ -65,8 +82,48 @@ class ChatService(Protocol):
     async def run_brief(self, session: Session, message: str, *, request_url: str) -> BriefResult: ...
 
 
+def _wants_event_stream(request: Request) -> bool:
+    """§2a SSE opt-in: content negotiation on the same POST /chat body. Non-opted
+    callers (every W1 caller) keep the JSON contract regardless of the flag."""
+    return "text/event-stream" in request.headers.get("accept", "")
+
+
+def _sse_event(name: str, data: dict) -> str:
+    return f"event: {name}\ndata: {json.dumps(data)}\n\n"
+
+
+def _block_verdict(result: BriefResult) -> str:
+    """The verdict of the single streamed claim block — the composed, verified brief.
+    Served claims are PASS/FLAGGED only (§5 verify-then-flush), so the block is
+    "flagged" if any served claim was flagged, else "pass"; refusal/fallback paths
+    carry their own verdict/source label."""
+    served = [v for v in result.verdicts if v in ("pass", "flagged")]
+    if served:
+        return "flagged" if "flagged" in served else "pass"
+    if result.verdicts:
+        return result.verdicts[0]  # e.g. "refused:<kind>" on the refusal path
+    return result.source
+
+
+def _sse_stream(result: BriefResult, correlation_id: str) -> Iterator[str]:
+    """The §2a stream, via the named V2-spike fallback: only the FINAL COMPOSER STAGE
+    is streamed — one verified claim-block event, then the terminal `done` event. The
+    W1 verify-then-flush gate holds ON THE STREAM: nothing is emitted until the brief
+    is verified, so an unsupported claim can never appear as a streamed token."""
+    yield _sse_event("claim_block", {
+        "claim_block": result.text,
+        "citations": _citations_for(result),
+        "verdict": _block_verdict(result),
+    })
+    yield _sse_event("done", {
+        "correlation_id": correlation_id,
+        "source": result.source,
+        "degraded": result.degraded,
+    })
+
+
 @router.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest, request: Request) -> ChatResponse:
+async def chat(req: ChatRequest, request: Request) -> ChatResponse | StreamingResponse:
     services: ChatService = request.app.state.services
     try:
         session = await services.resolve_session(req.session_id)
@@ -85,6 +142,21 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse:
         except CrossPatientError:
             raise HTTPException(status_code=403,
                                 detail="cross-patient request refused — a patient switch needs a fresh launch")
+
+    if _wants_event_stream(request) and orchestrator_graph.graph_enabled():
+        # W2-M3 flag-ON SSE path: the turn runs through the LangGraph entrypoint with
+        # the W1 loop embedded unchanged in its compose worker (W2-D2). Session pin and
+        # refusal mappings above are shared — the graph changes routing, never authZ.
+        request_url = str(request.url)
+
+        async def run_brief_pinned() -> BriefResult:
+            return await services.run_brief(session, req.message, request_url=request_url)
+
+        graph_result = await orchestrator_graph.run_graph_turn(
+            run_brief=run_brief_pinned, correlation_id=correlation_id_var.get())
+        return StreamingResponse(
+            _sse_stream(graph_result.brief, correlation_id_var.get()),
+            media_type="text/event-stream")
 
     result = await services.run_brief(session, req.message, request_url=str(request.url))
     return ChatResponse(

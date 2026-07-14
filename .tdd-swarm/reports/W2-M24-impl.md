@@ -1,6 +1,6 @@
 # W2-M24 Implementation Report — Tier-2 timing/cost/quota spike + fork-PR secret policy
 
-Ticket: `tickets/W2-M24.md` · Branch: `ticket/w2-m24-tier2-spike` · Freeze SHA: `65cd239`
+Ticket: `tickets/W2-M24.md` · Branch: `ticket/w2-m24-tier2-spike` · Freeze SHA: `0154bd7`
 
 **Repair status:** deterministic implementation is green. AC-7 live evidence is
 **pending a fresh orchestrator run of the repaired CLI**. This repair made no provider
@@ -24,26 +24,29 @@ Ticket-scoped implementation surfaces:
      {`viable`, `stop_escalate`} **computed by the module** against the 50-case
      projection on independent cost and runtime axes plus fail-closed structured
      quota evidence. Both `sufficiency.daily` and `sufficiency.spend` must be exactly
-     `sufficient`; missing/malformed/unknown/insufficient evidence stops escalation.
-     One exact, narrowly named legacy synthetic positive string remains compatible with
-     the earlier immutable test contract; arbitrary prose is never interpreted. The
-     W2-OA2 local-key substitution note is module-computed, never caller-supplied.
+     `sufficient`, and `statement` must be a nonblank string;
+     missing/malformed/unknown/insufficient evidence stops escalation. One exact,
+     narrowly named legacy synthetic positive string remains compatible with the
+     earlier immutable test contract; arbitrary prose is never interpreted. The W2-OA2
+     local-key substitution note is module-computed, never caller-supplied.
    - `render_report(report)` — whitelisted-fields-only text surface, plus a
      defense-in-depth scrub (secret-named env values incl. DSN password
      segments, `sk-ant-*` tokens, `Bearer` values → `[REDACTED]`).
-   - `lint_workflows(paths)` — read-only; fires **only** on the three-way
-     conjunction `pull_request_target` trigger + PR-head execution + secret/token
-     usage. PR-head detection covers dot/bracket GitHub expressions, explicit fork
-     `repository`+`ref`, equivalent pull refs, and executable shell `git fetch` plus
-     `git checkout`; secret detection covers dot/bracket `secrets` and `github.token`
-     plus `secrets: inherit`. Structural YAML traversal ignores comments, and shell
-     command parsing ignores echoed examples. Base checkouts and the unprivileged
-     `pull_request` trigger remain compliant. PyYAML is already installed via the
-     declared `langgraph` →
-     `langchain-core` chain; `pyproject.toml` untouched; handles the PyYAML
-     `on:`→`True` key quirk). Passes all 55 real workflows including the
-     `dependabot-auto-merge.yml` near-miss (trigger + secrets, no PR-code
-     checkout); a checkout with no `ref` override is base-repo code and passes.
+   - `lint_workflows(paths)` — read-only; fires **only** when one job has the
+     three-way conjunction `pull_request_target` trigger + PR-head execution +
+     credential access. PR-head detection covers normalized action casing,
+     dot/bracket GitHub expressions, an explicit fork `repository` with a default or
+     literal `ref`, equivalent pull refs, and `gh pr checkout`. Ordered shell parsing
+     handles command chains and wrappers (`cd … &&`, `env NAME=…`), carries PR fetch
+     aliases across steps, and recognizes checkout/switch/reset sinks. Credential
+     detection covers dot/bracket `secrets` and `github.token`, `secrets: inherit`, and
+     the default/nonblank token consumed by `actions/checkout` even without an explicit
+     expression. Structural YAML traversal ignores comments; executable parsing ignores
+     echoed examples. Base checkouts, the unprivileged `pull_request` trigger, an
+     anonymous credential-free PR job, and an isolated secret-only job remain compliant.
+     PyYAML is already installed via the declared `langgraph` → `langchain-core` chain;
+     `pyproject.toml` is untouched (including handling PyYAML's `on:`→`True` key quirk).
+     All 55 real workflows remain green, including `dependabot-auto-merge.yml`.
    - `lint_policy_doc(path)` — asserts the six frozen clauses; missing file →
      `FileNotFoundError`; a stub doc yields ≥ 6 findings.
    - Stdlib-only synthetic image generation: 5×7 bitmap font rasterized to an
@@ -65,12 +68,12 @@ Ticket-scoped implementation surfaces:
 
 ## Gate evidence
 
-`bash .tdd-swarm/run-local-gates.sh tickets/W2-M24.md 65cd239`:
+`bash .tdd-swarm/run-local-gates.sh tickets/W2-M24.md 0154bd7`:
 
 ```
 GATE syntax: PASS
 GATE unit-tests: PASS
-295 passed, 6 skipped, 1 warning in 1.49s
+313 passed, 6 skipped, 1 warning in 1.31s
 GATE frozen-tests: PASS
 spec-lint: W2-M24:AC-7 -> live-measure evidence row (exempt from frozen-test mapping)
 GATE spec-lint: PASS
@@ -81,18 +84,18 @@ GATE no-skip-markers: PASS
 ALL GATES PASS
 ```
 
-- 295 passed = 236 prior + 59 frozen W2-M24 cases; 6 skips are the
+- 313 passed = 236 prior + 77 frozen W2-M24 cases; 6 skips are the
   standing env-based self-deselects (RUN_LIVE live tests ×5, playwright ui ×1).
   Note: the recorded main baseline (238 passed, 5 skipped) differs by
   environment only — `openemr-base-clean`'s venv runs the ui smoke test
   (playwright installed there); no test was removed or weakened.
-- Frozen-test integrity: `git diff 65cd239..HEAD -- agent/tests/` is empty;
+- Frozen-test integrity: `git diff 0154bd7..HEAD -- agent/tests/` is empty;
   `agent/tests/test_tier2_spike.py` SHA-256 remains
-  `649c4b25977147ec37d196cbdbe67272fc4016d6f122de8f0742be8acb5f2a1d`.
+  `830575e92703b2103569ebfb35483700c518a9aec67102402c1d8bbd96d737fa`.
 
 ## AC coverage
 
-- **AC-1..AC-6 plus reviewed W2-D8/§6a/§7 guards**: green via all 59 cases in
+- **AC-1..AC-6 plus reviewed W2-D8/§6a/§7 guards**: green via all 77 cases in
   `agent/tests/test_tier2_spike.py` (offline, provider calls faked/synthetic).
 - **AC-6 doc clauses** (all six, machine-linted + independent term floor):
   1. No repository secrets to forks.
@@ -228,13 +231,16 @@ neither daily provider capacity nor account spend capacity.
   change (W2-M1-owned) and no new dependency.
 - **Verdict + substitution note computed in-module** — a caller-supplied
   verdict would be a self-grading report (pinned by the frozen tests).
-- **Quota evidence is structured and fail-closed** — only exact lowercase daily and
-  spend sufficiency can contribute to viability. The one pre-existing synthetic string
-  is preserved by an exact compatibility constant; no narrative keyword inference.
-- **Workflow lint follows executable structure** — parsed YAML removes comments;
-  normalized bracket expressions cover equivalent GitHub contexts; shell parsing
-  requires an executable PR-head fetch+checkout pair and ignores echo/base-event
-  near-misses.
+- **Quota evidence is structured and fail-closed** — only a nonblank string statement
+  plus exact lowercase daily and spend sufficiency can contribute to viability. The one
+  pre-existing synthetic string is preserved by an exact compatibility constant; no
+  narrative keyword inference.
+- **Workflow lint follows job-local executable dataflow** — parsed YAML removes
+  comments; normalized bracket expressions/action casing cover equivalent GitHub
+  contexts; ordered shell parsing tracks PR fetch destinations into checkout, switch,
+  or reset sinks across steps and recognizes `gh pr checkout`. Checkout's default token
+  counts as credential access, while isolated anonymous and secret-only jobs are not
+  combined into a false finding.
 - **Temperatures are explicit constants** — stable VLM/answer settings on every call;
   judge temperature exactly `0` as bound by W2-D8.
 - **Render surface is whitelist-only + scrubbed** — headers/env values never

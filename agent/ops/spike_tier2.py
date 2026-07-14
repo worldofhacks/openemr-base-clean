@@ -17,11 +17,11 @@ Also hosts the two W2-M24 policy lints consumed by W2-M20:
 
 * ``lint_workflows`` — read-only over ``.github/workflows/*.yml``; a violation
   is the full three-way conjunction: ``pull_request_target`` trigger AND
-  checkout of PR-head code (action ref/repository or executable shell
-  fetch+checkout; any equivalent spelling, incl. ``refs/pull/<n>/
-  {head,merge}`` and ``merge_commit_sha``) AND secrets access (explicit
-  ``secrets.*`` / ``secrets: inherit`` or the implicit write-capable
-  ``github.token``) (W2 §6a).
+  job-local execution of PR-head code (checkout action, ``gh pr checkout``, or
+  executable shell fetch-to-checkout/switch/reset dataflow; any equivalent
+  spelling, incl. ``refs/pull/<n>/{head,merge}`` and ``merge_commit_sha``) AND
+  credentials access (explicit ``secrets.*`` / ``secrets: inherit`` or the
+  token consumed by ``actions/checkout`` by default) (W2 §6a).
 * ``lint_policy_doc`` — asserts the six frozen clauses of
   ``docs/week2/W2_TIER2_CI_POLICY.md``.
 
@@ -224,6 +224,9 @@ def _quota_evidence_is_sufficient(evidence: Any) -> bool:
         return True
     if not isinstance(evidence, Mapping):
         return False
+    statement = evidence.get("statement")
+    if type(statement) is not str or not statement.strip():
+        return False
     sufficiency = evidence.get("sufficiency")
     if not isinstance(sufficiency, Mapping):
         return False
@@ -382,96 +385,205 @@ def _is_pr_head_repository(repository: Any) -> bool:
     )
 
 
-def _git_command(line: str) -> tuple[str, list[str]] | None:
-    """Return an executable git subcommand; ignore comments and echo examples."""
-    try:
-        tokens = shlex.split(line, comments=True, posix=True)
-    except ValueError:
+def _is_checkout_action(uses: Any) -> bool:
+    return isinstance(uses, str) and uses.lower().startswith("actions/checkout@")
+
+
+def _checkout_action_pr_head(step: Mapping[Any, Any]) -> str | None:
+    """Describe an actions/checkout step that selects attacker-controlled code."""
+    if not _is_checkout_action(step.get("uses")):
         return None
+    with_block = step.get("with")
+    ref = with_block.get("ref") if isinstance(with_block, Mapping) else None
+    repository = (
+        with_block.get("repository") if isinstance(with_block, Mapping) else None
+    )
+    if _is_pr_head_repository(repository):
+        return f"fork repository={repository!s}, ref={ref if ref is not None else '<default>'}"
+    if _is_pr_head_ref(ref):
+        return f"PR-head ref={ref!s}"
+    return None
+
+
+def _checkout_action_uses_credentials(step: Mapping[Any, Any]) -> bool:
+    """actions/checkout receives github.token unless ``token`` is explicitly blank.
+
+    ``persist-credentials`` defaults true, but setting it false only prevents
+    persistence; a nonblank/default token is still credential access during fetch.
+    """
+    if not _is_checkout_action(step.get("uses")):
+        return False
+    with_block = step.get("with")
+    if not isinstance(with_block, Mapping) or "token" not in with_block:
+        return True
+    token = with_block.get("token")
+    return not (isinstance(token, str) and not token.strip())
+
+
+def _shell_command_segments(run: Any) -> list[list[str]]:
+    """Tokenize executable shell chains while preserving quoted echo text."""
+    if not isinstance(run, str):
+        return []
+    commands: list[list[str]] = []
+    for line in run.splitlines():
+        try:
+            lexer = shlex.shlex(line, posix=True, punctuation_chars=";&|")
+            lexer.whitespace_split = True
+            lexer.commenters = "#"
+            tokens = list(lexer)
+        except ValueError:
+            continue
+        segment: list[str] = []
+        for token in tokens:
+            if token and set(token) <= {";", "&", "|"}:
+                if segment:
+                    commands.append(segment)
+                    segment = []
+            else:
+                segment.append(token)
+        if segment:
+            commands.append(segment)
+    return commands
+
+
+def _unwrap_shell_command(tokens: Sequence[str]) -> tuple[str, list[str]] | None:
+    """Unwrap assignments, ``env``, ``command``, and ``sudo`` prefixes."""
     if not tokens:
         return None
-
     index = 0
-    while index < len(tokens) and re.fullmatch(
-        r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[index]
-    ):
+    assignment = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
+    while index < len(tokens) and assignment.fullmatch(tokens[index]):
         index += 1
+    if index < len(tokens) and tokens[index] == "env":
+        index += 1
+        while index < len(tokens) and (
+            tokens[index].startswith("-") or assignment.fullmatch(tokens[index])
+        ):
+            index += 1
     while index < len(tokens) and tokens[index] in {"command", "sudo"}:
         index += 1
-    if index >= len(tokens) or Path(tokens[index]).name != "git":
-        return None
-    index += 1
-
-    # Skip git-global options before the subcommand (notably -C and -c).
-    options_with_values = {"-C", "-c", "--git-dir", "--work-tree"}
-    while index < len(tokens) and tokens[index].startswith("-"):
-        option = tokens[index].split("=", 1)[0]
-        index += 1
-        if option in options_with_values and "=" not in tokens[index - 1]:
-            index += 1
     if index >= len(tokens):
         return None
-    return tokens[index].lower(), tokens[index + 1 :]
+    return Path(tokens[index]).name.lower(), list(tokens[index + 1 :])
 
 
-def _run_checks_out_pr_head(run: Any) -> bool:
-    """Detect an executable PR-head ``git fetch`` + ``checkout`` pair."""
-    if not isinstance(run, str):
-        return False
-    fetched_pr_head = False
-    checked_out_pr_head = False
-    for line in run.splitlines():
-        parsed = _git_command(line)
-        if parsed is None:
+def _git_subcommand(args: Sequence[str]) -> tuple[str, list[str]] | None:
+    """Split git-global options from the actual subcommand."""
+    index = 0
+    options_with_values = {"-c", "--git-dir", "--work-tree"}
+    while index < len(args) and args[index].startswith("-"):
+        option = args[index].split("=", 1)[0]
+        index += 1
+        if (option in options_with_values or option.lower() == "-c") and "=" not in args[
+            index - 1
+        ]:
+            index += 1
+    if index >= len(args):
+        return None
+    return args[index].lower(), list(args[index + 1 :])
+
+
+def _canonical_git_ref(value: str) -> str:
+    ref = _normalize_workflow_expression(value).lstrip("+")
+    for prefix in ("refs/remotes/", "refs/heads/"):
+        if ref.startswith(prefix):
+            return ref[len(prefix) :]
+    return ref
+
+
+def _pr_fetch_aliases(args: Sequence[str]) -> set[str]:
+    """Return destinations created by a PR-head fetch; empty means trusted fetch."""
+    normalized = _normalize_workflow_expression(" ".join(args))
+    is_pr_source = bool(
+        _PULL_REF.search(normalized)
+        or _PR_HEAD_REPOSITORY_MARKER in normalized
+        or "pull_request.head.sha" in normalized
+        or "pull_request.head.ref" in normalized
+    )
+    if not is_pr_source:
+        return set()
+
+    aliases = {"fetch_head"}
+    for arg in args:
+        normalized_arg = _normalize_workflow_expression(arg)
+        match = re.search(r"/(?:head|merge):(.+)$", normalized_arg)
+        if match:
+            aliases.add(_canonical_git_ref(match.group(1)))
+    return aliases
+
+
+def _git_sink_uses_alias(args: Sequence[str], aliases: set[str]) -> bool:
+    for arg in args:
+        if arg.startswith("-"):
             continue
-        command, args = parsed
-        normalized_args = _normalize_workflow_expression(" ".join(args))
-        if command == "fetch" and (
-            _PULL_REF.search(normalized_args)
-            or _PR_HEAD_REPOSITORY_MARKER in normalized_args
-            or "pull_request.head.sha" in normalized_args
-            or "pull_request.head.ref" in normalized_args
-        ):
-            fetched_pr_head = True
-        if command in {"checkout", "switch"} and (
-            "fetch_head" in normalized_args
-            or "pr-head" in normalized_args
-            or _is_pr_head_ref(normalized_args)
-        ):
-            checked_out_pr_head = True
-    return fetched_pr_head and checked_out_pr_head
+        candidate = _canonical_git_ref(arg)
+        if candidate in aliases or _is_pr_head_ref(candidate):
+            return True
+    return False
+
+
+def _job_pr_head_execution(job: Mapping[Any, Any]) -> list[str]:
+    """Track attacker refs from sources to executable sinks within one job."""
+    findings: list[str] = []
+    fetched_aliases: set[str] = set()
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return findings
+    for step in steps:
+        if not isinstance(step, Mapping):
+            continue
+        action_finding = _checkout_action_pr_head(step)
+        if action_finding:
+            findings.append(action_finding)
+        for tokens in _shell_command_segments(step.get("run")):
+            command = _unwrap_shell_command(tokens)
+            if command is None:
+                continue
+            executable, args = command
+            if executable == "gh" and len(args) >= 2 and [a.lower() for a in args[:2]] == [
+                "pr",
+                "checkout",
+            ]:
+                findings.append("executable gh pr checkout")
+                continue
+            if executable != "git":
+                continue
+            git_command = _git_subcommand(args)
+            if git_command is None:
+                continue
+            subcommand, subcommand_args = git_command
+            if subcommand == "fetch":
+                fetched_aliases.update(_pr_fetch_aliases(subcommand_args))
+            elif subcommand in {"checkout", "switch", "reset"} and _git_sink_uses_alias(
+                subcommand_args, fetched_aliases
+            ):
+                findings.append(f"executable git {subcommand} of fetched PR-head ref")
+    return findings
+
+
+def _job_uses_credentials(job: Mapping[Any, Any]) -> bool:
+    if _references_secrets(job):
+        return True
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return False
+    return any(
+        isinstance(step, Mapping) and _checkout_action_uses_credentials(step)
+        for step in steps
+    )
 
 
 def _pr_head_checkout_refs(data: Mapping[Any, Any]) -> list[str]:
-    """Describe action or shell steps that execute PR-head code."""
-    refs: list[str] = []
+    """Compatibility helper returning all job-local PR-head execution findings."""
     jobs = data.get("jobs")
-    if not isinstance(jobs, dict):
-        return refs
-    for job in jobs.values():
-        if not isinstance(job, dict):
-            continue
-        steps = job.get("steps")
-        if not isinstance(steps, list):
-            continue
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
-            uses = step.get("uses")
-            if isinstance(uses, str) and uses.startswith("actions/checkout"):
-                with_block = step.get("with")
-                ref = with_block.get("ref") if isinstance(with_block, dict) else None
-                repository = (
-                    with_block.get("repository") if isinstance(with_block, dict) else None
-                )
-                if _is_pr_head_ref(ref):
-                    detail = str(ref)
-                    if _is_pr_head_repository(repository):
-                        detail = f"repository={repository!s}, ref={ref!s}"
-                    refs.append(detail)
-            if _run_checks_out_pr_head(step.get("run")):
-                refs.append("executable git fetch + checkout of PR-head code")
-    return refs
+    if not isinstance(jobs, Mapping):
+        return []
+    return [
+        finding
+        for job in jobs.values()
+        if isinstance(job, Mapping)
+        for finding in _job_pr_head_execution(job)
+    ]
 
 
 def _references_secrets(value: Any) -> bool:
@@ -496,12 +608,13 @@ def _references_secrets(value: Any) -> bool:
 def lint_workflows(paths: Iterable[Path | str]) -> list[str]:
     """Lint workflow files for the forbidden three-way conjunction:
     ``pull_request_target`` trigger AND execution of PR-head code (checkout
-    action or shell fetch+checkout, any equivalent spelling) AND secrets
-    access (explicit or the implicit ``github.token``). Empty result ==
-    compliant. Read-only.
+    action, ``gh pr checkout``, or shell fetch-to-ref-sink dataflow, including
+    equivalent spellings) AND credential access (explicit or checkout's
+    default token). Empty result == compliant. Read-only.
 
-    Each leg alone (or any two) is compliant — e.g. dependabot-auto-merge.yml
-    (trigger + secrets, no PR-code checkout) must pass.
+    The execution and credential legs must occur in the same job. Each leg
+    alone (or any two) is compliant — e.g. dependabot-auto-merge.yml (trigger
+    + secrets, no PR-code checkout) must pass.
     """
     findings: list[str] = []
     for entry in paths:
@@ -519,16 +632,25 @@ def lint_workflows(paths: Iterable[Path | str]) -> list[str]:
             continue
         if not _has_pull_request_target_trigger(data):
             continue
-        head_refs = _pr_head_checkout_refs(data)
-        if not head_refs:
+        jobs = data.get("jobs")
+        if not isinstance(jobs, Mapping):
             continue
-        if not _references_secrets(data):
-            continue
-        findings.append(
-            f"{path.name}: checks out PR-head code (ref {head_refs[0]!r}) under a "
-            "pull_request_target trigger with secrets access — forbidden "
-            "three-way conjunction (W2 §6a / W2-M24 AC-5)"
-        )
+        inherited = {key: value for key, value in data.items() if key != "jobs"}
+        inherited_credentials = _references_secrets(inherited)
+        for job_name, job in jobs.items():
+            if not isinstance(job, Mapping):
+                continue
+            execution = _job_pr_head_execution(job)
+            if not execution:
+                continue
+            if not (inherited_credentials or _job_uses_credentials(job)):
+                continue
+            findings.append(
+                f"{path.name}: job {job_name!r} executes PR-head code "
+                f"({execution[0]}) under pull_request_target with credential "
+                "access — forbidden three-way conjunction "
+                "(W2 §6a / W2-M24 AC-5)"
+            )
     return findings
 
 

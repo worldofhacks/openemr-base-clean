@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
+from app.auth.scopes import ScopeCoverageError
 from app.auth.smart_client import CoPilotNotEnabledError, SmartAuthError
 
 router = APIRouter()
@@ -45,6 +46,14 @@ async def callback(request: Request, code: str | None = None, state: str | None 
     except CoPilotNotEnabledError:
         # Disabled SMART client (D14) — explicit, not a hang (§6).
         raise HTTPException(status_code=403, detail="co-pilot OAuth client is not enabled")
+    except ScopeCoverageError:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "SMART authorization did not grant the exact required scopes; "
+                "correct the client permissions and launch again"
+            ),
+        ) from None
     except (SmartAuthError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f"could not complete the launch: {exc}")
     # Hand the browser to the chat UI, carrying the pinned session id (T-E9 demo UI). The token

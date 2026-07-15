@@ -473,6 +473,9 @@ class ActivationOrchestrator:
             "DOCUMENT_WORKER_LEASE_SECONDS": "60",
             "DOCUMENT_WORKER_MAX_ATTEMPTS": "3",
             "DOCUMENT_WORKER_BASE_BACKOFF_SECONDS": "5",
+            # Keep graph routing closed in the disabled baseline and rollback.
+            # The attested configuration opts in only after every prerequisite passes.
+            "W2_GRAPH_ENABLED": "0",
             "RERANKER": "local",
             "LANGFUSE_LOG_CONTENT": "false",
         }
@@ -491,6 +494,9 @@ class ActivationOrchestrator:
                 "OPENEMR_LEGACY_ENCOUNTER_UUID": attestation.encounter_uuid,
                 "OPENEMR_LEGACY_ENCOUNTER_ID": attestation.encounter_id,
                 "OPENEMR_BINARY_READBACK_SAFE": "true",
+                # Grounded extraction artifacts reach the CitationV2 composer only
+                # on the fully attested W2 serving path.
+                "W2_GRAPH_ENABLED": "1",
             }
         )
         return variables

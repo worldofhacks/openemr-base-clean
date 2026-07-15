@@ -878,6 +878,7 @@ def test_worker_ensure_and_disabled_prepare_are_idempotent_without_secret_reads(
             event[0] == "set_variables"
             and event[1] == "document-worker"
             and event[2]["W2_DOCUMENT_RUNTIME_ENABLED"] == "false"
+            and event[2]["W2_GRAPH_ENABLED"] == "0"
             for event in preceding
         )
         assert ("require_web_disabled", "agent") in preceding
@@ -886,6 +887,7 @@ def test_worker_ensure_and_disabled_prepare_are_idempotent_without_secret_reads(
             event[0] == "set_variables"
             and event[1] == "agent"
             and event[2]["W2_DOCUMENT_RUNTIME_ENABLED"] == "false"
+            and event[2]["W2_GRAPH_ENABLED"] == "0"
             for event in preceding
         )
 
@@ -921,7 +923,8 @@ def test_activation_flips_worker_then_web_last_and_invokes_opaque_verifier() -> 
     ]
     assert category_sets
     assert all(
-        variables["SOURCE_DOCUMENT_CATEGORY_ID"] == "101"
+        variables["W2_GRAPH_ENABLED"] == "1"
+        and variables["SOURCE_DOCUMENT_CATEGORY_ID"] == "101"
         and variables["ARTIFACT_DOCUMENT_CATEGORY_ID"] == "202"
         and variables["OPENEMR_LEGACY_PATIENT_UUID"] == _PATIENT_UUID
         and variables["OPENEMR_LEGACY_PATIENT_ID"] == _PATIENT_ID
@@ -969,6 +972,8 @@ def test_smart_session_must_match_the_exact_synthetic_patient_and_encounter() ->
         last_by_service[service] = variables
     assert last_by_service["document-worker"]["W2_DOCUMENT_RUNTIME_ENABLED"] == "false"
     assert last_by_service["agent"]["W2_DOCUMENT_RUNTIME_ENABLED"] == "false"
+    assert last_by_service["document-worker"]["W2_GRAPH_ENABLED"] == "0"
+    assert last_by_service["agent"]["W2_GRAPH_ENABLED"] == "0"
 
 
 @pytest.mark.parametrize(
@@ -996,6 +1001,8 @@ def test_failed_deployment_or_readiness_resets_both_services_disabled(
         last_by_service[service] = variables
     assert last_by_service["document-worker"]["W2_DOCUMENT_RUNTIME_ENABLED"] == "false"
     assert last_by_service["agent"]["W2_DOCUMENT_RUNTIME_ENABLED"] == "false"
+    assert last_by_service["document-worker"]["W2_GRAPH_ENABLED"] == "0"
+    assert last_by_service["agent"]["W2_GRAPH_ENABLED"] == "0"
 
     if (
         failure.get("fail_deploy") == "document-worker"

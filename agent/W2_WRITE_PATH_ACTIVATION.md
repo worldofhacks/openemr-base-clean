@@ -3,8 +3,9 @@
 This runbook activates the real deployed
 `upload → extract → ground → write → cite → answer` path without weakening a control.
 The default remains fail-closed. The automation pins both services to
-`W2_DOCUMENT_RUNTIME_ENABLED=false`, proves the live prerequisites, enables the worker,
-then enables web, and rolls both back to disabled on any failure.
+`W2_DOCUMENT_RUNTIME_ENABLED=false` and `W2_GRAPH_ENABLED=0`, proves the live
+prerequisites, enables the worker, then enables the attested graph/web path, and rolls
+both flags back to disabled on any failure.
 
 The single activation/verification command is:
 
@@ -175,7 +176,8 @@ On every run, `agent/scripts/activate_w2_write_path.py` performs this idempotent
 1. Verifies authenticated Railway CLI access and finds or creates exactly one
    `document-worker` service in the pinned project/environment.
 2. Sets the full non-secret baseline on web and worker with
-   `W2_DOCUMENT_RUNTIME_ENABLED=false` before inspecting mutable prerequisites.
+   `W2_DOCUMENT_RUNTIME_ENABLED=false` and `W2_GRAPH_ENABLED=0` before inspecting
+   mutable prerequisites.
 3. Requires OpenEMR secure upload to remain enabled, idempotently enables only the
    architecture-required `application/json` whitelist entry, and attests it is active.
    It then validates the SMART registration, both category paths/IDs/ACLs,
@@ -189,9 +191,9 @@ On every run, `agent/scripts/activate_w2_write_path.py` performs this idempotent
    `python -m app.ingestion.worker`; there is no fake HTTP health endpoint.
 6. Sets worker `W2_DOCUMENT_RUNTIME_ENABLED=true`, deploys it, and requires one running,
    non-crashed replica before touching web.
-7. Sets web `W2_DOCUMENT_RUNTIME_ENABLED=true` last, deploys it, and requires `/ready`
-   to report overall `ready` plus `document_runtime: {ok: true, kind: hard,
-   detail: ready}`.
+7. Sets the attested `W2_GRAPH_ENABLED=1` configuration and web
+   `W2_DOCUMENT_RUNTIME_ENABLED=true` last, deploys it, and requires `/ready` to report
+   overall `ready` plus `document_runtime: {ok: true, kind: hard, detail: ready}`.
 8. Starts the repository Selenium service automatically when the configured loopback
    endpoint is absent, performs authorization-code + PKCE, and selects the exact canonical
    synthetic UUID from OpenEMR's `data-patient-id`. It refuses an absent, ambiguous, or
@@ -211,6 +213,7 @@ The script sets these values itself on both services as applicable:
 
 ```text
 W2_DOCUMENT_RUNTIME_ENABLED
+W2_GRAPH_ENABLED
 OPENEMR_FHIR_BASE_URL
 OPENEMR_OAUTH_BASE_URL
 OPENEMR_REST_BASE_URL

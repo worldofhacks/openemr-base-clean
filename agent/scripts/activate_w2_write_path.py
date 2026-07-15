@@ -17,6 +17,7 @@ W2-D1/D3/D6/D9/D10; W2_ARCHITECTURE §3/§5.
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import re
@@ -1133,7 +1134,12 @@ class SeleniumSmartSession:
 
 class VerifyScript:
     def run(self, environ: Mapping[str, str]) -> object:
-        from scripts.verify_w2_write_path import main as verify_main
+        module_name = (
+            f"{__package__}.verify_w2_write_path"
+            if __package__
+            else "verify_w2_write_path"
+        )
+        verify_main = importlib.import_module(module_name).main
 
         if verify_main(environ=environ) != 0:
             raise ActivationError("synthetic deployed write-path verification failed")

@@ -9,10 +9,13 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
+import importlib
 import subprocess
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import scripts.activate_w2_write_path as activation_module
 
 from scripts.activate_w2_write_path import (
     OWNER_ONLY_SECRET_NAMES,
@@ -23,6 +26,7 @@ from scripts.activate_w2_write_path import (
     RailwayCLI,
     RailwayOpenEMRInspectorImpl,
     REQUIRED_SMART_SCOPES,
+    VerifyScript,
 )
 
 
@@ -349,6 +353,22 @@ def test_openemr_attestation_discovers_the_schema_instead_of_trusting_template_d
     assert "information_schema.tables" in remote_script
     assert "HAVING COUNT(DISTINCT table_name)=5" in remote_script
     assert "DB=${MYSQLDATABASE" not in remote_script
+
+
+def test_verify_script_imports_its_sibling_under_direct_script_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    imported: list[str] = []
+
+    def fake_import(name: str) -> object:
+        imported.append(name)
+        return SimpleNamespace(main=lambda **_kwargs: 0)
+
+    monkeypatch.setattr(activation_module, "__package__", "")
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+
+    assert VerifyScript().run({}) is True
+    assert imported == ["verify_w2_write_path"]
 
 
 def test_worker_ensure_and_disabled_prepare_are_idempotent_without_secret_reads() -> None:

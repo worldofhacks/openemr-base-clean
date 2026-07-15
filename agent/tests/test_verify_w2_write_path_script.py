@@ -64,6 +64,7 @@ def _transport(
     persistent_worker_restart: bool = False,
     initial_writeback_failed: bool = False,
     persistent_writeback_failed: bool = False,
+    ready_transport_failures: int = 0,
 ) -> tuple[httpx.MockTransport, list[httpx.Request]]:
     requests: list[httpx.Request] = []
     upload_index = 0
@@ -81,6 +82,12 @@ def _transport(
         requests.append(request)
         path = request.url.path
         if request.method == "GET" and path == "/ready":
+            ready_requests = sum(
+                item.method == "GET" and item.url.path == "/ready"
+                for item in requests
+            )
+            if ready_requests <= ready_transport_failures:
+                raise httpx.ReadError("synthetic Railway transport drop", request=request)
             return httpx.Response(200, json=_ready(document_detail=document_detail))
         if request.method == "POST" and path == "/documents":
             document_id = ("intake-document", "lab-document")[upload_index % 2]
@@ -245,6 +252,31 @@ def test_verifier_is_idempotent_when_uploads_resolve_to_existing_documents():
         first = LiveWritePathVerifier(config, client=client, sleep=_zero_sleep).run()
         second = LiveWritePathVerifier(config, client=client, sleep=_zero_sleep).run()
     assert first.documents_verified == second.documents_verified == 2
+
+
+def test_verifier_retries_only_the_read_only_ready_transport_probe() -> None:
+    config = VerificationConfig.from_env(_ENV)
+    transport, requests = _transport(config, ready_transport_failures=1)
+
+    with httpx.Client(transport=transport) as client:
+        result = LiveWritePathVerifier(config, client=client, sleep=_zero_sleep).run()
+
+    paths = [request.url.path for request in requests]
+    assert result.documents_verified == 2
+    assert paths.count("/ready") == 3
+    assert paths.count("/documents") == 2
+
+
+def test_verifier_stops_before_upload_after_bounded_ready_transport_failures() -> None:
+    config = VerificationConfig.from_env(_ENV)
+    transport, requests = _transport(config, ready_transport_failures=3)
+
+    with httpx.Client(transport=transport) as client:
+        with pytest.raises(VerificationError, match="deployed agent request failed"):
+            LiveWritePathVerifier(config, client=client, sleep=_zero_sleep).run()
+
+    paths = [request.url.path for request in requests]
+    assert paths == ["/ready", "/ready", "/ready"]
 
 
 def test_verifier_retries_each_existing_worker_restart_once_via_typed_route():

@@ -50,6 +50,7 @@ _EXPECTED_READY_CHECKS = frozenset(
 _QUERY = "type 2 diabetes; HbA1c; blood pressure"
 _TERMINAL_FAILURE_STATES = frozenset({"failed", "reconciling"})
 _SAFE_RETRY_REASONS = frozenset({"worker_restart", "writeback_failed"})
+_READY_TRANSPORT_ATTEMPTS = 3
 
 
 class VerificationError(RuntimeError):
@@ -171,7 +172,12 @@ class LiveWritePathVerifier:
         )
 
     def _require_ready(self) -> None:
-        body = self._request_json("GET", "/ready", expected_status={200})
+        body = self._request_json(
+            "GET",
+            "/ready",
+            expected_status={200},
+            transport_attempts=_READY_TRANSPORT_ATTEMPTS,
+        )
         if body.get("status") != "ready":
             raise VerificationError("readiness is not green across all dependencies")
         checks = body.get("checks")
@@ -354,14 +360,19 @@ class LiveWritePathVerifier:
         path: str,
         *,
         expected_status: set[int],
+        transport_attempts: int = 1,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        try:
-            response = self._client.request(
-                method, self._config.agent_base_url + path, **kwargs
-            )
-        except httpx.HTTPError as exc:
-            raise VerificationError("deployed agent request failed") from exc
+        for attempt in range(transport_attempts):
+            try:
+                response = self._client.request(
+                    method, self._config.agent_base_url + path, **kwargs
+                )
+                break
+            except httpx.HTTPError as exc:
+                if attempt + 1 >= transport_attempts:
+                    raise VerificationError("deployed agent request failed") from exc
+                self._sleep(self._config.poll_interval_seconds)
         if response.status_code not in expected_status:
             # Do not render URL, headers, response body, or owner context.
             raise VerificationError(

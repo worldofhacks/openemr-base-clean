@@ -24,6 +24,7 @@ _W2 = {
     "source_document_category_id": "source-category-synthetic",
     "artifact_document_category_id": "artifact-category-synthetic",
     "openemr_binary_readback_safe": True,
+    "document_credential_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 }
 
 
@@ -44,6 +45,7 @@ def test_w2_runtime_config_is_typed_and_path_pinned() -> None:
         "source_document_category_id",
         "artifact_document_category_id",
         "openemr_binary_readback_safe",
+        "document_credential_key",
     ),
 )
 def test_enabled_w2_runtime_fails_fast_without_attested_write_config(
@@ -55,6 +57,15 @@ def test_enabled_w2_runtime_fails_fast_without_attested_write_config(
 
     with pytest.raises(ValidationError):
         Settings(**values)
+
+
+def test_w2_credential_key_is_validated_and_masked() -> None:
+    settings = Settings(**_W2)
+
+    assert settings.document_credential_key is not None
+    assert "AAAAAAAA" not in repr(settings)
+    with pytest.raises(ValidationError):
+        Settings(**{**_W2, "document_credential_key": "not-a-fernet-key"})
 
 
 def test_w2_rest_url_rejects_plaintext() -> None:

@@ -31,7 +31,12 @@ async def _lifespan(app: FastAPI):
     startup = getattr(getattr(app.state, "services", None), "startup", None)
     if startup is not None:
         await startup()
-    yield
+    try:
+        yield
+    finally:
+        shutdown = getattr(getattr(app.state, "services", None), "shutdown", None)
+        if shutdown is not None:
+            await shutdown()
 
 
 def create_app(
@@ -62,6 +67,12 @@ def create_app(
 
         services = AgentServices(settings)
     app.state.services = services
+    # W2 §3: document enablement is a hard readiness dependency. The service-owned
+    # probe verifies schema, credential crypto/store, and a fresh *dedicated worker*
+    # heartbeat. Injected fakes without this capability keep the W1 test seam unchanged.
+    document_runtime_probe = getattr(services, "probe_document_runtime", None)
+    if document_runtime_probe is not None:
+        app.state.readiness_checks.append(document_runtime_probe)
     # One lazy retrieval instance is shared by the graph worker and the public evidence
     # endpoint (W2-D4). Merely constructing the app never loads an ONNX model or vendor client.
     evidence_retriever_factory = getattr(services, "get_evidence_retriever", None)

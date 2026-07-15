@@ -155,8 +155,16 @@ class _GatewayFactory:
             )
         self._base_url = str(rest_base)
         self._attestations = (
-            CategoryAttestation(settings.source_document_path, source_id, True),
-            CategoryAttestation(settings.artifact_document_path, artifact_id, True),
+            CategoryAttestation(
+                settings.source_document_path,
+                source_id,
+                settings.source_document_category_acl == "patients|docs",
+            ),
+            CategoryAttestation(
+                settings.artifact_document_path,
+                artifact_id,
+                settings.artifact_document_category_acl == "patients|docs",
+            ),
         )
 
     async def for_record(self, record: DocumentRecord) -> OpenEMRLiveGateway:

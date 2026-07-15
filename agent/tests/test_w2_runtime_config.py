@@ -15,6 +15,7 @@ _BASE = {
     "smart_client_secret": "synthetic-secret",
     "anthropic_api_key": "synthetic-provider-key",
     "session_store_dsn": "postgresql://u:p@localhost:5432/agent",
+    "agent_callback_url": "https://agent.test/callback",
 }
 
 _W2 = {
@@ -22,7 +23,9 @@ _W2 = {
     "w2_document_runtime_enabled": True,
     "openemr_rest_base_url": "https://openemr.test/apis/default",
     "source_document_category_id": "source-category-synthetic",
+    "source_document_category_acl": "patients|docs",
     "artifact_document_category_id": "artifact-category-synthetic",
+    "artifact_document_category_acl": "patients|docs",
     "openemr_binary_readback_safe": True,
     "document_credential_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 }
@@ -42,8 +45,11 @@ def test_w2_runtime_config_is_typed_and_path_pinned() -> None:
     "missing",
     (
         "openemr_rest_base_url",
+        "agent_callback_url",
         "source_document_category_id",
+        "source_document_category_acl",
         "artifact_document_category_id",
+        "artifact_document_category_acl",
         "openemr_binary_readback_safe",
         "document_credential_key",
     ),
@@ -71,3 +77,21 @@ def test_w2_credential_key_is_validated_and_masked() -> None:
 def test_w2_rest_url_rejects_plaintext() -> None:
     with pytest.raises(ValidationError):
         Settings(**{**_W2, "openemr_rest_base_url": "http://openemr.test/apis/default"})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("agent_callback_url", "http://localhost:8000/callback"),
+        ("agent_callback_url", "https://agent.test/not-callback"),
+        ("source_document_path", "/Medical-Record"),
+        ("artifact_document_path", "/Medical-Record"),
+        ("source_document_category_acl", "patients|demo"),
+        ("artifact_document_category_acl", "patients|demo"),
+    ),
+)
+def test_w2_activation_rejects_callback_path_or_acl_drift(
+    field: str, value: str
+) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{**_W2, field: value})

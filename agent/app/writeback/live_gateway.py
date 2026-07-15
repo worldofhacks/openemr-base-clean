@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Mapping, Sequence, cast
 from urllib.parse import SplitResult, quote, urlsplit
+from uuid import UUID
 
 import httpx
 
@@ -60,7 +61,7 @@ _NOTE = re.compile(
     r"\Acopilot-intent:(?P<marker>[^;]+);payload:(?P<hash>[0-9a-fA-F]{12,64})\Z"
 )
 _BINARY_ID = re.compile(r"\A[A-Za-z0-9.-]+\Z")
-_STANDARD_PATIENT_ID = re.compile(r"\A[1-9][0-9]*\Z")
+_LEGACY_ID = re.compile(r"\A[1-9][0-9]*\Z")
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,34 @@ class CategoryAttestation:
 
     def as_record(self) -> CategoryRecord:
         return CategoryRecord(self.path, self.category_id, self.writable)
+
+
+@dataclass(frozen=True)
+class LegacyRouteAttestation:
+    """Exact UUID→numeric bindings for OpenEMR's legacy write routes."""
+
+    patient_uuid: str
+    patient_id: str
+    encounter_uuid: str
+    encounter_id: str
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("patient_uuid", self.patient_uuid),
+            ("encounter_uuid", self.encounter_uuid),
+        ):
+            try:
+                canonical = str(UUID(value))
+            except (ValueError, TypeError, AttributeError):
+                raise ValueError(f"{name} must be a canonical UUID") from None
+            if canonical != value:
+                raise ValueError(f"{name} must be a canonical UUID")
+        for name, value in (
+            ("patient_id", self.patient_id),
+            ("encounter_id", self.encounter_id),
+        ):
+            if not isinstance(value, str) or _LEGACY_ID.fullmatch(value) is None:
+                raise ValueError(f"{name} must be a positive canonical decimal")
 
 
 @dataclass(frozen=True)
@@ -123,6 +152,7 @@ class OpenEMRLiveGateway:
         base_url: str,
         principal: DelegatedPrincipal,
         category_attestations: Sequence[CategoryAttestation],
+        legacy_route_attestation: LegacyRouteAttestation,
         binary_guard: BinaryReadGuard,
         http_client: httpx.AsyncClient | None = None,
         timeout: float = 15.0,
@@ -137,6 +167,7 @@ class OpenEMRLiveGateway:
         self._base_parts = urlsplit(self._base)
         self._principal = principal
         self._attestations = attestations
+        self._legacy_routes = legacy_route_attestation
         self._binary_guard = binary_guard
         self._http = http_client
         self._timeout = timeout
@@ -147,7 +178,6 @@ class OpenEMRLiveGateway:
             timeout=timeout,
         )
         self._document_names: dict[tuple[str, str], str] = {}
-        self._document_patient_id: str | None = None
 
     async def resolve_document_categories(self, path: str) -> list[CategoryRecord]:
         attested = self._attestations.get(path)
@@ -158,7 +188,7 @@ class OpenEMRLiveGateway:
     ) -> list[DocumentRecord]:
         self._authorize_patient(patient_id)
         self._require_attestation(category_path, writable=False)
-        document_patient_id = await self._resolve_document_patient_id()
+        document_patient_id = self._legacy_patient_id(patient_id)
         body = await self._get_json(
             f"{self._base}/api/patient/{quote(document_patient_id, safe='')}/document",
             params={"path": category_path},
@@ -221,7 +251,7 @@ class OpenEMRLiveGateway:
     ) -> str | None:
         self._authorize_patient(patient_id)
         self._require_attestation(category_path, writable=True)
-        document_patient_id = await self._resolve_document_patient_id()
+        document_patient_id = self._legacy_patient_id(patient_id)
         return await self._writer.create_document(
             patient_id=patient_id,
             document_patient_id=document_patient_id,
@@ -316,6 +346,8 @@ class OpenEMRLiveGateway:
         return await self._writer.create_vital(
             patient_id=patient_id,
             encounter_id=encounter_id,
+            legacy_patient_id=self._legacy_patient_id(patient_id),
+            legacy_encounter_id=self._legacy_encounter_id(encounter_id),
             payload=clean,
         )
 
@@ -325,31 +357,17 @@ class OpenEMRLiveGateway:
                 "delegated principal is bound to a different patient"
             )
 
-    async def _resolve_document_patient_id(self) -> str:
-        """Resolve the token-bound SMART/FHIR UUID to the legacy document pid."""
-
-        if self._document_patient_id is not None:
-            return self._document_patient_id
-        patient_id = self._principal.patient_id
-        body = await self._get_json(
-            f"{self._base}/api/patient/{quote(patient_id, safe='')}"
-        )
-        if not isinstance(body, Mapping) or not isinstance(body.get("data"), Mapping):
-            raise LiveGatewayError("OpenEMR patient mapping has an invalid shape")
-        record = cast(Mapping[str, object], body["data"])
-        mapped_uuid = record.get("uuid")
-        mapped_pid = record.get("pid")
-        if not isinstance(mapped_uuid, str) or not hmac.compare_digest(
-            mapped_uuid, patient_id
-        ):
+    def _legacy_patient_id(self, patient_id: str) -> str:
+        if not hmac.compare_digest(self._legacy_routes.patient_uuid, patient_id):
             raise LiveGatewayError("OpenEMR patient mapping did not match delegation")
-        if isinstance(mapped_pid, bool) or not isinstance(mapped_pid, (str, int)):
-            raise LiveGatewayError("OpenEMR patient mapping has an invalid pid")
-        pid = str(mapped_pid)
-        if _STANDARD_PATIENT_ID.fullmatch(pid) is None:
-            raise LiveGatewayError("OpenEMR patient mapping has an invalid pid")
-        self._document_patient_id = pid
-        return pid
+        return self._legacy_routes.patient_id
+
+    def _legacy_encounter_id(self, encounter_id: str) -> str:
+        if not hmac.compare_digest(
+            self._legacy_routes.encounter_uuid, encounter_id
+        ):
+            raise LiveGatewayError("OpenEMR encounter mapping did not match delegation")
+        return self._legacy_routes.encounter_id
 
     def _require_attestation(
         self, category_path: str, *, writable: bool
@@ -362,9 +380,11 @@ class OpenEMRLiveGateway:
         return attested
 
     def _vital_url(self, patient_id: str, encounter_id: str) -> str:
+        legacy_patient_id = self._legacy_patient_id(patient_id)
+        legacy_encounter_id = self._legacy_encounter_id(encounter_id)
         return (
-            f"{self._base}/api/patient/{quote(patient_id, safe='')}"
-            f"/encounter/{quote(encounter_id, safe='')}/vital"
+            f"{self._base}/api/patient/{quote(legacy_patient_id, safe='')}"
+            f"/encounter/{quote(legacy_encounter_id, safe='')}/vital"
         )
 
     def _headers(self, *, fhir: bool) -> dict[str, str]:

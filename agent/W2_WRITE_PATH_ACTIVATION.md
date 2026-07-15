@@ -100,6 +100,17 @@ service. It requires exactly two root rows, distinct positive IDs, and exact ACL
 sets `SOURCE_DOCUMENT_CATEGORY_ID` and `ARTIFACT_DOCUMENT_CATEGORY_ID` itself. No owner
 copies an ID, and the script never performs a database write.
 
+OpenEMR's SMART/FHIR context identifies the patient and encounter with UUIDs, while its
+legacy document and vital routes require numeric `pid`/`eid` values. The frozen exact-16
+scope set deliberately does not add the separate lowercase standard-patient lookup
+scope. During the same read-only database attestation, the script therefore resolves
+the canonical synthetic UUIDs to one positive numeric patient ID and one positive
+numeric encounter ID. It installs the four non-secret bindings below on web and worker.
+Runtime keeps the UUIDs for delegated authorization, ledgers, FHIR reads, and citations;
+it uses numeric IDs only in those legacy routes and rejects any UUID mismatch before
+HTTP. This enables only the canonical synthetic verification patient and fails closed
+for every other patient.
+
 The same read-only attestation requires `system_error_logging=WARNING`. If it is not
 already `WARNING`, the script stops fail-closed and emits this owner-admin remediation:
 
@@ -159,9 +170,10 @@ On every run, `agent/scripts/activate_w2_write_path.py` performs this idempotent
    `W2_DOCUMENT_RUNTIME_ENABLED=false` before inspecting mutable prerequisites.
 3. Uses read-only OpenEMR state to validate the SMART registration, both category
    paths/IDs/ACLs, `system_error_logging=WARNING`, the canonical synthetic patient, and
-   that patient's deterministic latest encounter UUID.
-4. Sets the discovered public SMART client ID and both category IDs without owner
-   copy/paste.
+   that patient's deterministic latest encounter UUID plus the exact numeric `pid/eid`
+   bindings required by legacy write routes.
+4. Sets the discovered public SMART client ID, both category IDs, and all four
+   UUID-to-numeric route attestations without owner copy/paste.
 5. Deploys the worker from a temporary context in which the committed
    `agent/railway.worker.json` is the active `railway.json`. Its real start command is
    `python -m app.ingestion.worker`; there is no fake HTTP health endpoint.
@@ -200,6 +212,10 @@ SOURCE_DOCUMENT_CATEGORY_ACL
 ARTIFACT_DOCUMENT_PATH
 ARTIFACT_DOCUMENT_CATEGORY_ID
 ARTIFACT_DOCUMENT_CATEGORY_ACL
+OPENEMR_LEGACY_PATIENT_UUID
+OPENEMR_LEGACY_PATIENT_ID
+OPENEMR_LEGACY_ENCOUNTER_UUID
+OPENEMR_LEGACY_ENCOUNTER_ID
 OPENEMR_BINARY_READBACK_SAFE
 DOCUMENT_WORKER_ID
 DOCUMENT_WORKER_POLL_SECONDS

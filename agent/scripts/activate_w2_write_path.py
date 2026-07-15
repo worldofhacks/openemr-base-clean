@@ -254,6 +254,9 @@ class OpenEMRAttestation:
     artifact_category_id: str
     system_error_logging: str
     client_id: str = ""
+    patient_uuid: str = ""
+    patient_id: str = ""
+    encounter_uuid: str = ""
     encounter_id: str = ""
 
     @classmethod
@@ -262,8 +265,11 @@ class OpenEMRAttestation:
         category_rows: Sequence[Mapping[str, object]],
         *,
         system_error_logging: str,
+        patient_uuid: str,
+        patient_id: str,
+        encounter_uuid: str,
+        encounter_id: str,
         client_id: str = "",
-        encounter_id: str = "",
     ) -> "OpenEMRAttestation":
         if system_error_logging != "WARNING":
             raise ActivationError("OpenEMR system_error_logging is not exactly WARNING")
@@ -295,11 +301,35 @@ class OpenEMRAttestation:
         ids = {str(row["id"]) for row in indexed.values()}
         if len(ids) != 2:
             raise ActivationError("OpenEMR document category IDs are not distinct")
+        for label, value in (
+            ("synthetic patient", patient_uuid),
+            ("synthetic encounter", encounter_uuid),
+        ):
+            try:
+                canonical = str(uuid.UUID(value))
+            except ValueError:
+                raise ActivationError(f"{label} ID is not a UUID") from None
+            if canonical != value:
+                raise ActivationError(f"{label} ID is not canonical")
+        for label, value in (
+            ("synthetic patient", patient_id),
+            ("synthetic encounter", encounter_id),
+        ):
+            if (
+                not value.isascii()
+                or not value.isdecimal()
+                or int(value) <= 0
+                or str(int(value)) != value
+            ):
+                raise ActivationError(f"{label} legacy ID is invalid")
         return cls(
             source_category_id=str(indexed["AI-Source-Documents"]["id"]),
             artifact_category_id=str(indexed["AI-Extractions"]["id"]),
             system_error_logging=system_error_logging,
             client_id=client_id,
+            patient_uuid=patient_uuid,
+            patient_id=patient_id,
+            encounter_uuid=encounter_uuid,
             encounter_id=encounter_id,
         )
 
@@ -444,6 +474,10 @@ class ActivationOrchestrator:
                 "SMART_CLIENT_ID": client_id,
                 "SOURCE_DOCUMENT_CATEGORY_ID": attestation.source_category_id,
                 "ARTIFACT_DOCUMENT_CATEGORY_ID": attestation.artifact_category_id,
+                "OPENEMR_LEGACY_PATIENT_UUID": attestation.patient_uuid,
+                "OPENEMR_LEGACY_PATIENT_ID": attestation.patient_id,
+                "OPENEMR_LEGACY_ENCOUNTER_UUID": attestation.encounter_uuid,
+                "OPENEMR_LEGACY_ENCOUNTER_ID": attestation.encounter_id,
                 "OPENEMR_BINARY_READBACK_SAFE": "true",
             }
         )
@@ -485,7 +519,7 @@ class ActivationOrchestrator:
         return client_id
 
     def _resolved_encounter_id(self, attestation: OpenEMRAttestation) -> str:
-        discovered = attestation.encounter_id.strip()
+        discovered = attestation.encounter_uuid.strip()
         configured = self._config.encounter_id.strip()
         if configured and discovered and configured != discovered:
             raise ActivationError(
@@ -1016,7 +1050,8 @@ class RailwayOpenEMRInspectorImpl:
         categories: list[dict[str, str]] = []
         logging_values: list[str] = []
         clients: list[list[str]] = []
-        encounters: list[str] = []
+        patients: list[tuple[str, str]] = []
+        encounters: list[tuple[str, str]] = []
         for line in output.splitlines():
             fields = line.split("\t")
             if not fields:
@@ -1034,8 +1069,10 @@ class RailwayOpenEMRInspectorImpl:
                 logging_values.append(fields[1])
             elif fields[0] == "CLIENT" and len(fields) == 9:
                 clients.append(fields[1:])
-            elif fields[0] == "ENCOUNTER" and len(fields) == 2:
-                encounters.append(fields[1])
+            elif fields[0] == "PATIENT" and len(fields) == 3:
+                patients.append((fields[1], fields[2]))
+            elif fields[0] == "ENCOUNTER" and len(fields) == 3:
+                encounters.append((fields[1], fields[2]))
         if len(logging_values) != 1:
             raise ActivationError(
                 "OpenEMR logging attestation was not uniquely available"
@@ -1044,17 +1081,31 @@ class RailwayOpenEMRInspectorImpl:
             raise ActivationError(
                 "replacement SMART client was missing or not uniquely registered"
             )
+        if len(patients) != 1:
+            raise ActivationError(
+                "canonical synthetic patient mapping was not uniquely available"
+            )
         if len(encounters) != 1:
             raise ActivationError(
                 "canonical synthetic patient has no uniquely selected latest encounter"
             )
         client_id = self._validate_client(clients[0])
-        encounter = self._canonical_uuid(encounters[0], "synthetic encounter")
+        patient_uuid = self._canonical_uuid(patients[0][0], "synthetic patient")
+        if patient_uuid != self._config.patient_id:
+            raise ActivationError(
+                "discovered patient mapping does not match configured synthetic patient"
+            )
+        encounter_uuid = self._canonical_uuid(
+            encounters[0][0], "synthetic encounter"
+        )
         return OpenEMRAttestation.from_rows(
             categories,
             system_error_logging=logging_values[0],
             client_id=client_id,
-            encounter_id=encounter,
+            patient_uuid=patient_uuid,
+            patient_id=patients[0][1],
+            encounter_uuid=encounter_uuid,
+            encounter_id=encounters[0][1],
         )
 
     def _validate_client(self, values: list[str]) -> str:
@@ -1119,11 +1170,19 @@ SELECT 'CLIENT', client_id, CAST(is_enabled AS CHAR), CAST(is_confidential AS CH
 FROM oauth_clients
 WHERE BINARY client_name='{DEFAULT_SMART_CLIENT_NAME}' AND revoke_date IS NULL;
 """.strip()
+        patient_sql = f"""
+SELECT 'PATIENT', LOWER(CONCAT(
+       SUBSTR(HEX(pd.uuid),1,8),'-',SUBSTR(HEX(pd.uuid),9,4),'-',
+       SUBSTR(HEX(pd.uuid),13,4),'-',SUBSTR(HEX(pd.uuid),17,4),'-',
+       SUBSTR(HEX(pd.uuid),21,12))), CAST(pd.pid AS CHAR)
+FROM patient_data AS pd
+WHERE HEX(pd.uuid)=REPLACE(UPPER('{patient_id}'),'-','');
+""".strip()
         encounter_sql = f"""
 SELECT 'ENCOUNTER', LOWER(CONCAT(
        SUBSTR(HEX(fe.uuid),1,8),'-',SUBSTR(HEX(fe.uuid),9,4),'-',
        SUBSTR(HEX(fe.uuid),13,4),'-',SUBSTR(HEX(fe.uuid),17,4),'-',
-       SUBSTR(HEX(fe.uuid),21,12)))
+       SUBSTR(HEX(fe.uuid),21,12))), CAST(fe.encounter AS CHAR)
 FROM form_encounter AS fe
 JOIN patient_data AS pd ON pd.pid=fe.pid
 WHERE HEX(pd.uuid)=REPLACE(UPPER('{patient_id}'),'-','') AND fe.uuid IS NOT NULL
@@ -1148,6 +1207,7 @@ ORDER BY table_schema;
             'test "$DB_COUNT" -eq 1; '
             f'mysql --batch --skip-column-names --raw -u "$DBUSER" "$DB" -e {shlex.quote(base_sql)}; '
             f'mysql --batch --skip-column-names --raw -u "$DBUSER" "$DB" -e {shlex.quote(client_sql)}; '
+            f'mysql --batch --skip-column-names --raw -u "$DBUSER" "$DB" -e {shlex.quote(patient_sql)}; '
             f'mysql --batch --skip-column-names --raw -u "$DBUSER" "$DB" -e {shlex.quote(encounter_sql)}'
         )
 

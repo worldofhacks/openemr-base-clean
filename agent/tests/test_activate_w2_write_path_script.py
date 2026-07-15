@@ -37,6 +37,11 @@ _OWNER_SECRET_VALUES = {
     "DOCUMENT_CREDENTIAL_KEY": "credential-key-must-never-be-read-or-printed",
 }
 
+_PATIENT_UUID = "a234b786-539a-4f9a-96a0-432293226f02"
+_PATIENT_ID = "731"
+_ENCOUNTER_UUID = "12345678-1234-4234-9234-123456789abc"
+_ENCOUNTER_ID = "912"
+
 _ENV = {
     "W2_ACTIVATE_RAILWAY_PROJECT_ID": "project-test",
     "W2_ACTIVATE_RAILWAY_ENVIRONMENT": "production",
@@ -48,7 +53,7 @@ _ENV = {
     "OPENEMR_OAUTH_BASE_URL": "https://openemr.example/oauth2/default",
     "OPENEMR_REST_BASE_URL": "https://openemr.example/apis/default",
     "AGENT_CALLBACK_URL": "https://agent.example/callback",
-    "W2_VERIFY_PATIENT_ID": "synthetic-patient-uuid",
+    "W2_VERIFY_PATIENT_ID": _PATIENT_UUID,
     "W2_VERIFY_SYNTHETIC_ONLY_ACK": "synthetic-patient-and-documents",
     "OE_USERNAME": "synthetic-launch-user",
     "OE_ADMIN_PASS": "launch-password-must-never-print",
@@ -158,7 +163,10 @@ class _FakeOpenEMR:
             ],
             system_error_logging="WARNING",
             client_id="replacement-client-public-id",
-            encounter_id="synthetic-encounter-uuid",
+            patient_uuid=_PATIENT_UUID,
+            patient_id=_PATIENT_ID,
+            encounter_uuid=_ENCOUNTER_UUID,
+            encounter_id=_ENCOUNTER_ID,
         )
 
 
@@ -171,7 +179,7 @@ class _FakeSmart:
     ) -> Mapping[str, str]:
         self.events.append(("establish_smart_session",))
         assert patient_id == _ENV["W2_VERIFY_PATIENT_ID"]
-        assert encounter_id == "synthetic-encounter-uuid"
+        assert encounter_id == _ENCOUNTER_UUID
         return {
             "W2_VERIFY_SESSION_ID": "opaque-session-must-never-print",
             "W2_VERIFY_PATIENT_ID": patient_id,
@@ -270,7 +278,14 @@ def test_openemr_attestation_requires_exact_categories_acl_and_warning() -> None
         },
     ]
 
-    attestation = OpenEMRAttestation.from_rows(rows, system_error_logging="WARNING")
+    attestation = OpenEMRAttestation.from_rows(
+        rows,
+        system_error_logging="WARNING",
+        patient_uuid=_PATIENT_UUID,
+        patient_id=_PATIENT_ID,
+        encounter_uuid=_ENCOUNTER_UUID,
+        encounter_id=_ENCOUNTER_ID,
+    )
     assert attestation.source_category_id == "101"
     assert attestation.artifact_category_id == "202"
 
@@ -285,14 +300,19 @@ def test_openemr_attestation_requires_exact_categories_acl_and_warning() -> None
     for category_rows, logging_value in invalid:
         with pytest.raises(ActivationError):
             OpenEMRAttestation.from_rows(
-                category_rows, system_error_logging=logging_value
+                category_rows,
+                system_error_logging=logging_value,
+                patient_uuid=_PATIENT_UUID,
+                patient_id=_PATIENT_ID,
+                encounter_uuid=_ENCOUNTER_UUID,
+                encounter_id=_ENCOUNTER_ID,
             )
 
 
 def test_read_only_discovery_validates_client_categories_logging_and_encounter() -> (
     None
 ):
-    encounter_id = "12345678-1234-4234-9234-123456789abc"
+    encounter_id = _ENCOUNTER_UUID
     client_row = "\t".join(
         [
             "CLIENT",
@@ -312,7 +332,8 @@ def test_read_only_discovery_validates_client_categories_logging_and_encounter()
             "CATEGORY\tAI-Source-Documents\t101\tpatients|docs",
             "LOGGING\tWARNING",
             client_row,
-            f"ENCOUNTER\t{encounter_id}",
+            f"PATIENT\t{_PATIENT_UUID}\t{_PATIENT_ID}",
+            f"ENCOUNTER\t{encounter_id}\t{_ENCOUNTER_ID}",
         ]
     )
 
@@ -338,7 +359,10 @@ def test_read_only_discovery_validates_client_categories_logging_and_encounter()
     attestation = inspector.discover_attestation()
 
     assert attestation.client_id == "public-client-id"
-    assert attestation.encounter_id == encounter_id
+    assert attestation.patient_uuid == _PATIENT_UUID
+    assert attestation.patient_id == _PATIENT_ID
+    assert attestation.encounter_uuid == _ENCOUNTER_UUID
+    assert attestation.encounter_id == _ENCOUNTER_ID
     assert attestation.source_category_id == "101"
     assert attestation.artifact_category_id == "202"
 
@@ -865,6 +889,10 @@ def test_activation_flips_worker_then_web_last_and_invokes_opaque_verifier() -> 
     assert all(
         variables["SOURCE_DOCUMENT_CATEGORY_ID"] == "101"
         and variables["ARTIFACT_DOCUMENT_CATEGORY_ID"] == "202"
+        and variables["OPENEMR_LEGACY_PATIENT_UUID"] == _PATIENT_UUID
+        and variables["OPENEMR_LEGACY_PATIENT_ID"] == _PATIENT_ID
+        and variables["OPENEMR_LEGACY_ENCOUNTER_UUID"] == _ENCOUNTER_UUID
+        and variables["OPENEMR_LEGACY_ENCOUNTER_ID"] == _ENCOUNTER_ID
         and variables["OPENEMR_BINARY_READBACK_SAFE"] == "true"
         for variables in category_sets
     )
@@ -874,8 +902,8 @@ def test_activation_flips_worker_then_web_last_and_invokes_opaque_verifier() -> 
     assert verification_env == {
         "W2_VERIFY_AGENT_BASE_URL": "https://agent.example",
         "W2_VERIFY_SESSION_ID": "opaque-session-must-never-print",
-        "W2_VERIFY_PATIENT_ID": "synthetic-patient-uuid",
-        "W2_VERIFY_ENCOUNTER_ID": "synthetic-encounter-uuid",
+        "W2_VERIFY_PATIENT_ID": _PATIENT_UUID,
+        "W2_VERIFY_ENCOUNTER_ID": _ENCOUNTER_UUID,
         "W2_VERIFY_SYNTHETIC_ONLY_ACK": "synthetic-patient-and-documents",
     }
     assert OWNER_ONLY_SECRET_NAMES.isdisjoint(verification_env)

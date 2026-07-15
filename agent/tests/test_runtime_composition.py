@@ -30,6 +30,10 @@ def _settings_values() -> dict[str, object]:
         "source_document_category_acl": "patients|docs",
         "artifact_document_category_id": "artifact-category-synthetic",
         "artifact_document_category_acl": "patients|docs",
+        "openemr_legacy_patient_uuid": "11111111-1111-4111-8111-111111111111",
+        "openemr_legacy_patient_id": "731",
+        "openemr_legacy_encounter_uuid": "22222222-2222-4222-8222-222222222222",
+        "openemr_legacy_encounter_id": "912",
         "openemr_binary_readback_safe": True,
         "document_credential_key": _KEY,
     }

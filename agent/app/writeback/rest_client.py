@@ -109,13 +109,20 @@ class OpenEMRRestClient:
         *,
         patient_id: str,
         encounter_id: str,
+        legacy_patient_id: str,
+        legacy_encounter_id: str,
         payload: Mapping[str, object],
     ) -> str | None:
         self._authorize_patient(patient_id)
+        if not legacy_patient_id.isascii() or not legacy_patient_id.isdecimal():
+            raise OpenEMRWriteError("legacy vital patient id is invalid")
+        if not legacy_encounter_id.isascii() or not legacy_encounter_id.isdecimal():
+            raise OpenEMRWriteError("legacy vital encounter id is invalid")
         clean = strip_caller_attribution(payload)
         response = await self._request(
             "POST",
-            f"{self._base}/api/patient/{patient_id}/encounter/{encounter_id}/vital",
+            f"{self._base}/api/patient/{quote(legacy_patient_id, safe='')}"
+            f"/encounter/{quote(legacy_encounter_id, safe='')}/vital",
             headers={**self._headers(), "Content-Type": "application/json"},
             json=clean,
         )

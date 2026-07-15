@@ -54,6 +54,7 @@ from app.writeback.intents import ExactlyOnceWriter, PostgresIntentRepository
 from app.writeback.live_gateway import (
     BinaryReadGuard,
     CategoryAttestation,
+    LegacyRouteAttestation,
     OpenEMRLiveGateway,
 )
 from app.writeback.preflight import CategoryExpectation
@@ -173,6 +174,24 @@ class _GatewayFactory:
                 settings.artifact_document_category_acl == "patients|docs",
             ),
         )
+        self._legacy_routes = LegacyRouteAttestation(
+            patient_uuid=_required(
+                settings.openemr_legacy_patient_uuid,
+                "OPENEMR_LEGACY_PATIENT_UUID",
+            ),
+            patient_id=_required(
+                settings.openemr_legacy_patient_id,
+                "OPENEMR_LEGACY_PATIENT_ID",
+            ),
+            encounter_uuid=_required(
+                settings.openemr_legacy_encounter_uuid,
+                "OPENEMR_LEGACY_ENCOUNTER_UUID",
+            ),
+            encounter_id=_required(
+                settings.openemr_legacy_encounter_id,
+                "OPENEMR_LEGACY_ENCOUNTER_ID",
+            ),
+        )
 
     async def for_record(self, record: DocumentRecord) -> OpenEMRLiveGateway:
         principal = await self._credentials.principal_for(
@@ -194,6 +213,7 @@ class _GatewayFactory:
             base_url=self._base_url,
             principal=principal,
             category_attestations=self._attestations,
+            legacy_route_attestation=self._legacy_routes,
             # Settings validation admits enabled runtime only after the deploy attests
             # non-DEBUG Binary readback. No raw setting or response enters logs.
             binary_guard=BinaryReadGuard("attested-non-debug"),

@@ -14,9 +14,10 @@ from app.writeback.gateway import DocumentRecord
 from app.writeback.rest_client import DelegatedPrincipal, OpenEMRWriteError
 
 BASE_URL = "https://openemr.synthetic.example/apis/default"
-PATIENT_ID = "patient-synthetic"
+PATIENT_ID = "11111111-1111-4111-8111-111111111111"
 STANDARD_PATIENT_ID = "731"
-ENCOUNTER_ID = "encounter-synthetic"
+ENCOUNTER_ID = "22222222-2222-4222-8222-222222222222"
+STANDARD_ENCOUNTER_ID = "912"
 TOKEN = "synthetic-token-never-log"
 
 
@@ -36,6 +37,21 @@ def _bundle(*resources: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _legacy_attestation(
+    *,
+    patient_uuid: str = PATIENT_ID,
+    encounter_uuid: str = ENCOUNTER_ID,
+):
+    from app.writeback.live_gateway import LegacyRouteAttestation
+
+    return LegacyRouteAttestation(
+        patient_uuid=patient_uuid,
+        patient_id=STANDARD_PATIENT_ID,
+        encounter_uuid=encounter_uuid,
+        encounter_id=STANDARD_ENCOUNTER_ID,
+    )
+
+
 @pytest.mark.asyncio
 async def test_attested_category_and_document_create_use_fixed_standard_route():
     from app.writeback.live_gateway import (
@@ -49,17 +65,6 @@ async def test_attested_category_and_document_create_use_fixed_standard_route():
 
     async def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        if request.method == "GET":
-            assert request.url.path == f"/apis/default/api/patient/{PATIENT_ID}"
-            return httpx.Response(
-                200,
-                json={
-                    "validationErrors": [],
-                    "internalErrors": [],
-                    "data": {"uuid": PATIENT_ID, "pid": STANDARD_PATIENT_ID},
-                    "links": [],
-                },
-            )
         body = await request.aread()
         assert request.method == "POST"
         assert (
@@ -80,6 +85,7 @@ async def test_attested_category_and_document_create_use_fixed_standard_route():
                 CategoryAttestation("/AI-Source-Documents", "17", True),
                 CategoryAttestation("/AI-Extractions", "27", True),
             ),
+            legacy_route_attestation=_legacy_attestation(),
             binary_guard=BinaryReadGuard("WARNING"),
             http_client=client,
         )
@@ -107,7 +113,7 @@ async def test_attested_category_and_document_create_use_fixed_standard_route():
                 content=b"%PDF-not-created",
             )
 
-    assert len(requests) == 2
+    assert len(requests) == 1
     assert all(
         request.headers["authorization"] == f"Bearer {TOKEN}"
         for request in requests
@@ -127,11 +133,6 @@ async def test_document_reconcile_maps_bound_uuid_to_pid_and_accepts_empty_404()
     async def handler(request: httpx.Request) -> httpx.Response:
         calls.append((request.method, request.url.path, dict(request.url.params)))
         assert request.headers["authorization"] == f"Bearer {TOKEN}"
-        if request.url.path.endswith(f"/api/patient/{PATIENT_ID}"):
-            return httpx.Response(
-                200,
-                json={"data": {"uuid": PATIENT_ID, "pid": STANDARD_PATIENT_ID}},
-            )
         if request.url.path.endswith(
             f"/api/patient/{STANDARD_PATIENT_ID}/document"
         ):
@@ -147,6 +148,7 @@ async def test_document_reconcile_maps_bound_uuid_to_pid_and_accepts_empty_404()
             category_attestations=(
                 CategoryAttestation("/AI-Source-Documents", "17", True),
             ),
+            legacy_route_attestation=_legacy_attestation(),
             binary_guard=BinaryReadGuard("WARNING"),
             http_client=client,
         )
@@ -159,7 +161,6 @@ async def test_document_reconcile_maps_bound_uuid_to_pid_and_accepts_empty_404()
         )
 
     assert calls == [
-        ("GET", f"/apis/default/api/patient/{PATIENT_ID}", {}),
         (
             "GET",
             f"/apis/default/api/patient/{STANDARD_PATIENT_ID}/document",
@@ -182,11 +183,7 @@ async def test_document_pid_resolution_rejects_cross_patient_response():
     async def handler(request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
-        assert request.url.path.endswith(f"/api/patient/{PATIENT_ID}")
-        return httpx.Response(
-            200,
-            json={"data": {"uuid": "patient-other", "pid": STANDARD_PATIENT_ID}},
-        )
+        return httpx.Response(500)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         gateway = OpenEMRLiveGateway(
@@ -194,6 +191,9 @@ async def test_document_pid_resolution_rejects_cross_patient_response():
             principal=_principal(),
             category_attestations=(
                 CategoryAttestation("/AI-Source-Documents", "17", True),
+            ),
+            legacy_route_attestation=_legacy_attestation(
+                patient_uuid="33333333-3333-4333-8333-333333333333"
             ),
             binary_guard=BinaryReadGuard("WARNING"),
             http_client=client,
@@ -204,7 +204,7 @@ async def test_document_pid_resolution_rejects_cross_patient_response():
                 category_path="/AI-Source-Documents",
             )
 
-    assert calls == 1
+    assert calls == 0
 
 
 @pytest.mark.parametrize("setting", [None, "", "DEBUG", "debug"])
@@ -231,6 +231,7 @@ async def test_binary_readback_guard_fails_closed_before_any_http(setting: str |
             category_attestations=(
                 CategoryAttestation("/AI-Source-Documents", "17", True),
             ),
+            legacy_route_attestation=_legacy_attestation(),
             binary_guard=BinaryReadGuard(setting),
             http_client=client,
         )
@@ -256,11 +257,6 @@ async def test_document_readback_resolves_documentreference_then_binary():
     async def handler(request: httpx.Request) -> httpx.Response:
         calls.append((request.method, request.url.path, dict(request.url.params)))
         assert request.headers["authorization"] == f"Bearer {TOKEN}"
-        if request.url.path.endswith(f"/api/patient/{PATIENT_ID}"):
-            return httpx.Response(
-                200,
-                json={"data": {"uuid": PATIENT_ID, "pid": STANDARD_PATIENT_ID}},
-            )
         if request.url.path.endswith(
             f"/api/patient/{STANDARD_PATIENT_ID}/document"
         ):
@@ -295,6 +291,7 @@ async def test_document_readback_resolves_documentreference_then_binary():
             category_attestations=(
                 CategoryAttestation("/AI-Source-Documents", "17", True),
             ),
+            legacy_route_attestation=_legacy_attestation(),
             binary_guard=BinaryReadGuard("WARNING"),
             http_client=client,
         )
@@ -308,7 +305,6 @@ async def test_document_readback_resolves_documentreference_then_binary():
         )
 
     assert calls == [
-        ("GET", f"/apis/default/api/patient/{PATIENT_ID}", {}),
         (
             "GET",
             f"/apis/default/api/patient/{STANDARD_PATIENT_ID}/document",
@@ -443,6 +439,10 @@ async def test_vital_create_list_and_standard_fhir_readback_use_exact_full_hash(
         requests.append(request)
         path = request.url.path
         if request.method == "POST" and path.endswith("/vital"):
+            assert path.endswith(
+                f"/api/patient/{STANDARD_PATIENT_ID}/encounter/"
+                f"{STANDARD_ENCOUNTER_ID}/vital"
+            )
             sent = json.loads((await request.aread()).decode())
             assert sent == {
                 "weight": "180.500",
@@ -451,6 +451,10 @@ async def test_vital_create_list_and_standard_fhir_readback_use_exact_full_hash(
             }
             return httpx.Response(201, json={"vid": "77", "fid": "88"})
         if request.method == "GET" and path.endswith("/vital"):
+            assert path.endswith(
+                f"/api/patient/{STANDARD_PATIENT_ID}/encounter/"
+                f"{STANDARD_ENCOUNTER_ID}/vital"
+            )
             return httpx.Response(
                 200,
                 json=[
@@ -460,6 +464,10 @@ async def test_vital_create_list_and_standard_fhir_readback_use_exact_full_hash(
                 ],
             )
         if request.method == "GET" and path.endswith("/vital/77"):
+            assert path.endswith(
+                f"/api/patient/{STANDARD_PATIENT_ID}/encounter/"
+                f"{STANDARD_ENCOUNTER_ID}/vital/77"
+            )
             return httpx.Response(200, json=standard_row)
         if path.endswith("/fhir/Observation"):
             return httpx.Response(200, json=_vital_resources(stored_note))
@@ -470,6 +478,7 @@ async def test_vital_create_list_and_standard_fhir_readback_use_exact_full_hash(
             base_url=BASE_URL,
             principal=_principal(),
             category_attestations=(),
+            legacy_route_attestation=_legacy_attestation(),
             binary_guard=BinaryReadGuard("WARNING"),
             http_client=client,
         )
@@ -518,6 +527,7 @@ async def test_vital_create_rejects_a_marker_hash_mismatch_before_http():
             base_url=BASE_URL,
             principal=_principal(),
             category_attestations=(),
+            legacy_route_attestation=_legacy_attestation(),
             binary_guard=BinaryReadGuard("WARNING"),
             http_client=client,
         )
@@ -530,6 +540,41 @@ async def test_vital_create_rejects_a_marker_hash_mismatch_before_http():
                     "date": "2026-07-14T12:00:00+00:00",
                     "note": "copilot-intent:correlation-synthetic;payload:deadbeefdead",
                 },
+            )
+
+    assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_vital_route_rejects_unattested_encounter_before_http():
+    from app.writeback.live_gateway import (
+        BinaryReadGuard,
+        LiveGatewayError,
+        OpenEMRLiveGateway,
+    )
+
+    calls = 0
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(500)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = OpenEMRLiveGateway(
+            base_url=BASE_URL,
+            principal=_principal(),
+            category_attestations=(),
+            legacy_route_attestation=_legacy_attestation(
+                encounter_uuid="44444444-4444-4444-8444-444444444444"
+            ),
+            binary_guard=BinaryReadGuard("WARNING"),
+            http_client=client,
+        )
+        with pytest.raises(LiveGatewayError, match="encounter mapping"):
+            await gateway.list_vitals(
+                patient_id=PATIENT_ID,
+                encounter_id=ENCOUNTER_ID,
             )
 
     assert calls == 0

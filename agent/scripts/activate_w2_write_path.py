@@ -685,23 +685,25 @@ class RailwayCLI:
         }
         if not names:
             raise ActivationError(f"{service} active regions were not discoverable")
-        self._run(
-            [
-                "railway",
-                "service",
-                "scale",
-                "--project",
-                self._config.project_id,
-                "--environment",
-                self._config.environment,
-                "--service",
-                service,
-                "--json",
-                *(f"{name}=0" for name in sorted(names)),
-            ],
-            label=f"Railway stop for {service}",
-            discard=True,
-        )
+        # Railway CLI 5.x requires a linked directory for service scaling even when
+        # project/environment flags are supplied. Keep that local state ephemeral.
+        with self._linked_context(service) as context:
+            self._run(
+                [
+                    "railway",
+                    "service",
+                    "scale",
+                    "--environment",
+                    self._config.environment,
+                    "--service",
+                    service,
+                    "--json",
+                    *(f"{name}=0" for name in sorted(names)),
+                ],
+                label=f"Railway stop for {service}",
+                cwd=context,
+                discard=True,
+            )
 
     def require_service_stopped(self, service: str) -> None:
         deadline = time.monotonic() + self._config.ready_timeout_seconds
@@ -710,6 +712,10 @@ class RailwayCLI:
             if not payload.get("deploymentId"):
                 return
             replicas = payload.get("replicas")
+            if payload.get("deploymentStopped") is True and (
+                not isinstance(replicas, dict) or int(replicas.get("running") or 0) == 0
+            ):
+                return
             if (
                 isinstance(replicas, dict)
                 and int(replicas.get("configured") or 0) == 0
@@ -718,6 +724,40 @@ class RailwayCLI:
                 return
             time.sleep(3)
         raise ActivationError(f"{service} stop could not be verified")
+
+    def _linked_context(self, service: str):
+        cli = self
+
+        class _Context:
+            def __init__(self) -> None:
+                self.temporary: tempfile.TemporaryDirectory[str] | None = None
+
+            def __enter__(self) -> Path:
+                self.temporary = tempfile.TemporaryDirectory(prefix="w2-railway-link-")
+                directory = Path(self.temporary.name)
+                cli._run(
+                    [
+                        "railway",
+                        "link",
+                        "--project",
+                        cli._config.project_id,
+                        "--environment",
+                        cli._config.environment,
+                        "--service",
+                        service,
+                        "--json",
+                    ],
+                    label=f"Railway link for {service}",
+                    cwd=directory,
+                    discard=True,
+                )
+                return directory
+
+            def __exit__(self, *_args: object) -> None:
+                assert self.temporary is not None
+                self.temporary.cleanup()
+
+        return _Context()
 
     def _require_web_runtime_detail(self, service: str, detail: str) -> None:
         del service  # URL is intentionally pinned rather than inferred from CLI output.

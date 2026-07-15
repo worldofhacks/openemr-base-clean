@@ -365,7 +365,7 @@ def test_railway_ssh_preserves_the_attestation_as_one_remote_command(
 def test_railway_stop_scales_each_live_worker_region_to_zero(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[list[str]] = []
+    calls: list[tuple[list[str], object]] = []
     railway = RailwayCLI(ActivationConfig.from_env(_ENV))
     monkeypatch.setattr(
         railway,
@@ -378,14 +378,39 @@ def test_railway_stop_scales_each_live_worker_region_to_zero(
     monkeypatch.setattr(
         railway,
         "_run",
-        lambda command, **_kwargs: calls.append(command) or "",
+        lambda command, **kwargs: calls.append((command, kwargs.get("cwd"))) or "",
     )
 
     railway.stop_service("document-worker")
 
-    assert len(calls) == 1
-    assert calls[0][:3] == ["railway", "service", "scale"]
-    assert calls[0][-2:] == ["eu-west=0", "us-west2=0"]
+    assert len(calls) == 2
+    link_command, link_cwd = calls[0]
+    scale_command, scale_cwd = calls[1]
+    assert link_command[:2] == ["railway", "link"]
+    assert scale_command[:3] == ["railway", "service", "scale"]
+    assert scale_command[-2:] == ["eu-west=0", "us-west2=0"]
+    assert link_cwd is not None
+    assert scale_cwd == link_cwd
+
+
+def test_stopped_check_accepts_railway_flag_when_replica_metadata_is_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    railway = RailwayCLI(ActivationConfig.from_env(_ENV))
+    monkeypatch.setattr(
+        railway,
+        "_service_metadata",
+        lambda _service: {
+            "deploymentId": "stopped-deployment-id",
+            "deploymentStopped": True,
+            "replicas": {"configured": 1, "running": 0, "crashed": 1},
+        },
+    )
+    ticks = iter([0.0, 0.0, 181.0])
+    monkeypatch.setattr(activation_module.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(activation_module.time, "sleep", lambda _seconds: None)
+
+    railway.require_service_stopped("document-worker")
 
 
 def test_web_disabled_check_requires_the_explicit_hard_ready_contract(

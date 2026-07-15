@@ -455,6 +455,85 @@ def test_curl_ready_transport_is_https_only_bounded_and_json_typed() -> None:
     assert kwargs["text"] is True
 
 
+def test_curl_transport_uses_launchd_owned_job_and_private_config() -> None:
+    marker = "opaque-session-must-not-reach-process-arguments"
+    observed: dict[str, object] = {}
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if command[1] == "submit":
+            config_path = verify_module.Path(command[command.index("--config") + 1])
+            response_path = verify_module.Path(command[command.index("-o") + 1])
+            command_index = command.index("--")
+            wrapper_path = verify_module.Path(command[command_index + 2])
+            completion_path = verify_module.Path(command[command_index + 3])
+            stderr_path = verify_module.Path(command[command.index("-e") + 1])
+            observed.update(
+                command=command,
+                config_path=config_path,
+                config=config_path.read_text(),
+                config_mode=config_path.stat().st_mode & 0o777,
+                wrapper=wrapper_path.read_text(),
+                response_mode=response_path.stat().st_mode & 0o777,
+                stderr_mode=stderr_path.stat().st_mode & 0o777,
+            )
+            response_path.write_text('{"status":"ready"}\n200')
+            completion_path.write_text("0\n")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    client = verify_module._CurlClient(
+        timeout=17.0,
+        curl_path="/usr/bin/curl",
+        launchctl_path="/bin/launchctl",
+        run_command=run,
+    )
+    response = client.request(
+        "GET",
+        "https://agent.example/ready",
+        headers={"X-Synthetic-Context": marker},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+    command = observed["command"]
+    assert command[:2] == ["/bin/launchctl", "submit"]
+    assert marker not in " ".join(command)
+    assert marker in str(observed["config"])
+    assert observed["config_mode"] == 0o600
+    assert observed["response_mode"] == 0o600
+    assert observed["stderr_mode"] == 0o600
+    assert "while :" in str(observed["wrapper"])
+    assert not observed["config_path"].exists()
+    assert calls[-1][1] == "remove"
+
+
+def test_launchd_transport_never_replays_failed_curl_and_removes_job() -> None:
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if command[1] == "submit":
+            response_path = verify_module.Path(command[command.index("-o") + 1])
+            command_index = command.index("--")
+            completion_path = verify_module.Path(command[command_index + 3])
+            response_path.write_text('{"status":"ready"}\n200')
+            completion_path.write_text("7\n")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    client = verify_module._CurlClient(
+        timeout=0.01,
+        curl_path="/usr/bin/curl",
+        launchctl_path="/bin/launchctl",
+        run_command=run,
+    )
+    with pytest.raises(verify_module.CurlTransportError):
+        client.request("GET", "https://agent.example/ready")
+
+    assert sum(command[1] == "submit" for command in calls) == 1
+    assert sum(command[1] == "remove" for command in calls) == 1
+
+
 def test_curl_transport_keeps_context_in_stdin_and_deletes_multipart_tempfile() -> None:
     marker = "opaque-session-must-not-reach-process-arguments"
     observed: dict[str, object] = {}

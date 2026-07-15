@@ -158,7 +158,7 @@ class _CurlResponse:
 
 
 class _CurlClient:
-    """System-curl transport with all context supplied through private stdin."""
+    """System-curl transport with all context supplied through private input."""
 
     def __init__(
         self,
@@ -166,17 +166,21 @@ class _CurlClient:
         *,
         curl_path: str | None = None,
         command_prefix: tuple[str, ...] | None = None,
+        launchctl_path: str | None = None,
         run_command: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     ) -> None:
         self._timeout = timeout
         self._curl_path = curl_path or shutil.which("curl") or ""
         if command_prefix is None:
-            launchctl = shutil.which("launchctl") if sys.platform == "darwin" else None
-            self._command_prefix = (
-                (launchctl, "asuser", str(os.getuid())) if launchctl else ()
+            self._command_prefix = ()
+            self._launchctl_path = (
+                launchctl_path
+                if launchctl_path is not None
+                else (shutil.which("launchctl") if sys.platform == "darwin" else "")
             )
         else:
             self._command_prefix = tuple(command_prefix)
+            self._launchctl_path = ""
         self._run_command = run_command
 
     def request(self, method: str, url: str, **kwargs: Any) -> _CurlResponse:
@@ -213,22 +217,20 @@ class _CurlClient:
         for name, value in headers.items():
             config.append(_curl_config("header", f"{name}: {value}"))
 
-        command = [
+        curl_command = [
             *self._command_prefix,
             self._curl_path,
+            "-q",
             "--silent",
             "--show-error",
             "--proto",
             "=https",
             "--max-time",
             str(self._timeout),
-            "--config",
-            "-",
-            "--write-out",
-            "\n%{http_code}",
         ]
         try:
             with tempfile.TemporaryDirectory(prefix="w2-verify-upload-") as directory:
+                Path(directory).chmod(0o700)
                 if files is not None:
                     if not isinstance(data, Mapping) or not isinstance(files, Mapping):
                         raise ValueError("invalid multipart contract")
@@ -269,9 +271,21 @@ class _CurlClient:
                     config.append(
                         _curl_config("data", urlencode(dict(data), doseq=True))
                     )
+                config_text = "\n".join(config) + "\n"
+                if self._launchctl_path:
+                    return self._request_via_launchd(
+                        curl_command, config_text, Path(directory)
+                    )
+                command = [
+                    *curl_command,
+                    "--config",
+                    "-",
+                    "--write-out",
+                    "\n%{http_code}",
+                ]
                 completed = self._run_command(
                     command,
-                    input="\n".join(config) + "\n",
+                    input=config_text,
                     capture_output=True,
                     text=True,
                     timeout=self._timeout + 5,
@@ -285,6 +299,132 @@ class _CurlClient:
         if completed.returncode != 0 or not 100 <= status_code <= 599:
             raise CurlTransportError("curl transport failed")
         return _CurlResponse(status_code, body)
+
+    def _request_via_launchd(
+        self, curl_command: list[str], config_text: str, directory: Path
+    ) -> _CurlResponse:
+        """Run curl outside the browser process tree while context stays file-private."""
+
+        config_path = directory / "request.curl"
+        response_path = directory / "response"
+        stderr_path = directory / "stderr"
+        completion_path = directory / "completion"
+        wrapper_path = directory / "runner.sh"
+        config_path.write_text(config_text, encoding="utf-8")
+        config_path.chmod(0o600)
+        for private_output in (response_path, stderr_path, completion_path):
+            private_output.write_bytes(b"")
+            private_output.chmod(0o600)
+        wrapper_path.write_text(
+            """#!/bin/sh
+umask 077
+completion=$1
+shift
+child_pid=
+sleeper_pid=
+cleanup() {
+    trap - HUP INT TERM
+    if [ -n "$child_pid" ]; then
+        kill "$child_pid" 2>/dev/null || true
+        wait "$child_pid" 2>/dev/null || true
+    fi
+    if [ -n "$sleeper_pid" ]; then
+        kill "$sleeper_pid" 2>/dev/null || true
+        wait "$sleeper_pid" 2>/dev/null || true
+    fi
+    exit 0
+}
+trap cleanup HUP INT TERM
+"$@" &
+child_pid=$!
+wait "$child_pid"
+curl_status=$?
+child_pid=
+completion_tmp="${completion}.tmp.$$"
+printf '%s\n' "$curl_status" > "$completion_tmp"
+mv -f "$completion_tmp" "$completion"
+while :; do
+    /bin/sleep 3600 &
+    sleeper_pid=$!
+    wait "$sleeper_pid" 2>/dev/null || true
+    sleeper_pid=
+done
+""",
+            encoding="utf-8",
+        )
+        wrapper_path.chmod(0o700)
+        label = f"ai.openemr.w2.verify.{uuid.uuid4().hex}"
+        command = [
+            self._launchctl_path,
+            "submit",
+            "-l",
+            label,
+            "-o",
+            str(response_path),
+            "-e",
+            str(stderr_path),
+            "--",
+            "/bin/sh",
+            str(wrapper_path),
+            str(completion_path),
+            *curl_command,
+            "--config",
+            str(config_path),
+            "--write-out",
+            "\n%{http_code}",
+        ]
+        try:
+            submitted = self._run_command(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+                env={},
+            )
+            if submitted.returncode != 0:
+                raise CurlTransportError("curl transport failed")
+            deadline = time.monotonic() + self._timeout + 5
+            while time.monotonic() < deadline:
+                completion = completion_path.read_text(encoding="ascii").strip()
+                if completion:
+                    if not completion.isascii() or not completion.isdecimal():
+                        raise CurlTransportError("curl transport failed")
+                    if int(completion) != 0:
+                        raise CurlTransportError("curl transport failed")
+                    output = response_path.read_bytes()
+                    body_bytes, status = output.rsplit(b"\n", 1)
+                    if len(status) != 3 or not status.isdigit():
+                        raise CurlTransportError("curl transport failed")
+                    status_code = int(status)
+                    if not 100 <= status_code <= 599:
+                        raise CurlTransportError("curl transport failed")
+                    return _CurlResponse(
+                        status_code, body_bytes.decode("utf-8", errors="strict")
+                    )
+                time.sleep(0.05)
+            raise CurlTransportError("curl transport failed")
+        except (
+            OSError,
+            subprocess.TimeoutExpired,
+            UnicodeDecodeError,
+            ValueError,
+        ) as exc:
+            raise CurlTransportError("curl transport failed") from exc
+        finally:
+            try:
+                removed = self._run_command(
+                    [self._launchctl_path, "remove", label],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                    env={},
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise CurlTransportError("curl transport failed") from exc
+            if removed.returncode != 0:
+                raise CurlTransportError("curl transport failed")
 
 
 def _curl_config(name: str, value: object) -> str:

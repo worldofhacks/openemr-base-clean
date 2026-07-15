@@ -34,6 +34,7 @@ from app.session.store import (
     SessionNotFound,
     SessionStoreUnavailable,
 )
+from app.writeback.live_gateway import PatientRouteMismatch
 
 router = APIRouter()
 
@@ -74,6 +75,12 @@ def _map_operation_error(exc: Exception) -> HTTPException:
             FailureReason.ENCOUNTER_MISMATCH,
             status_code=403,
             message="encounter does not belong to the pinned patient",
+        )
+    if isinstance(exc, PatientRouteMismatch):
+        return _typed_http(
+            FailureReason.PATIENT_MISMATCH,
+            status_code=403,
+            message="selected patient is not attested for the document write path",
         )
     if isinstance(exc, RetryConflict):
         return HTTPException(status_code=409, detail="job is not safely retryable")
@@ -138,7 +145,7 @@ async def upload_document(
             encounter_id=encounter_id,
             correlation_id=correlation_id_var.get(),
         )
-    except (DocumentAccessError, EncounterMismatch) as exc:
+    except (DocumentAccessError, EncounterMismatch, PatientRouteMismatch) as exc:
         raise _map_operation_error(exc)
     if submission.duplicate:
         response.status_code = 200

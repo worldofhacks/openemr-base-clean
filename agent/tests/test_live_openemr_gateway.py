@@ -174,8 +174,8 @@ async def test_document_pid_resolution_rejects_cross_patient_response():
     from app.writeback.live_gateway import (
         BinaryReadGuard,
         CategoryAttestation,
-        LiveGatewayError,
         OpenEMRLiveGateway,
+        PatientRouteMismatch,
     )
 
     calls = 0
@@ -198,7 +198,7 @@ async def test_document_pid_resolution_rejects_cross_patient_response():
             binary_guard=BinaryReadGuard("WARNING"),
             http_client=client,
         )
-        with pytest.raises(LiveGatewayError, match="patient mapping"):
+        with pytest.raises(PatientRouteMismatch, match="patient mapping"):
             await gateway.list_documents(
                 patient_id=PATIENT_ID,
                 category_path="/AI-Source-Documents",

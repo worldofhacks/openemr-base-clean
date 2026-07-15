@@ -197,6 +197,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
         </label>
         <button class="primary" id="upload" type="button">Upload and extract</button>
         <p class="section-note">The source, grounded artifact, and eligible vitals use the verified exactly-once write path.</p>
+        <div class="notice" id="runtimeNotice" hidden>Document write is unavailable for this selected chart because its UUID-to-route binding is not attested. Relaunch Week 2 from the configured synthetic verification patient.</div>
         <div class="status-panel" id="statusPanel" data-status-contract="/documents/{document_id}/status" hidden>
           <div class="status-line"><span class="eyebrow">Processing</span><span class="pill" id="statusPill">queued</span></div>
           <div class="progress"><span id="progressBar"></span></div>
@@ -309,6 +310,15 @@ button:disabled { cursor:not-allowed; opacity:.55; }
     byId("fileName").textContent = file ? file.name : "No file selected";
   });
   selectType("lab_pdf");
+  if (!context.write_path_attested) {
+    byId("upload").disabled = true;
+    byId("labType").disabled = true;
+    byId("intakeType").disabled = true;
+    byId("file").disabled = true;
+    byId("useEncounter").disabled = true;
+    byId("runtimeNotice").hidden = false;
+    byId("encounterState").textContent = "document write unavailable for this chart";
+  }
 
   function setStatus(status) {
     currentStatus = status;
@@ -351,6 +361,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
   }
 
   async function upload() {
+    if (!context.write_path_attested) return;
     const file = byId("file").files[0];
     if (!file) { message(byId("statusMessage"), "errorbox", "Choose a synthetic lab PDF or intake form first."); byId("statusPanel").hidden = false; return; }
     byId("upload").disabled = true;
@@ -581,17 +592,19 @@ async def week2_page(
     except SessionStoreUnavailable:
         raise HTTPException(status_code=503, detail="session store unavailable")
 
+    write_path_attested = (
+        settings is None
+        or settings.openemr_legacy_patient_uuid == session.patient_id
+    )
     encounter_id: str | None = None
-    if (
-        settings is not None
-        and settings.openemr_legacy_patient_uuid == session.patient_id
-    ):
+    if settings is not None and write_path_attested:
         encounter_id = settings.openemr_legacy_encounter_uuid
     context = _script_json(
         {
             "session_id": session.session_id,
             "patient_id": session.patient_id,
             "encounter_id": encounter_id,
+            "write_path_attested": write_path_attested,
         }
     )
     return HTMLResponse(

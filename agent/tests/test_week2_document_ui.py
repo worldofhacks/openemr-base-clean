@@ -8,6 +8,7 @@ read stays pinned to the launched patient.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -106,6 +107,35 @@ def test_week2_page_is_separate_and_embeds_only_server_pinned_context(complete_e
     assert '"patient_id":"patient-synthetic"' in response.text
     assert 'name="patient_id"' not in response.text
     assert "innerHTML" not in response.text
+
+
+def test_week2_page_disables_document_write_for_unattested_selected_patient():
+    from app.routes.week2_ui import router
+
+    class Services:
+        settings = SimpleNamespace(
+            w2_document_runtime_enabled=True,
+            openemr_legacy_patient_uuid="patient-attested",
+            openemr_legacy_encounter_uuid="encounter-attested",
+        )
+
+        async def resolve_session(self, session_id: str) -> Session:
+            assert session_id == "session-synthetic"
+            return _session(patient_id="patient-selected")
+
+    app = FastAPI()
+    app.state.services = Services()
+    app.include_router(router)
+
+    with TestClient(app) as client:
+        response = client.get("/week2", params={"sid": "session-synthetic"})
+
+    assert response.status_code == 200
+    assert '"write_path_attested":false' in response.text
+    assert "Document write is unavailable for this selected chart" in response.text
+    assert 'byId("upload").disabled = true' in response.text
+    assert "patient-attested" not in response.text
+    assert "encounter-attested" not in response.text
 
 
 class _Documents:

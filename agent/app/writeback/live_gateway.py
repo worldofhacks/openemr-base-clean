@@ -128,6 +128,10 @@ class LiveGatewayError(RuntimeError):
     """A read failed without exposing a response body or delegated token."""
 
 
+class PatientRouteMismatch(LiveGatewayError):
+    """The delegated patient lacks the exact attested UUID→pid route binding."""
+
+
 class BinaryReadbackUnsafe(LiveGatewayError):
     """The deployment did not prove a non-DEBUG Binary logging posture."""
 
@@ -380,7 +384,9 @@ class OpenEMRLiveGateway:
 
     def _legacy_patient_id(self, patient_id: str) -> str:
         if not hmac.compare_digest(self._legacy_routes.patient_uuid, patient_id):
-            raise LiveGatewayError("OpenEMR patient mapping did not match delegation")
+            raise PatientRouteMismatch(
+                "OpenEMR patient mapping did not match delegation"
+            )
         return self._legacy_routes.patient_id
 
     def _legacy_encounter_id(self, encounter_id: str) -> str:

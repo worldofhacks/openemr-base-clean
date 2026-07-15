@@ -168,6 +168,13 @@ class _FakeDocumentOperations:
         )
 
 
+class _PatientRouteMismatchOperations(_FakeDocumentOperations):
+    async def submit(self, session, upload, *, encounter_id, correlation_id):
+        from app.writeback.live_gateway import PatientRouteMismatch
+
+        raise PatientRouteMismatch("synthetic patient route is not attested")
+
+
 class _FakeServices:
     def __init__(self, patient_id: str = "patient-synthetic-a") -> None:
         now = datetime.now(timezone.utc)
@@ -211,6 +218,53 @@ def test_documents_route_enforces_patient_pin_before_submission():
     assert response.status_code == 403
     assert response.json()["detail"]["reason"] == "patient_mismatch"
     assert services.documents.submissions == []
+
+
+def _synthetic_png() -> bytes:
+    image = Image.new("RGB", (32, 24), "white")
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_intake_png_multipart_reaches_typed_submission_contract():
+    services = _FakeServices()
+    response = _documents_client(services).post(
+        "/documents",
+        data={
+            "session_id": "session-synthetic",
+            "patient_id": "patient-synthetic-a",
+            "doc_type": "intake_form",
+        },
+        files={"file": ("synthetic-intake.png", _synthetic_png(), "image/png")},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["state"] == "queued"
+    assert len(services.documents.submissions) == 1
+    submitted = services.documents.submissions[0][1]
+    assert submitted.content_type == "image/png"
+    assert submitted.filename == "synthetic-intake.png"
+
+
+def test_unattested_live_patient_route_is_typed_403_not_http_500():
+    services = _FakeServices()
+    services.documents = _PatientRouteMismatchOperations()
+    response = _documents_client(services).post(
+        "/documents",
+        data={
+            "session_id": "session-synthetic",
+            "patient_id": "patient-synthetic-a",
+            "doc_type": "intake_form",
+        },
+        files={"file": ("synthetic-intake.png", _synthetic_png(), "image/png")},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == {
+        "reason": "patient_mismatch",
+        "message": "selected patient is not attested for the document write path",
+    }
 
 
 def test_documents_status_and_retry_use_typed_frozen_models():

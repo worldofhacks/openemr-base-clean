@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
+import subprocess
 from typing import Any
 
 import pytest
@@ -19,6 +20,7 @@ from scripts.activate_w2_write_path import (
     ActivationError,
     ActivationOrchestrator,
     OpenEMRAttestation,
+    RailwayCLI,
     RailwayOpenEMRInspectorImpl,
     REQUIRED_SMART_SCOPES,
 )
@@ -314,6 +316,23 @@ def test_read_only_discovery_validates_client_categories_logging_and_encounter()
     assert attestation.encounter_id == encounter_id
     assert attestation.source_category_id == "101"
     assert attestation.artifact_category_id == "202"
+
+
+def test_railway_ssh_preserves_the_attestation_as_one_remote_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="safe-output\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    config = ActivationConfig.from_env(_ENV)
+    output = RailwayCLI(config).ssh_mysql("set -eu; echo safe")
+
+    assert output == "safe-output\n"
+    assert calls[0][-1] == "sh -lc 'set -eu; echo safe'"
 
 
 def test_worker_ensure_and_disabled_prepare_are_idempotent_without_secret_reads() -> None:

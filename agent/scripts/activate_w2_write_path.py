@@ -659,9 +659,10 @@ class RailwayCLI:
                 self._config.environment,
                 "--service",
                 self._config.mysql_service,
-                "sh",
-                "-lc",
-                remote_script,
+                # Railway joins trailing command arguments without preserving the
+                # argv boundary required by ``sh -lc``. Send one shell-quoted remote
+                # command or only the first word reaches the login shell.
+                f"sh -lc {shlex.quote(remote_script)}",
             ],
             label="read-only OpenEMR attestation",
         )

@@ -224,6 +224,7 @@ class LiveWritePathVerifier:
     def _poll_complete(self, document: _UploadedDocument) -> None:
         deadline = self._monotonic() + self._config.poll_timeout_seconds
         path = f"/documents/{quote(document.document_id, safe='')}/status"
+        worker_restart_retried = False
         while True:
             body = self._request_json(
                 "GET",
@@ -239,6 +240,18 @@ class LiveWritePathVerifier:
                         f"{document.label} document completed without grounded fields"
                     )
                 return
+            if (
+                state == "failed"
+                and body.get("reason") == "worker_restart"
+                and not worker_restart_retried
+            ):
+                # A fresh deployment may encounter a fixture job failed by the prior
+                # revision. Request exactly one optimistic-state-guarded retry through
+                # the public typed route. The route refuses any unknown write intent,
+                # and every subsequent write leg still reconciles before posting.
+                self._retry_worker_restart(document)
+                worker_restart_retried = True
+                continue
             if state in _TERMINAL_FAILURE_STATES:
                 raise VerificationError(
                     f"{document.label} document job reached a non-complete terminal state"
@@ -252,6 +265,30 @@ class LiveWritePathVerifier:
                     f"{document.label} document job did not complete before timeout"
                 )
             self._sleep(self._config.poll_interval_seconds)
+
+    def _retry_worker_restart(self, document: _UploadedDocument) -> None:
+        path = f"/documents/{quote(document.document_id, safe='')}/retry"
+        body = self._request_json(
+            "POST",
+            path,
+            expected_status={202},
+            params={"session_id": self._config.session_id},
+            json={"expected_state": "failed"},
+            headers={"X-Copilot-Request-Id": f"w2-verify-{uuid.uuid4()}"},
+        )
+        if (
+            body.get("document_id") != document.document_id
+            or body.get("state") != "queued"
+            or not isinstance(body.get("job_id"), str)
+            or not body.get("job_id")
+            or not isinstance(body.get("status_url"), str)
+            or not body.get("status_url")
+            or not isinstance(body.get("correlation_id"), str)
+            or not body.get("correlation_id")
+        ):
+            raise VerificationError(
+                f"{document.label} retry returned an invalid typed response"
+            )
 
     def _verify_binary_readback(self, document: _UploadedDocument) -> None:
         path = (

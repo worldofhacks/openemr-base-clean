@@ -60,10 +60,13 @@ def _transport(
     document_detail: str = "ready",
     corrupt_source: bool = False,
     omit_intake_citation: bool = False,
+    initial_worker_restart: bool = False,
+    persistent_worker_restart: bool = False,
 ) -> tuple[httpx.MockTransport, list[httpx.Request]]:
     requests: list[httpx.Request] = []
     upload_index = 0
     status_polls = {"lab-document": 0, "intake-document": 0}
+    retries = {"lab-document": 0, "intake-document": 0}
     hashes = {
         "lab-document": hashlib.sha256(config.lab_fixture.read_bytes()).hexdigest(),
         "intake-document": hashlib.sha256(
@@ -93,6 +96,23 @@ def _transport(
         if request.method == "GET" and path.endswith("/status"):
             document_id = path.split("/")[2]
             status_polls[document_id] += 1
+            if initial_worker_restart and (
+                retries[document_id] == 0 or persistent_worker_restart
+            ):
+                return httpx.Response(
+                    200,
+                    json={
+                        "document_id": document_id,
+                        "state": "failed",
+                        "reason": "worker_restart",
+                        "correlation_id": "correlation-synthetic",
+                        "updated_ts": "2026-07-14T12:00:00Z",
+                        "fields_grounded": 0,
+                        "fields_unsupported": 0,
+                        "attempt_count": 3,
+                        "next_retry_at": None,
+                    },
+                )
             state = "complete" if status_polls[document_id] >= 2 else "queued"
             return httpx.Response(
                 200,
@@ -106,6 +126,21 @@ def _transport(
                     "fields_unsupported": 0,
                     "attempt_count": 1,
                     "next_retry_at": None,
+                },
+            )
+        if request.method == "POST" and path.endswith("/retry"):
+            document_id = path.split("/")[2]
+            retries[document_id] += 1
+            assert request.url.params["session_id"] == _ENV["W2_VERIFY_SESSION_ID"]
+            assert request.read() == b'{"expected_state":"failed"}'
+            return httpx.Response(
+                202,
+                json={
+                    "job_id": f"job-{document_id}",
+                    "document_id": document_id,
+                    "state": "queued",
+                    "status_url": f"/documents/{document_id}/status",
+                    "correlation_id": "correlation-retry-synthetic",
                 },
             )
         if request.method == "GET" and path.endswith("/readback-verification"):
@@ -200,6 +235,41 @@ def test_verifier_is_idempotent_when_uploads_resolve_to_existing_documents():
         first = LiveWritePathVerifier(config, client=client, sleep=_zero_sleep).run()
         second = LiveWritePathVerifier(config, client=client, sleep=_zero_sleep).run()
     assert first.documents_verified == second.documents_verified == 2
+
+
+def test_verifier_retries_each_existing_worker_restart_once_via_typed_route():
+    config = VerificationConfig.from_env(_ENV)
+    transport, requests = _transport(
+        config,
+        duplicate=True,
+        initial_worker_restart=True,
+    )
+    with httpx.Client(transport=transport) as client:
+        result = LiveWritePathVerifier(config, client=client, sleep=_zero_sleep).run()
+
+    retry_paths = [
+        request.url.path for request in requests if request.url.path.endswith("/retry")
+    ]
+    assert retry_paths == [
+        "/documents/intake-document/retry",
+        "/documents/lab-document/retry",
+    ]
+    assert result.documents_verified == 2
+
+
+def test_verifier_never_loops_worker_restart_retry():
+    config = VerificationConfig.from_env(_ENV)
+    transport, requests = _transport(
+        config,
+        duplicate=True,
+        initial_worker_restart=True,
+        persistent_worker_restart=True,
+    )
+    with httpx.Client(transport=transport) as client:
+        with pytest.raises(VerificationError, match="terminal"):
+            LiveWritePathVerifier(config, client=client, sleep=_zero_sleep).run()
+
+    assert sum(request.url.path.endswith("/retry") for request in requests) == 1
 
 
 @pytest.mark.parametrize(

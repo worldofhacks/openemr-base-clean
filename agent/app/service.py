@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.auth.scopes import (
+    ScopeCoverageError,
     assert_w2_scopes_granted,
     requested_scope_string,
     requested_w2_scope_string,
@@ -276,7 +277,17 @@ class AgentServices:
             raise ValueError("unknown or replayed OAuth state")
         token = await self.smart.exchange_code(code=code, code_verifier=verifier)
         if self.settings.w2_document_runtime_enabled:
-            assert_w2_scopes_granted(token.scopes)
+            try:
+                granted_scopes = token.attested_scopes
+            except ValueError:
+                raise ScopeCoverageError(
+                    "OpenEMR bearer scope attestation was unavailable; refusing the "
+                    "delegated document runtime session"
+                ) from None
+            assert_w2_scopes_granted(granted_scopes)
+            # Persist the canonical, exercised bearer authority rather than
+            # OpenEMR's intentionally filtered display field.
+            token = token.with_attested_scope()
         patient_id = token.patient or ""
         if not patient_id:
             raise ValueError(

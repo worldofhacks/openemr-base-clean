@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -46,6 +47,14 @@ def _client(handler=None) -> SmartClient:
         redirect_uri=REDIRECT,
         http_client=http,
     )
+
+
+def _jwt_with_scopes(scopes: set[str]) -> str:
+    def encode(value: object) -> str:
+        raw = json.dumps(value, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    return f"{encode({'alg': 'RS256'})}.{encode({'scopes': sorted(scopes)})}.signature"
 
 
 # --- PKCE ------------------------------------------------------------------
@@ -132,6 +141,24 @@ async def test_exchange_code_parses_token_and_launch_patient_context():
     assert tok.patient == "a234b786-539a-4f9a-96a0-432293226f02"   # launch/patient bound
     assert "user/Condition.read" in tok.scopes
     assert "AT-xyz" not in repr(tok)                                # token never leaks via repr
+
+
+@pytest.mark.asyncio
+async def test_exchange_code_persists_openemr_bearer_scope_authority() -> None:
+    granted = {"openid", "api:oemr", "user/document.crs"}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "access_token": _jwt_with_scopes(granted),
+                "scope": "openid user/document.crs",
+            },
+        )
+
+    token = await _client(handler).exchange_code(code="c", code_verifier="v")
+
+    assert set(token.scopes) == granted
 
 
 @pytest.mark.asyncio

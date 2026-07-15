@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -49,6 +51,14 @@ def _services(*, enabled: bool, token: TokenResponse | None = None) -> AgentServ
     services._pkce = {}
     services._tokens = {}
     return services
+
+
+def _jwt_with_scopes(scopes: set[str]) -> str:
+    def encode(value: object) -> str:
+        raw = json.dumps(value, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    return f"{encode({'alg': 'RS256'})}.{encode({'scopes': sorted(scopes)})}.signature"
 
 
 def test_enabled_document_runtime_launches_with_exact_w2_manifest() -> None:
@@ -107,3 +117,78 @@ async def test_callback_accepts_complete_w2_grant() -> None:
     await services.complete_callback(code="code-synthetic", state="state-synthetic")
 
     assert services.sessions.created == 1
+    assert set(services._tokens["session-synthetic"].scopes) == W2_REQUESTED_SCOPES
+
+
+@pytest.mark.asyncio
+async def test_callback_attests_api_scope_from_openemr_bearer_claim() -> None:
+    # OpenEMR deliberately omits api:* scopes from the token response's display field,
+    # while retaining them in the bearer JWT that its APIs actually authorize.
+    token = TokenResponse(
+        access_token=_jwt_with_scopes(set(W2_REQUESTED_SCOPES)),
+        scope=" ".join(sorted(W2_REQUESTED_SCOPES - {"api:oemr"})),
+        patient="patient-synthetic",
+        clinician_sub="Practitioner/synthetic",
+    )
+    services = _services(enabled=True, token=token)
+    services._pkce["state-synthetic"] = "verifier-synthetic"
+    services._token_deadline = lambda: datetime.now(timezone.utc) + timedelta(hours=1)
+
+    await services.complete_callback(code="code-synthetic", state="state-synthetic")
+
+    assert services.sessions.created == 1
+    assert set(services._tokens["session-synthetic"].scopes) == W2_REQUESTED_SCOPES
+
+
+@pytest.mark.asyncio
+async def test_callback_rejects_api_scope_missing_from_openemr_bearer_claim() -> None:
+    granted = set(W2_REQUESTED_SCOPES - {"api:oemr"})
+    token = TokenResponse(
+        access_token=_jwt_with_scopes(granted),
+        scope=" ".join(sorted(granted)),
+        patient="patient-synthetic",
+    )
+    services = _services(enabled=True, token=token)
+    services._pkce["state-synthetic"] = "verifier-synthetic"
+
+    with pytest.raises(ScopeCoverageError, match="api:oemr"):
+        await services.complete_callback(code="code-synthetic", state="state-synthetic")
+
+    assert services.sessions.created == 0
+
+
+@pytest.mark.asyncio
+async def test_callback_rejects_malformed_bearer_scope_attestation() -> None:
+    token = TokenResponse(
+        access_token="header.not-base64.signature",
+        scope=" ".join(sorted(W2_REQUESTED_SCOPES)),
+        patient="patient-synthetic",
+    )
+    services = _services(enabled=True, token=token)
+    services._pkce["state-synthetic"] = "verifier-synthetic"
+
+    with pytest.raises(ScopeCoverageError, match="bearer scope attestation"):
+        await services.complete_callback(code="code-synthetic", state="state-synthetic")
+
+    assert services.sessions.created == 0
+
+
+@pytest.mark.asyncio
+async def test_callback_rejects_bearer_and_response_non_api_scope_disagreement() -> None:
+    token = TokenResponse(
+        access_token=_jwt_with_scopes(set(W2_REQUESTED_SCOPES)),
+        scope=" ".join(
+            sorted(
+                W2_REQUESTED_SCOPES
+                - {"api:oemr", "user/MedicationRequest.read"}
+            )
+        ),
+        patient="patient-synthetic",
+    )
+    services = _services(enabled=True, token=token)
+    services._pkce["state-synthetic"] = "verifier-synthetic"
+
+    with pytest.raises(ScopeCoverageError, match="bearer scope attestation"):
+        await services.complete_callback(code="code-synthetic", state="state-synthetic")
+
+    assert services.sessions.created == 0

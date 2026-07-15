@@ -117,6 +117,62 @@ class TokenResponse(BaseModel):
     def scopes(self) -> list[str]:
         return self.scope.split()
 
+    @property
+    def attested_scopes(self) -> list[str]:
+        """Return the scopes carried by the delegated authorization artifact.
+
+        OpenEMR intentionally removes ``api:*`` entries from the token endpoint's
+        human-facing ``scope`` field, while retaining them in the access-token JWT
+        that its APIs authorize.  A JWT claim is therefore canonical when present,
+        but it must agree exactly with the response after applying only that
+        documented provider filter.  Opaque tokens retain the OAuth response field.
+
+        The JWT came from the same freshly completed HTTPS exchange as the response
+        field (the same trust boundary already used for ``clinician_sub`` above).
+        This decoder never logs or returns the bearer value.
+        """
+
+        raw_token = self.access_token.get_secret_value()
+        segments = raw_token.split(".")
+        if len(segments) == 1:
+            return self.scopes
+        if len(segments) != 3:
+            raise ValueError("bearer scope attestation is malformed")
+        try:
+            encoded = segments[1] + "=" * (-len(segments[1]) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(encoded))
+        except (binascii.Error, ValueError, TypeError):
+            raise ValueError("bearer scope attestation is malformed") from None
+        if not isinstance(payload, dict):
+            raise ValueError("bearer scope attestation is malformed")
+        claimed = payload.get("scopes")
+        if (
+            not isinstance(claimed, list)
+            or not claimed
+            or any(not isinstance(scope, str) or not scope for scope in claimed)
+            or len(claimed) != len(set(claimed))
+        ):
+            raise ValueError("bearer scope attestation is malformed")
+        claimed_set = set(claimed)
+        visible_claims = {
+            scope for scope in claimed_set if not scope.startswith("api:")
+        }
+        response_scopes = set(self.scopes)
+        if response_scopes and response_scopes not in (visible_claims, claimed_set):
+            raise ValueError("bearer scope attestation disagrees with token response")
+        return sorted(claimed_set)
+
+    def with_attested_scope(self) -> "TokenResponse":
+        """Canonicalize persisted scope metadata to the bearer JWT authority."""
+
+        scopes = self.attested_scopes
+        canonical = " ".join(scopes)
+        return (
+            self
+            if canonical == self.scope
+            else self.model_copy(update={"scope": canonical})
+        )
+
     def auth_header(self) -> dict[str, str]:
         return {
             "Authorization": f"{self.token_type} {self.access_token.get_secret_value()}"
@@ -224,7 +280,12 @@ class SmartClient:
             )
         fields = {k: payload[k] for k in TokenResponse.model_fields if k in payload}
         fields["clinician_sub"] = _clinician_sub_from_id_token(payload.get("id_token"))
-        return TokenResponse(**fields)
+        try:
+            return TokenResponse(**fields).with_attested_scope()
+        except ValueError:
+            raise SmartAuthUnavailable(
+                "delegated token refresh returned inconsistent bearer scope metadata"
+            ) from None
 
     async def _post_token(self, data: dict, headers: dict) -> httpx.Response:
         if self._http is not None:
@@ -253,4 +314,9 @@ class SmartClient:
         # id_token is NOT a TokenResponse field — decode it separately (D9/D5): the clinician's
         # identity is fhirUser (preferred) else sub, or None when there is no decodable id_token.
         fields["clinician_sub"] = _clinician_sub_from_id_token(payload.get("id_token"))
-        return TokenResponse(**fields)
+        try:
+            return TokenResponse(**fields).with_attested_scope()
+        except ValueError:
+            raise SmartAuthError(
+                "token exchange returned inconsistent bearer scope metadata"
+            ) from None

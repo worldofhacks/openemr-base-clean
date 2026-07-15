@@ -30,10 +30,6 @@ def _iso_at(value: datetime) -> str:
     return value.isoformat()
 
 
-def _now() -> str:
-    return _iso_at(_utcnow())
-
-
 @dataclass(frozen=True)
 class NewDocument:
     patient_id: str
@@ -438,7 +434,7 @@ class PostgresDocumentRepository:
             async with conn.transaction():  # type: ignore[attr-defined]
                 document_id = str(uuid.uuid4())
                 job_id = str(uuid.uuid4())
-                now = _now()
+                now = _utcnow()
                 inserted = await conn.fetchrow(  # type: ignore[attr-defined]
                     """
                     INSERT INTO agent_document_dedup
@@ -517,7 +513,7 @@ class PostgresDocumentRepository:
                 reason.value if reason else None,
                 fields_grounded,
                 fields_unsupported,
-                _now(),
+                _utcnow(),
             )
             if row is None:
                 raise DocumentNotFound(document_id)
@@ -562,7 +558,7 @@ class PostgresDocumentRepository:
                      WHERE document_id=$1 AND state='failed'
                     """,
                     document_id,
-                    _now(),
+                    _utcnow(),
                 )
                 loaded = await self._fetch_by_id(conn, document_id)
                 return _record(loaded)

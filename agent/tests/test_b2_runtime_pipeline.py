@@ -127,6 +127,44 @@ async def test_postgres_claim_query_is_atomic_skip_locked():
     assert "state='queued'" in connection.query.replace(" ", "")
 
 
+@pytest.mark.asyncio
+async def test_postgres_document_creation_binds_typed_utc_timestamps() -> None:
+    from app.ingestion.repository import PostgresDocumentRepository
+
+    class _StopAfterInsert(Exception):
+        pass
+
+    class _Transaction:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class _Connection:
+        timestamp: object = None
+
+        def transaction(self):
+            return _Transaction()
+
+        async def fetchrow(self, query, *args):
+            assert "INSERT INTO agent_document_dedup" in query
+            self.timestamp = args[-1]
+            raise _StopAfterInsert()
+
+        async def close(self):
+            return None
+
+    connection = _Connection()
+    repository = PostgresDocumentRepository(lambda: _return(connection))
+
+    with pytest.raises(_StopAfterInsert):
+        await repository.get_or_create(_new_document())
+
+    assert isinstance(connection.timestamp, datetime)
+    assert connection.timestamp.tzinfo is timezone.utc
+
+
 async def _return(value):
     return value
 

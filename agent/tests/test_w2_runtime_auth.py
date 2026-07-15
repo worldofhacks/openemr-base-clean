@@ -76,6 +76,22 @@ async def test_callback_rejects_partial_w2_grant_before_session_creation() -> No
 
 
 @pytest.mark.asyncio
+async def test_callback_rejects_unexpected_w2_grant_before_session_creation() -> None:
+    token = TokenResponse(
+        access_token="synthetic-token",
+        scope=" ".join(sorted(W2_REQUESTED_SCOPES | {"user/Observation.write"})),
+        patient="patient-synthetic",
+    )
+    services = _services(enabled=True, token=token)
+    services._pkce["state-synthetic"] = "verifier-synthetic"
+
+    with pytest.raises(ScopeCoverageError, match="Unexpected.*Observation.write"):
+        await services.complete_callback(code="code-synthetic", state="state-synthetic")
+
+    assert services.sessions.created == 0
+
+
+@pytest.mark.asyncio
 async def test_callback_accepts_complete_w2_grant() -> None:
     token = TokenResponse(
         access_token="synthetic-token",

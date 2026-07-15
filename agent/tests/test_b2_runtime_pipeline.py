@@ -165,6 +165,96 @@ async def test_postgres_document_creation_binds_typed_utc_timestamps() -> None:
     assert connection.timestamp.tzinfo is timezone.utc
 
 
+@pytest.mark.asyncio
+async def test_source_storage_lease_serializes_and_recovers_stale_owner() -> None:
+    from app.ingestion.repository import (
+        DocumentLeaseLost,
+        InMemoryDocumentRepository,
+    )
+
+    clock = _Clock()
+    repository = InMemoryDocumentRepository(now=clock)
+    record, _ = await repository.get_or_create(_new_document())
+
+    first = await repository.claim_source_storage(
+        record.document_id,
+        owner="request-a",
+        lease_seconds=300,
+    )
+    assert first is not None and first.claim_owner == "request-a"
+    assert (
+        await repository.claim_source_storage(
+            record.document_id,
+            owner="request-b",
+            lease_seconds=300,
+        )
+        is None
+    )
+
+    clock.advance(301)
+    recovered = await repository.claim_source_storage(
+        record.document_id,
+        owner="request-b",
+        lease_seconds=300,
+    )
+    assert recovered is not None and recovered.claim_owner == "request-b"
+    queued = await repository.finish_source_storage(
+        record.document_id,
+        owner="request-b",
+        state="queued",
+    )
+    assert queued.state == "queued"
+    assert queued.claim_owner is None
+    with pytest.raises(DocumentLeaseLost):
+        await repository.finish_source_storage(
+            record.document_id,
+            owner="request-a",
+            state="queued",
+        )
+
+
+@pytest.mark.asyncio
+async def test_postgres_source_storage_claim_and_finish_are_owner_guarded() -> None:
+    from app.ingestion.repository import DocumentLeaseLost, PostgresDocumentRepository
+
+    class _Connection:
+        queries: list[str]
+
+        def __init__(self) -> None:
+            self.queries = []
+
+        async def fetchrow(self, query, *_args):
+            self.queries.append(query)
+            return None
+
+        async def close(self):
+            return None
+
+    connection = _Connection()
+    repository = PostgresDocumentRepository(lambda: _return(connection))
+
+    assert (
+        await repository.claim_source_storage(
+            "document-synthetic",
+            owner="request-a",
+            lease_seconds=300,
+        )
+        is None
+    )
+    claim_query = " ".join(connection.queries[-1].split())
+    assert "state IN ('storing','reconciling')" in claim_query
+    assert "claim_owner IS NULL OR lease_expires_at <= $3" in claim_query
+
+    with pytest.raises(DocumentLeaseLost):
+        await repository.finish_source_storage(
+            "document-synthetic",
+            owner="request-a",
+            state="queued",
+        )
+    finish_query = " ".join(connection.queries[-1].split())
+    assert "document_id=$1 AND claim_owner=$2" in finish_query
+
+
 async def _return(value):
     return value
 
@@ -183,6 +273,56 @@ class _Transport:
 
     async def verify(self, _intent, _match, _payload_hash):
         return True
+
+
+@pytest.mark.asyncio
+async def test_duplicate_storing_upload_reconciles_under_source_lease() -> None:
+    from app.ingestion.repository import InMemoryDocumentRepository, NewDocument
+    from app.ingestion.service import DocumentCoordinator
+    from app.ingestion.uploads import validate_upload
+    from app.writeback.intents import ExactlyOnceWriter, InMemoryIntentRepository
+
+    content = _png()
+    upload = validate_upload(
+        filename="synthetic.png",
+        content_type="image/png",
+        data=content,
+        doc_type="intake_form",
+    )
+    repository = InMemoryDocumentRepository()
+    stale, created = await repository.get_or_create(
+        NewDocument(
+            patient_id="patient-synthetic",
+            content_hash=upload.content_hash,
+            doc_type="intake_form",
+            filename=upload.filename,
+            content_type=upload.content_type,
+            encounter_id="encounter-synthetic",
+            correlation_id="old-request",
+            credential_ref="credential:synthetic",
+        )
+    )
+    assert created and stale.state == "storing"
+
+    transport = _Transport("source")
+    coordinator = DocumentCoordinator(
+        repository=repository,
+        source_writer=ExactlyOnceWriter(InMemoryIntentRepository(), transport),
+        encounter_belongs_to_patient=lambda _patient, _encounter: _return(True),
+        credential_ref_for_session=lambda _session: _return("credential:synthetic"),
+    )
+
+    submission = await coordinator.submit(
+        _session(),
+        upload,
+        encounter_id="encounter-synthetic",
+        correlation_id="recovery-request",
+    )
+
+    assert submission.duplicate is True
+    assert submission.accepted.document_id == stale.document_id
+    assert submission.accepted.state == "queued"
+    assert len(transport.posts) == 1
 
 
 class _SourceLoader:

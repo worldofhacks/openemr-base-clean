@@ -43,6 +43,9 @@ class RetryConflict(Exception):
     """The logical job is not failed or has an unresolved unknown intent."""
 
 
+_SOURCE_STORAGE_LEASE_SECONDS = 300
+
+
 @dataclass(frozen=True)
 class DocumentSubmission:
     accepted: UploadAccepted
@@ -129,7 +132,14 @@ class DocumentCoordinator:
                 credential_ref=credential_ref,
             )
         )
-        if created:
+        source_owner = f"source:{correlation_id}"
+        claimed = await self._repository.claim_source_storage(
+            record.document_id,
+            owner=source_owner,
+            lease_seconds=_SOURCE_STORAGE_LEASE_SECONDS,
+        )
+        if claimed is not None:
+            record = claimed
             marker = f"document:{record.document_id}:source:v1"
             spec = IntentSpec(
                 patient_id=session.patient_id,
@@ -150,24 +160,33 @@ class DocumentCoordinator:
                     ),
                 )
             except (ReconciliationConflict, ReconciliationRequired):
-                record = await self._repository.set_state(
-                    record.document_id, state="reconciling"
+                record = await self._repository.finish_source_storage(
+                    record.document_id,
+                    owner=source_owner,
+                    state="reconciling",
                 )
             else:
                 if result.state is WriteState.COMPLETE:
-                    record = await self._repository.set_state(
-                        record.document_id, state="queued"
+                    record = await self._repository.finish_source_storage(
+                        record.document_id,
+                        owner=source_owner,
+                        state="queued",
                     )
                 elif result.state is WriteState.UNKNOWN:
-                    record = await self._repository.set_state(
-                        record.document_id, state="reconciling"
+                    record = await self._repository.finish_source_storage(
+                        record.document_id,
+                        owner=source_owner,
+                        state="reconciling",
                     )
                 else:
-                    record = await self._repository.set_state(
+                    record = await self._repository.finish_source_storage(
                         record.document_id,
+                        owner=source_owner,
                         state="failed",
                         reason=FailureReason.STORAGE_WRITE_FAILED,
                     )
+        else:
+            record = await self._repository.get(record.document_id)
         return DocumentSubmission(self._accepted(record), duplicate=not created)
 
     async def status(self, session: Session, document_id: str) -> DocumentStatus:

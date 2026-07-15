@@ -18,6 +18,7 @@ DocumentType = Literal["lab_pdf", "intake_form"]
 
 Clock = Callable[[], datetime]
 ACTIVE_STATES = frozenset({"extracting", "grounding", "writing"})
+SOURCE_STATES = frozenset({"storing", "reconciling"})
 
 
 def _utcnow() -> datetime:
@@ -109,6 +110,19 @@ class DocumentRepository(Protocol):
         reason: FailureReason | None = None,
         fields_grounded: int | None = None,
         fields_unsupported: int | None = None,
+    ) -> DocumentRecord: ...
+
+    async def claim_source_storage(
+        self, document_id: str, *, owner: str, lease_seconds: int
+    ) -> DocumentRecord | None: ...
+
+    async def finish_source_storage(
+        self,
+        document_id: str,
+        *,
+        owner: str,
+        state: str,
+        reason: FailureReason | None = None,
     ) -> DocumentRecord: ...
 
     async def requeue_failed(
@@ -228,6 +242,55 @@ class InMemoryDocumentRepository:
                 if fields_unsupported is None
                 else fields_unsupported
             ),
+            updated_ts=self._timestamp(),
+        )
+        self._by_id[document_id] = updated
+        return updated
+
+    async def claim_source_storage(
+        self, document_id: str, *, owner: str, lease_seconds: int
+    ) -> DocumentRecord | None:
+        if not owner or lease_seconds <= 0:
+            raise ValueError("source-storage owner and lease must be valid")
+        current = await self.get(document_id)
+        if current.state not in SOURCE_STATES:
+            return None
+        now = self._now()
+        if current.claim_owner is not None and (
+            current.lease_expires_at is None
+            or datetime.fromisoformat(current.lease_expires_at) > now
+        ):
+            return None
+        updated = replace(
+            current,
+            claim_owner=owner,
+            heartbeat_at=_iso_at(now),
+            lease_expires_at=_iso_at(now + timedelta(seconds=lease_seconds)),
+            updated_ts=_iso_at(now),
+        )
+        self._by_id[document_id] = updated
+        return updated
+
+    async def finish_source_storage(
+        self,
+        document_id: str,
+        *,
+        owner: str,
+        state: str,
+        reason: FailureReason | None = None,
+    ) -> DocumentRecord:
+        if state not in {"queued", "reconciling", "failed"}:
+            raise ValueError("invalid source-storage terminal state")
+        current = await self.get(document_id)
+        if current.state not in SOURCE_STATES or current.claim_owner != owner:
+            raise DocumentLeaseLost(document_id)
+        updated = replace(
+            current,
+            state=state,
+            reason=reason,
+            claim_owner=None,
+            lease_expires_at=None,
+            heartbeat_at=None,
             updated_ts=self._timestamp(),
         )
         self._by_id[document_id] = updated
@@ -517,6 +580,71 @@ class PostgresDocumentRepository:
             )
             if row is None:
                 raise DocumentNotFound(document_id)
+            loaded = await self._fetch_by_id(conn, document_id)
+            return _record(loaded)
+        finally:
+            await _close(conn)
+
+    async def claim_source_storage(
+        self, document_id: str, *, owner: str, lease_seconds: int
+    ) -> DocumentRecord | None:
+        if not owner or lease_seconds <= 0:
+            raise ValueError("source-storage owner and lease must be valid")
+        conn = await self._connect()
+        try:
+            now = _utcnow()
+            row = await conn.fetchrow(  # type: ignore[attr-defined]
+                """
+                UPDATE agent_document_jobs
+                   SET claim_owner=$2, heartbeat_at=$3,
+                       lease_expires_at=$3 + ($4 * interval '1 second'),
+                       updated_ts=$3
+                 WHERE document_id=$1
+                   AND state IN ('storing','reconciling')
+                   AND (claim_owner IS NULL OR lease_expires_at <= $3)
+                RETURNING document_id
+                """,
+                document_id,
+                owner,
+                now,
+                lease_seconds,
+            )
+            if row is None:
+                return None
+            loaded = await self._fetch_by_id(conn, document_id)
+            return _record(loaded)
+        finally:
+            await _close(conn)
+
+    async def finish_source_storage(
+        self,
+        document_id: str,
+        *,
+        owner: str,
+        state: str,
+        reason: FailureReason | None = None,
+    ) -> DocumentRecord:
+        if state not in {"queued", "reconciling", "failed"}:
+            raise ValueError("invalid source-storage terminal state")
+        conn = await self._connect()
+        try:
+            row = await conn.fetchrow(  # type: ignore[attr-defined]
+                """
+                UPDATE agent_document_jobs
+                   SET state=$3, reason=$4, claim_owner=NULL,
+                       lease_expires_at=NULL, heartbeat_at=NULL, updated_ts=$5
+                 WHERE document_id=$1 AND claim_owner=$2
+                   AND state IN ('storing','reconciling')
+                RETURNING document_id
+                """,
+                document_id,
+                owner,
+                state,
+                reason.value if reason else None,
+                _utcnow(),
+            )
+            if row is None:
+                raise DocumentLeaseLost(document_id)
             loaded = await self._fetch_by_id(conn, document_id)
             return _record(loaded)
         finally:

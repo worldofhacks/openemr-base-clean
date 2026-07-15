@@ -26,6 +26,7 @@ from scripts.activate_w2_write_path import (
     RailwayCLI,
     RailwayOpenEMRInspectorImpl,
     REQUIRED_SMART_SCOPES,
+    SeleniumSmartSession,
     VerifyScript,
 )
 
@@ -514,6 +515,17 @@ def test_verify_script_imports_its_sibling_under_direct_script_execution(
 
     assert VerifyScript().run({}) is True
     assert imported == ["verify_w2_write_path"]
+
+
+def test_smart_browser_failure_reports_only_stage_and_exception_type() -> None:
+    error = SeleniumSmartSession._browser_failure(
+        "synthetic patient selection", RuntimeError("must-not-render")
+    )
+
+    rendered = str(error)
+    assert "synthetic patient selection" in rendered
+    assert "RuntimeError" in rendered
+    assert "must-not-render" not in rendered
 
 
 def test_worker_ensure_and_disabled_prepare_are_idempotent_without_secret_reads() -> (

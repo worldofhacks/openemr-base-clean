@@ -1161,6 +1161,7 @@ class SeleniumSmartSession:
     def establish_session(
         self, *, patient_id: str, encounter_id: str
     ) -> Mapping[str, str]:
+        stage = "configuration validation"
         if not self._config.oe_password:
             raise ActivationError(
                 "OE_ADMIN_PASS is required in the process environment"
@@ -1182,6 +1183,7 @@ class SeleniumSmartSession:
 
         driver = None
         try:
+            stage = "browser startup"
             driver = webdriver.Remote(command_executor=selenium_url, options=Options())
             driver.set_page_load_timeout(60)
             driver.execute_cdp_cmd("Network.enable", {})
@@ -1189,15 +1191,18 @@ class SeleniumSmartSession:
                 "Network.setBlockedURLs",
                 {"urls": [f"{self._config.agent_base_url}/chat*"]},
             )
+            stage = "agent launch redirect"
             driver.get(f"{self._config.agent_base_url}/launch")
             self._require_origin(
                 driver.current_url, self._config.openemr_base_url, "login"
             )
+            stage = "OpenEMR login form"
             wait = WebDriverWait(driver, 60)
             wait.until(EC.presence_of_element_located((By.NAME, "username"))).send_keys(
                 self._config.oe_username
             )
             driver.find_element(By.NAME, "password").send_keys(self._config.oe_password)
+            stage = "OpenEMR role selection"
             role_buttons = [
                 button
                 for button in driver.find_elements(
@@ -1211,6 +1216,7 @@ class SeleniumSmartSession:
             self._require_origin(
                 driver.current_url, self._config.openemr_base_url, "patient selection"
             )
+            stage = "synthetic patient selection"
             buttons = wait.until(
                 EC.presence_of_all_elements_located(
                     (By.CSS_SELECTOR, "button.patient-btn")
@@ -1244,6 +1250,7 @@ class SeleniumSmartSession:
                     raise ActivationError("agent callback session was not opaque")
                 return values[0]
 
+            stage = "SMART authorization"
             next_step = wait.until(
                 lambda current: (
                     session_from_callback(current)
@@ -1257,6 +1264,7 @@ class SeleniumSmartSession:
                     driver.current_url, self._config.openemr_base_url, "authorization"
                 )
                 next_step.click()
+                stage = "SMART callback"
                 session_id = wait.until(session_from_callback)
             return {
                 "W2_VERIFY_SESSION_ID": str(session_id),
@@ -1266,9 +1274,7 @@ class SeleniumSmartSession:
         except ActivationError:
             raise
         except Exception as exc:
-            raise ActivationError(
-                f"SMART browser session failed ({type(exc).__name__}); no credential detail retained"
-            ) from None
+            raise self._browser_failure(stage, exc) from None
         finally:
             if driver is not None:
                 try:
@@ -1322,6 +1328,13 @@ class SeleniumSmartSession:
             raise ActivationError(
                 "local Selenium could not start; run the documented docker compose command"
             )
+
+    @staticmethod
+    def _browser_failure(stage: str, exc: Exception) -> ActivationError:
+        return ActivationError(
+            f"SMART browser session failed during {stage} "
+            f"({type(exc).__name__}); no credential detail retained"
+        )
 
     @staticmethod
     def _canonical_uuid(value: str, label: str) -> str:

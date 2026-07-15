@@ -1335,7 +1335,6 @@ class SeleniumSmartSession:
         control of the submission.
         """
 
-        driver.switch_to.default_content()
         result = driver.execute_script(
             r"""
             const expected = new Set(arguments[0]);
@@ -1467,7 +1466,6 @@ class SeleniumSmartSession:
     def _submit_prepared_scope_consent(driver: Any) -> None:
         """Reacquire the consent button from a valid top-level browser context."""
 
-        driver.switch_to.default_content()
         markers = driver.find_elements(
             "css selector", 'input[data-w2-observation-rs="1"]'
         )

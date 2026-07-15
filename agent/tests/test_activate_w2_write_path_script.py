@@ -642,7 +642,7 @@ def test_smart_consent_prepares_only_the_known_mixed_version_scope_collision() -
 
     SeleniumSmartSession._prepare_exact_scope_consent(driver)
 
-    assert driver.default_content_calls == 1
+    assert driver.default_content_calls == 0
     assert len(driver.calls) == 1
     script, scopes = driver.calls[0]
     assert scopes == sorted(REQUIRED_SMART_SCOPES)
@@ -652,13 +652,13 @@ def test_smart_consent_prepares_only_the_known_mixed_version_scope_collision() -
     assert "removeAttribute('name')" not in script
 
 
-def test_smart_consent_reenters_top_context_and_reacquires_button_before_click() -> None:
+def test_smart_consent_reacquires_button_after_context_selection() -> None:
     button = _ConsentElement()
     driver = _PreparedConsentDriver(buttons=[button])
 
     SeleniumSmartSession._submit_prepared_scope_consent(driver)
 
-    assert driver.default_content_calls == 1
+    assert driver.default_content_calls == 0
     assert button.clicks == 1
 
 
@@ -678,6 +678,7 @@ def test_smart_consent_selects_one_live_oauth_window_before_dom_attestation() ->
 
     assert driver.current_handle == "consent"
     assert driver.window_switches[-1] == "consent"
+    assert driver.default_content_calls >= 1
 
 
 def test_smart_consent_stops_when_authorization_window_is_not_unique() -> None:

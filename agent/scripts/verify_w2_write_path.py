@@ -69,7 +69,7 @@ class VerificationConfig:
     encounter_id: str
     lab_fixture: Path
     intake_fixture: Path
-    request_timeout_seconds: float = 30.0
+    request_timeout_seconds: float = 120.0
     poll_timeout_seconds: float = 300.0
     poll_interval_seconds: float = 2.0
 

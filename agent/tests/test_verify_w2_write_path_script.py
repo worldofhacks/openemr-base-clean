@@ -222,6 +222,7 @@ def test_config_requires_exact_owner_context_names_and_committed_synthetic_fixtu
     assert config.intake_fixture.name == "intake-bp-separate-candidates.pdf"
     assert config.lab_fixture.is_file()
     assert config.intake_fixture.is_file()
+    assert config.request_timeout_seconds == 120.0
 
     with pytest.raises(VerificationError, match="attest"):
         VerificationConfig.from_env(

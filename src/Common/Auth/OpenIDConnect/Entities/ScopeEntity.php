@@ -154,10 +154,10 @@ class ScopeEntity implements ScopeEntityInterface
         // Check if permissions match
         $otherPermissions = $otherScope->getPermissions();
         if ($otherPermissions->v1Read) {
-            return $otherPermissions->v1Read;
+            return $this->permissions->v1Read;
         }
         if ($otherPermissions->v1Write) {
-            return $otherPermissions->v1Write;
+            return $this->permissions->v1Write;
         }
         $containsScope = true;
         if ($otherPermissions->read && !$this->permissions->read) {

@@ -116,6 +116,10 @@ class ScopePermissionParser
                     'description' => $serverScopeList->lookupDescriptionForResourceScope($resource, $context),
                     'context' => $context,
                     'version' => $version,
+                    // Preserve each requested SMART representation independently. A
+                    // resource can legitimately carry both v1 ``.read`` and v2 ``.rs``;
+                    // collapsing to the first version drops delegated authority at consent.
+                    'actionsByVersion' => [],
                     'actions' => [
                         'c' => ['enabled' => false],
                         'r' => ['enabled' => false],
@@ -132,9 +136,15 @@ class ScopePermissionParser
             }
 
             // Parse actions - mark them as enabled
+            if (!isset($structuredScopes[$resource]['actionsByVersion'][$version])) {
+                $structuredScopes[$resource]['actionsByVersion'][$version] = [];
+            }
             foreach ($parsed['actions'] as $action) {
                 if (isset($structuredScopes[$resource]['actions'][$action])) {
                     $structuredScopes[$resource]['actions'][$action]['enabled'] = true;
+                }
+                if (!in_array($action, $structuredScopes[$resource]['actionsByVersion'][$version], true)) {
+                    $structuredScopes[$resource]['actionsByVersion'][$version][] = $action;
                 }
             }
 
@@ -198,6 +208,22 @@ class ScopePermissionParser
                 $structuredScopes[$resource]['requestedRestrictions'] = $restrictions;
             }
         }
+
+        // Canonicalize the client-facing reconstruction metadata so request order cannot
+        // decide which scope representation survives or alter the generated consent form.
+        $actionOrder = array_flip(array_keys(self::ACTION_LABELS));
+        foreach ($structuredScopes as &$resourceScope) {
+            ksort($resourceScope['actionsByVersion']);
+            foreach ($resourceScope['actionsByVersion'] as &$actions) {
+                usort(
+                    $actions,
+                    static fn(string $left, string $right): int =>
+                        $actionOrder[$left] <=> $actionOrder[$right]
+                );
+            }
+            unset($actions);
+        }
+        unset($resourceScope);
 
         // Sort resources alphabetically
         ksort($structuredScopes);

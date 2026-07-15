@@ -95,6 +95,10 @@
                                                                        class="resource-version"
                                                                        data-resource="{{ resourceKey|attr }}"
                                                                        value="{{ resource.version|default('v2')|attr }}">
+                                                                <input type="hidden"
+                                                                       class="resource-version-actions"
+                                                                       data-resource="{{ resourceKey|attr }}"
+                                                                       value="{{ resource.actionsByVersion|json_encode|attr }}">
                                                                 {% if resource.requestedRestrictions|default([])|length > 0 %}
                                                             <input type="hidden"
                                                                    class="resource-requested-restrictions"
@@ -481,6 +485,9 @@
                     // Get context and version for this resource
                     const contextInput = document.querySelector(`.resource-context[data-resource="${resource}"]`);
                     const versionInput = document.querySelector(`.resource-version[data-resource="${resource}"]`);
+                    const versionActionsInput = document.querySelector(
+                        `.resource-version-actions[data-resource="${resource}"]`
+                    );
                     if (!contextInput) return;
 
                     const context = contextInput.value;
@@ -495,13 +502,35 @@
                     // If no actions selected, skip this resource
                     if (checkedActions.length === 0) return;
 
-                    // Handle V1 scopes
-                    if (version === 'v1') {
-                        reconstructV1Scope(context, resource, checkedActions);
+                    let actionsByVersion = {[version]: checkedActions};
+                    if (versionActionsInput) {
+                        try {
+                            actionsByVersion = JSON.parse(versionActionsInput.value);
+                        } catch (error) {
+                            return;
+                        }
                     }
-                    // Handle V2 scopes
-                    else {
-                        reconstructV2Scope(context, resource, checkedActions);
+                    const actionOrder = ['c', 'r', 'u', 'd', 's'];
+                    const versions = Object.keys(actionsByVersion).sort();
+                    for (const requestedVersion of versions) {
+                        const allowedActions = actionsByVersion[requestedVersion];
+                        if (
+                            !['v1', 'v2'].includes(requestedVersion) ||
+                            !Array.isArray(allowedActions) ||
+                            allowedActions.some(action => !actionOrder.includes(action))
+                        ) {
+                            return;
+                        }
+                        const allowed = new Set(allowedActions);
+                        const selectedForVersion = checkedActions.filter(action => allowed.has(action));
+                        if (selectedForVersion.length === 0) {
+                            continue;
+                        }
+                        if (requestedVersion === 'v1') {
+                            reconstructV1Scope(context, resource, selectedForVersion);
+                        } else {
+                            reconstructV2Scope(context, resource, selectedForVersion);
+                        }
                     }
                 });
             }

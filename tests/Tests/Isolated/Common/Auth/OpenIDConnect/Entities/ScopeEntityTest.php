@@ -16,6 +16,22 @@ use PHPUnit\Framework\TestCase;
 
 class ScopeEntityTest extends TestCase
 {
+    public function testNarrowV2ScopeCannotAuthorizeUnrequestedV1Expansion(): void
+    {
+        $readOnly = ScopeEntity::createFromString('user/Observation.r');
+        $searchOnly = ScopeEntity::createFromString('user/Observation.s');
+
+        $this->assertFalse(
+            $readOnly->containsScope(ScopeEntity::createFromString('user/Observation.read'))
+        );
+        $this->assertFalse(
+            $searchOnly->containsScope(ScopeEntity::createFromString('user/Observation.read'))
+        );
+        $this->assertFalse(
+            $readOnly->containsScope(ScopeEntity::createFromString('user/Observation.rs'))
+        );
+    }
+
     public function testContainsScopeWithBackwardsCompatabileReadPermission(): void
     {
         $entityScope = ScopeEntity::createFromString('patient/Patient.read');

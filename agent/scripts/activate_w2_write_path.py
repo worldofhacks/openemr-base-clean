@@ -1260,6 +1260,8 @@ class SeleniumSmartSession:
             if isinstance(next_step, str):
                 session_id = next_step
             else:
+                stage = "SMART consent context"
+                self._select_unique_consent_context(driver)
                 self._require_origin(
                     driver.current_url, self._config.openemr_base_url, "authorization"
                 )
@@ -1288,6 +1290,36 @@ class SeleniumSmartSession:
                     driver.quit()
                 except Exception:
                     pass
+
+    def _select_unique_consent_context(self, driver: Any) -> None:
+        """Reset a detached frame by selecting one live top-level OAuth window."""
+
+        candidates: list[str] = []
+        try:
+            handles = list(driver.window_handles)
+        except Exception:
+            handles = []
+        for handle in handles:
+            try:
+                driver.switch_to.window(handle)
+                driver.switch_to.default_content()
+                if self._browser_location(driver.current_url) != "openemr:oauth":
+                    continue
+                if len(driver.find_elements("id", "authorize-btn")) == 1:
+                    candidates.append(handle)
+            except Exception:
+                continue
+        if len(candidates) != 1:
+            raise ActivationError(
+                "SMART authorization window was not uniquely available"
+            )
+        try:
+            driver.switch_to.window(candidates[0])
+            driver.switch_to.default_content()
+        except Exception:
+            raise ActivationError(
+                "SMART authorization window was not available at submission"
+            ) from None
 
     @staticmethod
     def _prepare_exact_scope_consent(driver: Any) -> None:

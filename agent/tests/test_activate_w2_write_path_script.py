@@ -593,6 +593,50 @@ class _PreparedConsentDriver:
         return []
 
 
+class _AuthorizationWindowSwitch:
+    def __init__(self, driver: "_AuthorizationWindowDriver") -> None:
+        self.driver = driver
+
+    def window(self, handle: str) -> None:
+        self.driver.current_handle = handle
+        self.driver.window_switches.append(handle)
+
+    def default_content(self) -> None:
+        if self.driver.current_handle in self.driver.detached_handles:
+            raise RuntimeError("synthetic detached frame")
+        self.driver.default_content_calls += 1
+
+
+class _AuthorizationWindowDriver:
+    def __init__(
+        self,
+        urls: dict[str, str],
+        *,
+        consent_handles: set[str],
+        detached_handles: set[str] = frozenset(),
+    ) -> None:
+        self.window_handles = list(urls)
+        self.urls = urls
+        self.consent_handles = consent_handles
+        self.detached_handles = detached_handles
+        self.current_handle = self.window_handles[0]
+        self.window_switches: list[str] = []
+        self.default_content_calls = 0
+        self.switch_to = _AuthorizationWindowSwitch(self)
+
+    @property
+    def current_url(self) -> str:
+        return self.urls[self.current_handle]
+
+    def find_elements(self, by: str, value: str) -> list[_ConsentElement]:
+        if (
+            (by, value) == ("id", "authorize-btn")
+            and self.current_handle in self.consent_handles
+        ):
+            return [_ConsentElement()]
+        return []
+
+
 def test_smart_consent_prepares_only_the_known_mixed_version_scope_collision() -> None:
     driver = _ConsentDriver("prepared")
 
@@ -616,6 +660,38 @@ def test_smart_consent_reenters_top_context_and_reacquires_button_before_click()
 
     assert driver.default_content_calls == 1
     assert button.clicks == 1
+
+
+def test_smart_consent_selects_one_live_oauth_window_before_dom_attestation() -> None:
+    driver = _AuthorizationWindowDriver(
+        {
+            "detached": "https://openemr.example/oauth2/default/device/code",
+            "consent": "https://openemr.example/oauth2/default/device/code",
+            "agent": "https://agent.example/app",
+        },
+        consent_handles={"consent"},
+        detached_handles={"detached"},
+    )
+    session = SeleniumSmartSession(ActivationConfig.from_env(_ENV))
+
+    session._select_unique_consent_context(driver)
+
+    assert driver.current_handle == "consent"
+    assert driver.window_switches[-1] == "consent"
+
+
+def test_smart_consent_stops_when_authorization_window_is_not_unique() -> None:
+    driver = _AuthorizationWindowDriver(
+        {
+            "consent-a": "https://openemr.example/oauth2/default/device/code",
+            "consent-b": "https://openemr.example/oauth2/default/device/code",
+        },
+        consent_handles={"consent-a", "consent-b"},
+    )
+    session = SeleniumSmartSession(ActivationConfig.from_env(_ENV))
+
+    with pytest.raises(ActivationError, match="authorization window"):
+        session._select_unique_consent_context(driver)
 
 
 @pytest.mark.parametrize(

@@ -767,10 +767,10 @@ class PostgresDocumentRepository:
             row = await conn.fetchrow(  # type: ignore[attr-defined]
                 """
                 UPDATE agent_document_jobs
-                   SET heartbeat_at=$3,
-                       lease_expires_at=$3 +
+                   SET heartbeat_at=$3::timestamptz,
+                       lease_expires_at=$3::timestamptz +
                            ($4::double precision * interval '1 second'),
-                       updated_ts=$3
+                       updated_ts=$3::timestamptz
                  WHERE document_id=$1 AND claim_owner=$2
                    AND state IN ('extracting','grounding','writing')
                 RETURNING document_id

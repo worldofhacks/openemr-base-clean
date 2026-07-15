@@ -152,6 +152,8 @@ async def test_postgres_heartbeat_casts_lease_interval_parameter() -> None:
         )
 
     normalized = " ".join(connection.query.split())
+    assert "heartbeat_at=$3::timestamptz" in normalized
+    assert "lease_expires_at=$3::timestamptz +" in normalized
     assert "$4::double precision * interval '1 second'" in normalized
 
 

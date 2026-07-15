@@ -534,15 +534,23 @@ class ActivationOrchestrator:
                 self._set_enabled(service, False, variables=variables)
             except Exception as exc:
                 failures.append(exc)
-        actions = (
+        # A redundant deploy/scale command may fail even when the live process is already
+        # closed. The observable end-state is authoritative: command errors are safe only
+        # when the independent checks below still prove web disabled and worker stopped.
+        for action in (
             lambda: self._railway.deploy(self._config.web_service),
-            lambda: self._railway.require_web_disabled(self._config.web_service),
             lambda: self._railway.stop_service(self._config.worker_service),
-            lambda: self._railway.require_service_stopped(self._config.worker_service),
-        )
-        for action in actions:
+        ):
             try:
                 action()
+            except Exception:
+                pass
+        for check in (
+            lambda: self._railway.require_web_disabled(self._config.web_service),
+            lambda: self._railway.require_service_stopped(self._config.worker_service),
+        ):
+            try:
+                check()
             except Exception as exc:
                 failures.append(exc)
         if failures:

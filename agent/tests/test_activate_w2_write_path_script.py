@@ -589,6 +589,7 @@ def test_smart_session_must_match_the_exact_synthetic_patient_and_encounter() ->
     ("failure", "expected_failure"),
     [
         ({"fail_deploy": "document-worker"}, "deployment"),
+        ({"fail_deploy": "agent"}, "deployment"),
         ({"fail_running": "document-worker"}, "running"),
         ({"fail_ready": True}, "readiness"),
     ],

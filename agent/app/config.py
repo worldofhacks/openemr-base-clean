@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from cryptography.fernet import Fernet
 from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -93,6 +94,13 @@ class Settings(BaseSettings):
     artifact_document_path: str = "/AI-Extractions"
     artifact_document_category_id: str | None = None
     openemr_binary_readback_safe: bool = False
+    document_credential_key: SecretStr | None = Field(
+        default=None,
+        description=(
+            "URL-safe base64 Fernet key for the separately encrypted delegated-job "
+            "credential; required only when the W2 document runtime is enabled"
+        ),
+    )
     document_worker_poll_seconds: float = Field(default=1.0, gt=0)
     document_worker_lease_seconds: int = Field(default=60, gt=0)
     document_worker_max_attempts: int = Field(default=3, gt=0)
@@ -112,6 +120,19 @@ class Settings(BaseSettings):
             )
         return v
 
+    @field_validator("document_credential_key")
+    @classmethod
+    def _require_fernet_key(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return None
+        try:
+            Fernet(value.get_secret_value().encode("ascii"))
+        except (ValueError, TypeError, UnicodeError) as exc:
+            raise ValueError(
+                "DOCUMENT_CREDENTIAL_KEY must be a valid Fernet key"
+            ) from exc
+        return value
+
     @model_validator(mode="after")
     def _require_complete_document_runtime(self) -> "Settings":
         if not self.w2_document_runtime_enabled:
@@ -125,6 +146,8 @@ class Settings(BaseSettings):
             missing.append("ARTIFACT_DOCUMENT_CATEGORY_ID")
         if not self.openemr_binary_readback_safe:
             missing.append("OPENEMR_BINARY_READBACK_SAFE=true")
+        if self.document_credential_key is None:
+            missing.append("DOCUMENT_CREDENTIAL_KEY")
         if missing:
             raise ValueError(
                 "W2 document runtime requires attested configuration: "

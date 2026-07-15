@@ -5,15 +5,19 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-_MIGRATIONS = ("003_document_jobs.sql", "004_extraction_refs.sql")
+_MIGRATIONS = (
+    "003_document_jobs.sql",
+    "004_extraction_refs.sql",
+    "005_job_credentials.sql",
+)
 
 
 async def apply_document_migrations(
     connect: Callable[[], Awaitable[object]],
 ) -> None:
-    """Apply the two append-only W2 schemas in dependency order.
+    """Apply the append-only W2 schemas in dependency order.
 
-    Both SQL files use ``CREATE ... IF NOT EXISTS`` and own their transactions, so this
+    All SQL files use ``CREATE ... IF NOT EXISTS`` and own their transactions, so this
     is safe across concurrent web/worker startup. Diagnostics contain no row values.
     """
 

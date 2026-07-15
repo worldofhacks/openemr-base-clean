@@ -1274,7 +1274,10 @@ class SeleniumSmartSession:
         except ActivationError:
             raise
         except Exception as exc:
-            raise self._browser_failure(stage, exc) from None
+            location = self._browser_location(
+                driver.current_url if driver is not None else ""
+            )
+            raise self._browser_failure(stage, exc, location) from None
         finally:
             if driver is not None:
                 try:
@@ -1330,11 +1333,44 @@ class SeleniumSmartSession:
             )
 
     @staticmethod
-    def _browser_failure(stage: str, exc: Exception) -> ActivationError:
+    def _browser_failure(
+        stage: str, exc: Exception, location: str = "unknown"
+    ) -> ActivationError:
         return ActivationError(
             f"SMART browser session failed during {stage} "
-            f"({type(exc).__name__}); no credential detail retained"
+            f"at {location} ({type(exc).__name__}); no credential detail retained"
         )
+
+    def _browser_location(self, actual: str) -> str:
+        try:
+            parsed = urlsplit(actual)
+            actual_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        except ValueError:
+            return "unknown"
+
+        def matches(origin: str) -> bool:
+            expected = urlsplit(origin)
+            expected_port = expected.port or (443 if expected.scheme == "https" else 80)
+            return (
+                parsed.scheme == expected.scheme
+                and parsed.hostname == expected.hostname
+                and actual_port == expected_port
+            )
+
+        if matches(self._config.agent_base_url):
+            path = (
+                parsed.path
+                if parsed.path in {"/launch", "/callback", "/app"}
+                else "other"
+            )
+            return f"agent:{path}"
+        if matches(self._config.openemr_base_url):
+            if "/oauth2/" in parsed.path:
+                return "openemr:oauth"
+            if "login" in parsed.path.lower():
+                return "openemr:login"
+            return "openemr:other"
+        return "unexpected-origin"
 
     @staticmethod
     def _canonical_uuid(value: str, label: str) -> str:

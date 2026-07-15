@@ -518,14 +518,20 @@ def test_verify_script_imports_its_sibling_under_direct_script_execution(
 
 
 def test_smart_browser_failure_reports_only_stage_and_exception_type() -> None:
+    session = SeleniumSmartSession(ActivationConfig.from_env(_ENV))
+    location = session._browser_location(
+        "https://agent.example/callback?code=must-not-render&state=also-secret"
+    )
     error = SeleniumSmartSession._browser_failure(
-        "synthetic patient selection", RuntimeError("must-not-render")
+        "synthetic patient selection", RuntimeError("must-not-render"), location
     )
 
     rendered = str(error)
     assert "synthetic patient selection" in rendered
     assert "RuntimeError" in rendered
+    assert "agent:/callback" in rendered
     assert "must-not-render" not in rendered
+    assert "also-secret" not in rendered
 
 
 def test_worker_ensure_and_disabled_prepare_are_idempotent_without_secret_reads() -> (

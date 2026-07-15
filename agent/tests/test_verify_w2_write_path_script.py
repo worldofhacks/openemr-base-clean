@@ -78,7 +78,7 @@ def _transport(
         if request.method == "GET" and path == "/ready":
             return httpx.Response(200, json=_ready(document_detail=document_detail))
         if request.method == "POST" and path == "/documents":
-            document_id = ("lab-document", "intake-document")[upload_index % 2]
+            document_id = ("intake-document", "lab-document")[upload_index % 2]
             upload_index += 1
             return httpx.Response(
                 200 if duplicate else 202,
@@ -187,10 +187,10 @@ def test_verifier_proves_ready_upload_poll_binary_attestation_and_grounded_citat
     assert [request.url.path for request in requests].count("/documents") == 2
     assert [request.url.path for request in requests].count("/ready") == 2
     uploads = [request for request in requests if request.url.path == "/documents"]
-    assert b"lab_pdf" in uploads[0].content
-    assert b"intake_form" in uploads[1].content
-    assert _ENV["W2_VERIFY_ENCOUNTER_ID"].encode() not in uploads[0].content
-    assert _ENV["W2_VERIFY_ENCOUNTER_ID"].encode() in uploads[1].content
+    assert b"intake_form" in uploads[0].content
+    assert b"lab_pdf" in uploads[1].content
+    assert _ENV["W2_VERIFY_ENCOUNTER_ID"].encode() in uploads[0].content
+    assert _ENV["W2_VERIFY_ENCOUNTER_ID"].encode() not in uploads[1].content
 
 
 def test_verifier_is_idempotent_when_uploads_resolve_to_existing_documents():

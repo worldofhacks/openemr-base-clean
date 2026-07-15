@@ -141,17 +141,20 @@ class LiveWritePathVerifier:
     def run(self) -> VerificationResult:
         self._require_ready()
         documents = (
-            self._upload(
-                label="lab",
-                fixture=self._config.lab_fixture,
-                doc_type="lab_pdf",
-                encounter_id=None,
-            ),
+            # Intake goes first: its delegated FHIR encounter-ownership check executes
+            # before repository creation/write. A wrong encounter therefore fails before
+            # either synthetic document can be written.
             self._upload(
                 label="intake",
                 fixture=self._config.intake_fixture,
                 doc_type="intake_form",
                 encounter_id=self._config.encounter_id,
+            ),
+            self._upload(
+                label="lab",
+                fixture=self._config.lab_fixture,
+                doc_type="lab_pdf",
+                encounter_id=None,
             ),
         )
         for document in documents:

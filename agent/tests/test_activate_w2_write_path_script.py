@@ -85,6 +85,8 @@ class _FakeRailway:
     fail_deploy: str | None = None
     fail_running: str | None = None
     fail_ready: bool = False
+    fail_stopped_after: int | None = None
+    stopped_checks: int = 0
 
     def ensure_worker_service(self, service: str) -> None:
         self.events.append(("ensure_worker", service))
@@ -111,6 +113,21 @@ class _FakeRailway:
         self.events.append(("require_web_ready", service))
         if self.fail_ready:
             raise ActivationError("web readiness did not become green")
+
+    def require_web_disabled(self, service: str) -> None:
+        self.events.append(("require_web_disabled", service))
+
+    def stop_service(self, service: str) -> None:
+        self.events.append(("stop_service", service))
+
+    def require_service_stopped(self, service: str) -> None:
+        self.events.append(("require_stopped", service))
+        self.stopped_checks += 1
+        if (
+            self.fail_stopped_after is not None
+            and self.stopped_checks >= self.fail_stopped_after
+        ):
+            raise ActivationError(f"{service} stop could not be verified")
 
     def list_variables(self, _service: str) -> Mapping[str, str]:
         raise AssertionError("activation must never fetch Railway variable values")
@@ -251,9 +268,7 @@ def test_openemr_attestation_requires_exact_categories_acl_and_warning() -> None
         },
     ]
 
-    attestation = OpenEMRAttestation.from_rows(
-        rows, system_error_logging="WARNING"
-    )
+    attestation = OpenEMRAttestation.from_rows(rows, system_error_logging="WARNING")
     assert attestation.source_category_id == "101"
     assert attestation.artifact_category_id == "202"
 
@@ -272,7 +287,9 @@ def test_openemr_attestation_requires_exact_categories_acl_and_warning() -> None
             )
 
 
-def test_read_only_discovery_validates_client_categories_logging_and_encounter() -> None:
+def test_read_only_discovery_validates_client_categories_logging_and_encounter() -> (
+    None
+):
     encounter_id = "12345678-1234-4234-9234-123456789abc"
     client_row = "\t".join(
         [
@@ -303,7 +320,9 @@ def test_read_only_discovery_validates_client_categories_logging_and_encounter()
 
         def ssh_mysql(self, remote_script: str) -> str:
             assert "SELECT" in remote_script
-            assert all(value not in remote_script for value in _OWNER_SECRET_VALUES.values())
+            assert all(
+                value not in remote_script for value in _OWNER_SECRET_VALUES.values()
+            )
             return output
 
     config = ActivationConfig.from_env(
@@ -327,9 +346,13 @@ def test_railway_ssh_preserves_the_attestation_as_one_remote_command(
 ) -> None:
     calls: list[list[str]] = []
 
-    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    def fake_run(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
         calls.append(command)
-        return subprocess.CompletedProcess(command, 0, stdout="safe-output\n", stderr="")
+        return subprocess.CompletedProcess(
+            command, 0, stdout="safe-output\n", stderr=""
+        )
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     config = ActivationConfig.from_env(_ENV)
@@ -339,7 +362,59 @@ def test_railway_ssh_preserves_the_attestation_as_one_remote_command(
     assert calls[0][-1] == "sh -lc 'set -eu; echo safe'"
 
 
-def test_openemr_attestation_discovers_the_schema_instead_of_trusting_template_db() -> None:
+def test_railway_stop_scales_each_live_worker_region_to_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+    railway = RailwayCLI(ActivationConfig.from_env(_ENV))
+    monkeypatch.setattr(
+        railway,
+        "_service_metadata",
+        lambda _service: {
+            "deploymentId": "deployment-id",
+            "regions": [{"name": "us-west2"}, {"name": "eu-west"}],
+        },
+    )
+    monkeypatch.setattr(
+        railway,
+        "_run",
+        lambda command, **_kwargs: calls.append(command) or "",
+    )
+
+    railway.stop_service("document-worker")
+
+    assert len(calls) == 1
+    assert calls[0][:3] == ["railway", "service", "scale"]
+    assert calls[0][-2:] == ["eu-west=0", "us-west2=0"]
+
+
+def test_web_disabled_check_requires_the_explicit_hard_ready_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = SimpleNamespace(
+        status_code=200,
+        json=lambda: {
+            "status": "ready",
+            "checks": [
+                {
+                    "name": "document_runtime",
+                    "ok": True,
+                    "kind": "hard",
+                    "detail": "disabled",
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        activation_module.httpx, "get", lambda *_args, **_kwargs: response
+    )
+
+    RailwayCLI(ActivationConfig.from_env(_ENV)).require_web_disabled("agent")
+
+
+def test_openemr_attestation_discovers_the_schema_instead_of_trusting_template_db() -> (
+    None
+):
     config = ActivationConfig.from_env(
         {
             **_ENV,
@@ -371,7 +446,9 @@ def test_verify_script_imports_its_sibling_under_direct_script_execution(
     assert imported == ["verify_w2_write_path"]
 
 
-def test_worker_ensure_and_disabled_prepare_are_idempotent_without_secret_reads() -> None:
+def test_worker_ensure_and_disabled_prepare_are_idempotent_without_secret_reads() -> (
+    None
+):
     events, _config, railway, _verifier, orchestrator = _components()
     orchestrator.run()
     orchestrator.run()
@@ -396,6 +473,8 @@ def test_worker_ensure_and_disabled_prepare_are_idempotent_without_secret_reads(
             and event[2]["W2_DOCUMENT_RUNTIME_ENABLED"] == "false"
             for event in preceding
         )
+        assert ("require_web_disabled", "agent") in preceding
+        assert ("require_stopped", "document-worker") in preceding
         assert any(
             event[0] == "set_variables"
             and event[1] == "agent"
@@ -418,7 +497,15 @@ def test_activation_flips_worker_then_web_last_and_invokes_opaque_verifier() -> 
 
     # The enabled web deploy intentionally precedes SMART launch: its in-memory token
     # cache would otherwise be erased by the deployment.
-    assert discover < worker_true < worker_running < web_true < web_ready < session < verify
+    assert (
+        discover
+        < worker_true
+        < worker_running
+        < web_true
+        < web_ready
+        < session
+        < verify
+    )
 
     category_sets = [
         variables
@@ -498,12 +585,23 @@ def test_failed_deployment_or_readiness_resets_both_services_disabled(
     assert last_by_service["document-worker"]["W2_DOCUMENT_RUNTIME_ENABLED"] == "false"
     assert last_by_service["agent"]["W2_DOCUMENT_RUNTIME_ENABLED"] == "false"
 
-    if failure.get("fail_deploy") == "document-worker" or failure.get(
-        "fail_running"
-    ) == "document-worker":
+    if (
+        failure.get("fail_deploy") == "document-worker"
+        or failure.get("fail_running") == "document-worker"
+    ):
         assert not any(
             event[0] == "set_variables"
             and event[1] == "agent"
             and event[2].get("W2_DOCUMENT_RUNTIME_ENABLED") == "true"
             for event in events
         )
+
+
+def test_unverifiable_rollback_is_reported_instead_of_suppressed() -> None:
+    railway = _FakeRailway([], fail_ready=True, fail_stopped_after=2)
+    _events, _config, _railway, verifier, orchestrator = _components(railway=railway)
+
+    with pytest.raises(ActivationError, match="rollback could not be verified"):
+        orchestrator.run()
+
+    assert verifier.calls == []

@@ -37,9 +37,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 
 
-OWNER_ONLY_SECRET_NAMES = frozenset(
-    {"SMART_CLIENT_SECRET", "DOCUMENT_CREDENTIAL_KEY"}
-)
+OWNER_ONLY_SECRET_NAMES = frozenset({"SMART_CLIENT_SECRET", "DOCUMENT_CREDENTIAL_KEY"})
 
 DEFAULT_PROJECT_ID = "1bddbc72-6307-4ec9-b6dd-8184310fbdcf"
 DEFAULT_ENVIRONMENT = "production"
@@ -159,9 +157,7 @@ class ActivationConfig:
     )
 
     @classmethod
-    def from_env(
-        cls, environ: Mapping[str, str] | None = None
-    ) -> "ActivationConfig":
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> "ActivationConfig":
         values = os.environ if environ is None else environ
         # Deliberately do not access either OWNER_ONLY_SECRET_NAMES entry here.
         project_id = _require_safe_identifier(
@@ -211,7 +207,9 @@ class ActivationConfig:
         ):
             _https_origin(url, name)
         if urlsplit(callback).path != "/callback":
-            raise ActivationError("AGENT_CALLBACK_URL must end at the exact /callback path")
+            raise ActivationError(
+                "AGENT_CALLBACK_URL must end at the exact /callback path"
+            )
         exact_urls = {
             "OPENEMR_FHIR_BASE_URL": (fhir, f"{openemr_base}/apis/default/fhir"),
             "OPENEMR_OAUTH_BASE_URL": (oauth, f"{openemr_base}/oauth2/default"),
@@ -220,7 +218,9 @@ class ActivationConfig:
         }
         for name, (actual, expected) in exact_urls.items():
             if actual != expected:
-                raise ActivationError(f"{name} does not match the pinned deployed origin")
+                raise ActivationError(
+                    f"{name} does not match the pinned deployed origin"
+                )
 
         return cls(
             project_id=project_id,
@@ -242,9 +242,7 @@ class ActivationConfig:
                 values, "W2_VERIFY_PATIENT_ID", DEFAULT_SYNTHETIC_PATIENT_ID
             ),
             encounter_id=_env(values, "W2_VERIFY_ENCOUNTER_ID"),
-            selenium_url=_env(
-                values, "SELENIUM_URL", "http://localhost:4444/wd/hub"
-            ),
+            selenium_url=_env(values, "SELENIUM_URL", "http://localhost:4444/wd/hub"),
             oe_username=_env(values, "OE_USERNAME", "admin"),
             oe_password=_env(values, "OE_ADMIN_PASS"),
         )
@@ -268,9 +266,7 @@ class OpenEMRAttestation:
         encounter_id: str = "",
     ) -> "OpenEMRAttestation":
         if system_error_logging != "WARNING":
-            raise ActivationError(
-                "OpenEMR system_error_logging is not exactly WARNING"
-            )
+            raise ActivationError("OpenEMR system_error_logging is not exactly WARNING")
         if len(category_rows) != 2:
             raise ActivationError(
                 "OpenEMR must contain exactly the two required root document categories"
@@ -289,7 +285,9 @@ class OpenEMRAttestation:
             if str(row.get("path") or "") != expected[name]:
                 raise ActivationError("OpenEMR document category path is not canonical")
             if str(row.get("aco_spec") or "") != "patients|docs":
-                raise ActivationError("OpenEMR document category ACL is not patients|docs")
+                raise ActivationError(
+                    "OpenEMR document category ACL is not patients|docs"
+                )
             category_id = str(row.get("id") or "").strip()
             if not category_id.isdigit() or int(category_id) <= 0:
                 raise ActivationError("OpenEMR document category ID is invalid")
@@ -312,6 +310,9 @@ class RailwayControl(Protocol):
     def deploy(self, service: str) -> None: ...
     def require_service_running(self, service: str) -> None: ...
     def require_web_ready(self, service: str) -> None: ...
+    def require_web_disabled(self, service: str) -> None: ...
+    def stop_service(self, service: str) -> None: ...
+    def require_service_stopped(self, service: str) -> None: ...
 
 
 class OpenEMRInspector(Protocol):
@@ -349,13 +350,18 @@ class ActivationOrchestrator:
     def run(self) -> object:
         config = self._config
         self._railway.ensure_worker_service(config.worker_service)
-        # First action on every pass is an explicit fail-closed pin.  This also makes
-        # reruns safe after an interrupted prior attempt.
-        self._set_enabled(config.worker_service, False, variables=self._base_variables())
-        self._set_enabled(config.web_service, False, variables=self._base_variables())
-
-        enabled_any = False
         try:
+            # First action on every pass is an explicit fail-closed pin. Because Railway
+            # variable updates intentionally skip deploys, prove the currently running
+            # revisions are already closed; otherwise deploy/scale a verified baseline.
+            self._set_enabled(
+                config.worker_service, False, variables=self._base_variables()
+            )
+            self._set_enabled(
+                config.web_service, False, variables=self._base_variables()
+            )
+            self._require_or_establish_disabled_baseline()
+
             attestation = self._openemr.discover_attestation()
             client_id = self._resolved_client_id(attestation)
             encounter_id = self._resolved_encounter_id(attestation)
@@ -366,7 +372,6 @@ class ActivationOrchestrator:
             # Worker must boot and remain alive before the request-serving process can
             # advertise document_runtime=ready.
             self._set_enabled(config.worker_service, True, variables=variables)
-            enabled_any = True
             self._railway.deploy(config.worker_service)
             self._railway.require_service_running(config.worker_service)
 
@@ -388,15 +393,26 @@ class ActivationOrchestrator:
             self._railway.require_web_ready(config.web_service)
             return result
         except Exception as exc:
-            # Never leave a partially activated pair.  We intentionally suppress rollback
-            # errors and preserve the original content-free reason.
-            if enabled_any:
+            # Never leave a partially activated pair, and never claim fail-closed unless
+            # both the disabled web revision and stopped worker are observable.
+            try:
                 self._rollback_disabled()
+            except Exception:
+                raise ActivationError(
+                    "activation failed and rollback could not be verified"
+                ) from None
             if isinstance(exc, ActivationError):
                 raise
             raise ActivationError(
                 f"activation stopped at {type(exc).__name__}; both services were pinned disabled"
             ) from None
+
+    def _require_or_establish_disabled_baseline(self) -> None:
+        try:
+            self._railway.require_web_disabled(self._config.web_service)
+            self._railway.require_service_stopped(self._config.worker_service)
+        except Exception:
+            self._rollback_disabled()
 
     def _base_variables(self) -> dict[str, str]:
         config = self._config
@@ -450,7 +466,9 @@ class ActivationOrchestrator:
                 }
             )
         if OWNER_ONLY_SECRET_NAMES.intersection(values):
-            raise ActivationError("automation attempted to cross an owner-only secret boundary")
+            raise ActivationError(
+                "automation attempted to cross an owner-only secret boundary"
+            )
         values["W2_DOCUMENT_RUNTIME_ENABLED"] = "true" if enabled else "false"
         self._railway.set_variables(service, values)
 
@@ -458,7 +476,9 @@ class ActivationOrchestrator:
         discovered = attestation.client_id.strip()
         configured = self._config.smart_client_id.strip()
         if configured and discovered and configured != discovered:
-            raise ActivationError("configured SMART client ID differs from live registration")
+            raise ActivationError(
+                "configured SMART client ID differs from live registration"
+            )
         client_id = discovered or configured
         if not client_id:
             raise ActivationError("enabled replacement SMART client was not discovered")
@@ -473,7 +493,9 @@ class ActivationOrchestrator:
             )
         encounter_id = discovered or configured
         if not encounter_id:
-            raise ActivationError("no encounter was found for the canonical synthetic patient")
+            raise ActivationError(
+                "no encounter was found for the canonical synthetic patient"
+            )
         return encounter_id
 
     def _verification_environment(
@@ -485,9 +507,13 @@ class ActivationOrchestrator:
         if _OPAQUE_SESSION_RE.fullmatch(session_id) is None:
             raise ActivationError("SMART launch did not return a valid opaque session")
         if patient_id != self._config.patient_id:
-            raise ActivationError("SMART session patient does not match synthetic patient")
+            raise ActivationError(
+                "SMART session patient does not match synthetic patient"
+            )
         if returned_encounter != encounter_id:
-            raise ActivationError("SMART session encounter does not match synthetic encounter")
+            raise ActivationError(
+                "SMART session encounter does not match synthetic encounter"
+            )
         return {
             "W2_VERIFY_AGENT_BASE_URL": self._config.agent_base_url,
             "W2_VERIFY_SESSION_ID": session_id,
@@ -498,12 +524,29 @@ class ActivationOrchestrator:
 
     def _rollback_disabled(self) -> None:
         variables = self._base_variables()
+        failures: list[Exception] = []
+
+        # Stage both services closed before changing either live revision. Continue every
+        # rollback action even after an error so a web failure cannot leave the worker up
+        # (or vice versa), then report that the safe state could not be proven.
         for service in (self._config.web_service, self._config.worker_service):
             try:
                 self._set_enabled(service, False, variables=variables)
-                self._railway.deploy(service)
-            except Exception:
-                pass
+            except Exception as exc:
+                failures.append(exc)
+        actions = (
+            lambda: self._railway.deploy(self._config.web_service),
+            lambda: self._railway.require_web_disabled(self._config.web_service),
+            lambda: self._railway.stop_service(self._config.worker_service),
+            lambda: self._railway.require_service_stopped(self._config.worker_service),
+        )
+        for action in actions:
+            try:
+                action()
+            except Exception as exc:
+                failures.append(exc)
+        if failures:
+            raise ActivationError("rollback could not be verified")
 
 
 class RailwayCLI:
@@ -536,7 +579,9 @@ class RailwayCLI:
             if isinstance(item, dict) and item.get("name") == service
         ]
         if len(matches) > 1:
-            raise ActivationError("multiple Railway worker services have the requested name")
+            raise ActivationError(
+                "multiple Railway worker services have the requested name"
+            )
         if matches:
             return
         with tempfile.TemporaryDirectory(prefix="w2-railway-link-") as directory:
@@ -563,7 +608,9 @@ class RailwayCLI:
 
     def set_variables(self, service: str, variables: Mapping[str, str]) -> None:
         if OWNER_ONLY_SECRET_NAMES.intersection(variables):
-            raise ActivationError("owner-only secret variable crossed the automation boundary")
+            raise ActivationError(
+                "owner-only secret variable crossed the automation boundary"
+            )
         assignments = [f"{name}={variables[name]}" for name in sorted(variables)]
         self._run(
             [
@@ -609,6 +656,58 @@ class RailwayCLI:
         raise ActivationError(f"{service} process did not remain running")
 
     def require_web_ready(self, service: str) -> None:
+        self._require_web_runtime_detail(service, "ready")
+
+    def require_web_disabled(self, service: str) -> None:
+        self._require_web_runtime_detail(service, "disabled")
+
+    def stop_service(self, service: str) -> None:
+        metadata = self._service_metadata(service)
+        if not metadata.get("deploymentId"):
+            return
+        regions = metadata.get("regions")
+        names = {
+            str(item.get("name") or "")
+            for item in regions or []
+            if isinstance(item, dict) and item.get("name")
+        }
+        if not names:
+            raise ActivationError(f"{service} active regions were not discoverable")
+        self._run(
+            [
+                "railway",
+                "service",
+                "scale",
+                "--project",
+                self._config.project_id,
+                "--environment",
+                self._config.environment,
+                "--service",
+                service,
+                "--json",
+                *(f"{name}=0" for name in sorted(names)),
+            ],
+            label=f"Railway stop for {service}",
+            discard=True,
+        )
+
+    def require_service_stopped(self, service: str) -> None:
+        deadline = time.monotonic() + self._config.ready_timeout_seconds
+        while time.monotonic() < deadline:
+            payload = self._service_metadata(service)
+            if not payload.get("deploymentId"):
+                return
+            replicas = payload.get("replicas")
+            if (
+                isinstance(replicas, dict)
+                and int(replicas.get("configured") or 0) == 0
+                and int(replicas.get("running") or 0) == 0
+            ):
+                return
+            time.sleep(3)
+        raise ActivationError(f"{service} stop could not be verified")
+
+    def _require_web_runtime_detail(self, service: str, detail: str) -> None:
         del service  # URL is intentionally pinned rather than inferred from CLI output.
         deadline = time.monotonic() + self._config.ready_timeout_seconds
         while time.monotonic() < deadline:
@@ -636,11 +735,13 @@ class RailwayCLI:
                 and isinstance(runtime, dict)
                 and runtime.get("ok") is True
                 and runtime.get("kind") == "hard"
-                and runtime.get("detail") == "ready"
+                and runtime.get("detail") == detail
             ):
                 return
             time.sleep(3)
-        raise ActivationError("web readiness did not become green with document_runtime ready")
+        raise ActivationError(
+            f"web readiness did not become green with document_runtime {detail}"
+        )
 
     def ssh_keys_available(self) -> bool:
         output = self._run(
@@ -689,21 +790,23 @@ class RailwayCLI:
             discard=True,
         )
 
-    def _wait_for_success(
-        self, service: str, *, previous_deployment: object
-    ) -> None:
+    def _wait_for_success(self, service: str, *, previous_deployment: object) -> None:
         deadline = time.monotonic() + self._config.deploy_timeout_seconds
         while time.monotonic() < deadline:
             metadata = self._service_metadata(service)
             status = str(metadata.get("status") or "")
             current_deployment = metadata.get("deploymentId")
-            started = bool(current_deployment) and current_deployment != previous_deployment
+            started = (
+                bool(current_deployment) and current_deployment != previous_deployment
+            )
             if started and status == "SUCCESS":
                 return
             if started and status in {"FAILED", "CRASHED", "REMOVED"}:
                 raise ActivationError(f"{service} deployment did not become successful")
             time.sleep(5)
-        raise ActivationError(f"{service} deployment did not become successful before timeout")
+        raise ActivationError(
+            f"{service} deployment did not become successful before timeout"
+        )
 
     def _service_metadata(self, service: str) -> dict[str, Any]:
         payload = self._run_json(
@@ -725,7 +828,9 @@ class RailwayCLI:
             if isinstance(item, dict) and item.get("name") == service
         ]
         if len(matches) != 1:
-            raise ActivationError(f"Railway service {service} was not uniquely available")
+            raise ActivationError(
+                f"Railway service {service} was not uniquely available"
+            )
         return matches[0]
 
     def _worker_context(self):
@@ -807,9 +912,13 @@ class RailwayOpenEMRInspectorImpl:
         try:
             patient = str(uuid.UUID(self._config.patient_id))
         except ValueError:
-            raise ActivationError("synthetic patient ID must be a canonical UUID") from None
+            raise ActivationError(
+                "synthetic patient ID must be a canonical UUID"
+            ) from None
         if patient != self._config.patient_id:
-            raise ActivationError("synthetic patient ID must use canonical lowercase UUID form")
+            raise ActivationError(
+                "synthetic patient ID must use canonical lowercase UUID form"
+            )
         if not self._railway.ssh_keys_available():
             raise ActivationError(
                 "Railway has no registered SSH key for read-only OpenEMR discovery; run "
@@ -843,7 +952,9 @@ class RailwayOpenEMRInspectorImpl:
             elif fields[0] == "ENCOUNTER" and len(fields) == 2:
                 encounters.append(fields[1])
         if len(logging_values) != 1:
-            raise ActivationError("OpenEMR logging attestation was not uniquely available")
+            raise ActivationError(
+                "OpenEMR logging attestation was not uniquely available"
+            )
         if len(clients) != 1:
             raise ActivationError(
                 "replacement SMART client was missing or not uniquely registered"
@@ -877,14 +988,18 @@ class RailwayOpenEMRInspectorImpl:
                 "replacement SMART client is not enabled, private, and secret-backed"
             )
         if skip_ehr_launch != "0":
-            raise ActivationError("replacement SMART client bypasses EHR launch authorization")
+            raise ActivationError(
+                "replacement SMART client bypasses EHR launch authorization"
+            )
         if set(redirect_uri.split("|")) != {self._config.callback_url}:
             raise ActivationError("replacement SMART client redirect URI is not exact")
         grants = {item for item in re.split(r"[|,\s]+", grant_types) if item}
         if grants != REQUIRED_GRANT_TYPES:
             raise ActivationError("replacement SMART client grant types are not exact")
         if set(scopes.split()) != REQUIRED_SMART_SCOPES:
-            raise ActivationError("replacement SMART client scopes are not the exact 16")
+            raise ActivationError(
+                "replacement SMART client scopes are not the exact 16"
+            )
         if not client_id or any(character.isspace() for character in client_id):
             raise ActivationError("replacement SMART client ID is invalid")
         return client_id
@@ -942,13 +1057,13 @@ ORDER BY table_schema;
             "set -eu; "
             "DBUSER=${MYSQLUSER:-${MYSQL_USER:-root}}; "
             "DBPASS=${MYSQLPASSWORD:-${MYSQL_PASSWORD:-${MYSQL_ROOT_PASSWORD:-}}}; "
-            "test -n \"$DBPASS\"; export MYSQL_PWD=\"$DBPASS\"; "
-            f"DB=$(mysql --batch --skip-column-names --raw -u \"$DBUSER\" -e {shlex.quote(schema_sql)}); "
+            'test -n "$DBPASS"; export MYSQL_PWD="$DBPASS"; '
+            f'DB=$(mysql --batch --skip-column-names --raw -u "$DBUSER" -e {shlex.quote(schema_sql)}); '
             "DB_COUNT=$(printf '%s\\n' \"$DB\" | awk 'NF{n++} END{print n+0}'); "
-            "test \"$DB_COUNT\" -eq 1; "
-            f"mysql --batch --skip-column-names --raw -u \"$DBUSER\" \"$DB\" -e {shlex.quote(base_sql)}; "
-            f"mysql --batch --skip-column-names --raw -u \"$DBUSER\" \"$DB\" -e {shlex.quote(client_sql)}; "
-            f"mysql --batch --skip-column-names --raw -u \"$DBUSER\" \"$DB\" -e {shlex.quote(encounter_sql)}"
+            'test "$DB_COUNT" -eq 1; '
+            f'mysql --batch --skip-column-names --raw -u "$DBUSER" "$DB" -e {shlex.quote(base_sql)}; '
+            f'mysql --batch --skip-column-names --raw -u "$DBUSER" "$DB" -e {shlex.quote(client_sql)}; '
+            f'mysql --batch --skip-column-names --raw -u "$DBUSER" "$DB" -e {shlex.quote(encounter_sql)}'
         )
 
 
@@ -962,7 +1077,9 @@ class SeleniumSmartSession:
         self, *, patient_id: str, encounter_id: str
     ) -> Mapping[str, str]:
         if not self._config.oe_password:
-            raise ActivationError("OE_ADMIN_PASS is required in the process environment")
+            raise ActivationError(
+                "OE_ADMIN_PASS is required in the process environment"
+            )
         patient = self._canonical_uuid(patient_id, "synthetic patient")
         encounter = self._canonical_uuid(encounter_id, "synthetic encounter")
         selenium_url = _service_url(self._config.selenium_url, "SELENIUM_URL")
@@ -988,7 +1105,9 @@ class SeleniumSmartSession:
                 {"urls": [f"{self._config.agent_base_url}/chat*"]},
             )
             driver.get(f"{self._config.agent_base_url}/launch")
-            self._require_origin(driver.current_url, self._config.openemr_base_url, "login")
+            self._require_origin(
+                driver.current_url, self._config.openemr_base_url, "login"
+            )
             wait = WebDriverWait(driver, 60)
             wait.until(EC.presence_of_element_located((By.NAME, "username"))).send_keys(
                 self._config.oe_username
@@ -1008,7 +1127,9 @@ class SeleniumSmartSession:
                 driver.current_url, self._config.openemr_base_url, "patient selection"
             )
             buttons = wait.until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "button.patient-btn"))
+                EC.presence_of_all_elements_located(
+                    (By.CSS_SELECTOR, "button.patient-btn")
+                )
             )
             matches = [
                 button
@@ -1031,14 +1152,18 @@ class SeleniumSmartSession:
                 query = parse_qs(parsed.query, keep_blank_values=True)
                 values = query.get("sid", [])
                 if set(query) != {"sid"} or len(values) != 1:
-                    raise ActivationError("agent callback did not return one opaque session")
+                    raise ActivationError(
+                        "agent callback did not return one opaque session"
+                    )
                 if _OPAQUE_SESSION_RE.fullmatch(values[0]) is None:
                     raise ActivationError("agent callback session was not opaque")
                 return values[0]
 
             next_step = wait.until(
-                lambda current: session_from_callback(current)
-                or EC.element_to_be_clickable((By.ID, "authorize-btn"))(current)
+                lambda current: (
+                    session_from_callback(current)
+                    or EC.element_to_be_clickable((By.ID, "authorize-btn"))(current)
+                )
             )
             if isinstance(next_step, str):
                 session_id = next_step
@@ -1071,14 +1196,21 @@ class SeleniumSmartSession:
         if parsed.hostname not in _LOOPBACK_HOSTS:
             return
         try:
-            response = httpx.get(selenium_url.rsplit("/wd/hub", 1)[0] + "/status", timeout=2)
+            response = httpx.get(
+                selenium_url.rsplit("/wd/hub", 1)[0] + "/status", timeout=2
+            )
             if response.status_code == 200:
                 return
         except httpx.HTTPError:
             pass
-        compose = self._config.agent_root.parent / "docker/development-easy/docker-compose.yml"
+        compose = (
+            self._config.agent_root.parent
+            / "docker/development-easy/docker-compose.yml"
+        )
         if not compose.is_file():
-            raise ActivationError("local Selenium is unavailable and compose file is missing")
+            raise ActivationError(
+                "local Selenium is unavailable and compose file is missing"
+            )
         try:
             result = subprocess.run(
                 [
@@ -1120,7 +1252,9 @@ class SeleniumSmartSession:
     def _require_origin(actual: str, expected: str, stage: str) -> None:
         actual_parts = urlsplit(actual)
         expected_parts = urlsplit(expected)
-        actual_port = actual_parts.port or (443 if actual_parts.scheme == "https" else 80)
+        actual_port = actual_parts.port or (
+            443 if actual_parts.scheme == "https" else 80
+        )
         expected_port = expected_parts.port or (
             443 if expected_parts.scheme == "https" else 80
         )

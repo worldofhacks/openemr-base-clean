@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from app.schemas.citations import CitationV2
@@ -97,6 +98,14 @@ def _note(
     return f"copilot-intent:{correlation_marker};payload:{digest}"
 
 
+def _openemr_datetime(value: datetime) -> str:
+    """Render the instant in the legacy route's accepted UTC DATETIME shape."""
+
+    if value.tzinfo is not None and value.utcoffset() is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def build_vital_writes(
     vitals: IntakeVitals,
     *,
@@ -139,7 +148,7 @@ def build_vital_writes(
             )
             continue
 
-        date = measurement_date.isoformat()
+        date = _openemr_datetime(measurement_date)
         payload = VitalsWrite(
             **{field_id: value},
             date=date,

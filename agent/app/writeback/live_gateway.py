@@ -316,11 +316,13 @@ class OpenEMRLiveGateway:
             return None
 
         patient_fhir_id = self._principal.patient_fhir_id or patient_id
+        # This OpenEMR fork's vitals search does not implement the FHIR
+        # ``encounter`` parameter. Keep the server-side patient boundary and
+        # require the exact encounter locally in ``_fhir_vital_matches``.
         bundle = await self._get_json(
             f"{self._base}/fhir/Observation",
             params={
                 "patient": patient_fhir_id,
-                "encounter": encounter_id,
                 "category": "vital-signs",
                 "_count": "100",
             },
@@ -561,17 +563,21 @@ def _standard_vital(row: Mapping[str, object]) -> _StandardVital | None:
     measured_at = _datetime(row.get("date"))
     if measured_at is None:
         return None
-    date = measured_at.isoformat()
+    dates = _datetime_text_variants(measured_at)
     matches: list[tuple[str, Decimal]] = []
     for field_id in _VITAL_FIELDS:
         value = _decimal(row.get(field_id))
         if value is None:
             continue
         for text in _decimal_text_variants(value):
-            candidate = vital_payload_hash({field_id: text, "date": date})
-            if hmac.compare_digest(candidate, noted_hash.casefold()):
-                matches.append((field_id, value))
-                break
+            for date in dates:
+                candidate = vital_payload_hash({field_id: text, "date": date})
+                if hmac.compare_digest(candidate, noted_hash.casefold()):
+                    matches.append((field_id, value))
+                    break
+            else:
+                continue
+            break
     if len(matches) != 1:
         return None
     field_id, value = matches[0]
@@ -610,6 +616,19 @@ def _decimal_text_variants(value: Decimal) -> tuple[str, ...]:
     else:
         variants.extend(f"{whole}.{'0' * count}" for count in range(1, 7))
     return tuple(variants)
+
+
+def _datetime_text_variants(value: datetime) -> tuple[str, ...]:
+    offset = value.isoformat()
+    return tuple(
+        dict.fromkeys(
+            (
+                value.strftime("%Y-%m-%d %H:%M:%S"),
+                offset,
+                offset.replace("+00:00", "Z"),
+            )
+        )
+    )
 
 
 def _datetime(value: object) -> datetime | None:

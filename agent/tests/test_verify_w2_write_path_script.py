@@ -209,7 +209,7 @@ def test_config_requires_exact_owner_context_names_and_committed_synthetic_fixtu
     config = VerificationConfig.from_env(_ENV)
     assert config.agent_base_url == "https://agent.example"
     assert config.lab_fixture.name == "lab-clean-glucose.pdf"
-    assert config.intake_fixture.name == "intake-full-valid.pdf"
+    assert config.intake_fixture.name == "intake-bp-separate-candidates.pdf"
     assert config.lab_fixture.is_file()
     assert config.intake_fixture.is_file()
 

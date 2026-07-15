@@ -101,7 +101,7 @@ class VerificationConfig:
             patient_id=values["W2_VERIFY_PATIENT_ID"].strip(),
             encounter_id=values["W2_VERIFY_ENCOUNTER_ID"].strip(),
             lab_fixture=fixtures / "lab-clean-glucose.pdf",
-            intake_fixture=fixtures / "intake-full-valid.pdf",
+            intake_fixture=fixtures / "intake-bp-separate-candidates.pdf",
         )
         if not config.lab_fixture.is_file() or not config.intake_fixture.is_file():
             raise VerificationError("committed synthetic verification fixtures are missing")

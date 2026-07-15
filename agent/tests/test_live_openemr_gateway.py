@@ -504,13 +504,36 @@ def _vital_note(marker: str, payload_hash: str) -> str:
     return f"copilot-intent:{marker};payload:{payload_hash}"
 
 
-def _vital_resources(note: str, *, weight: float = 180.5) -> dict[str, object]:
+def test_standard_vital_reconciles_openemr_legacy_datetime() -> None:
+    from app.writeback.live_gateway import _standard_vital, vital_payload_hash
+
+    payload = {"weight": "180.5", "date": "2026-07-14 12:00:00"}
+    payload_hash = vital_payload_hash(payload)
+
+    parsed = _standard_vital(
+        {
+            "id": "77",
+            "weight": "180.500000",
+            "date": payload["date"],
+            "note": _vital_note("correlation-synthetic", payload_hash),
+        }
+    )
+
+    assert parsed is not None and parsed.payload_hash == payload_hash
+
+
+def _vital_resources(
+    note: str,
+    *,
+    weight: float = 180.5,
+    encounter_id: str = ENCOUNTER_ID,
+) -> dict[str, object]:
     return _bundle(
         {
             "resourceType": "Observation",
             "id": "panel-uuid",
             "subject": {"reference": f"Patient/{PATIENT_ID}"},
-            "encounter": {"reference": f"Encounter/{ENCOUNTER_ID}"},
+            "encounter": {"reference": f"Encounter/{encounter_id}"},
             "code": {"coding": [{"code": "85353-1"}]},
             "note": [{"text": note}],
             "hasMember": [{"reference": "Observation/weight-uuid"}],
@@ -519,11 +542,34 @@ def _vital_resources(note: str, *, weight: float = 180.5) -> dict[str, object]:
             "resourceType": "Observation",
             "id": "weight-uuid",
             "subject": {"reference": f"Patient/{PATIENT_ID}"},
-            "encounter": {"reference": f"Encounter/{ENCOUNTER_ID}"},
+            "encounter": {"reference": f"Encounter/{encounter_id}"},
             "code": {"coding": [{"code": "29463-7"}]},
             "effectiveDateTime": "2026-07-14T12:00:00+00:00",
             "valueQuantity": {"value": weight, "unit": "lb_av"},
         },
+    )
+
+
+def test_fhir_vital_rejects_same_patient_result_from_wrong_encounter() -> None:
+    from app.writeback.live_gateway import (
+        _fhir_vital_matches,
+        _resources,
+        _standard_vital,
+        vital_payload_hash,
+    )
+
+    payload = {"weight": "180.5", "date": "2026-07-14 12:00:00"}
+    note = _vital_note("correlation-synthetic", vital_payload_hash(payload))
+    standard = _standard_vital(
+        {**payload, "id": "77", "weight": "180.500000", "note": note}
+    )
+
+    assert standard is not None
+    assert not _fhir_vital_matches(
+        _resources(_vital_resources(note, encounter_id="wrong-encounter")),
+        standard=standard,
+        patient_id=PATIENT_ID,
+        encounter_id=ENCOUNTER_ID,
     )
 
 
@@ -628,6 +674,15 @@ async def test_vital_create_list_and_standard_fhir_readback_use_exact_full_hash(
     assert all(
         request.headers["authorization"] == f"Bearer {TOKEN}" for request in requests
     )
+    fhir_requests = [
+        request for request in requests if request.url.path.endswith("/fhir/Observation")
+    ]
+    assert len(fhir_requests) == 1
+    assert dict(fhir_requests[0].url.params) == {
+        "patient": PATIENT_ID,
+        "category": "vital-signs",
+        "_count": "100",
+    }
     assert TOKEN not in caplog.text
     assert "180.5" not in caplog.text
 

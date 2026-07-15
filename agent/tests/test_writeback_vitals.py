@@ -51,6 +51,7 @@ def test_grounded_in_range_vital_maps_without_caller_attribution():
     write = result.writes[0]
     assert write.field_id == "weight"
     assert write.payload.weight == Decimal("180.5")
+    assert write.payload.date == "2026-07-14 12:00:00"
     assert "user" not in write.payload.model_dump()
     assert "group" not in write.payload.model_dump()
     assert write.failure_reason is None

@@ -20,19 +20,42 @@ OpenEMR granted fewer scopes than requested, so the meds/labs/encounter tools ne
 
 from __future__ import annotations
 
-REQUIRED_FHIR_SCOPES: frozenset[str] = frozenset({
-    "user/Patient.read",
-    "user/Condition.read",
-    "user/MedicationRequest.read",
-    "user/AllergyIntolerance.read",
-    "user/Observation.read",
-    "user/Encounter.read",
-})
+REQUIRED_FHIR_SCOPES: frozenset[str] = frozenset(
+    {
+        "user/Patient.read",
+        "user/Condition.read",
+        "user/MedicationRequest.read",
+        "user/AllergyIntolerance.read",
+        "user/Observation.read",
+        "user/Encounter.read",
+    }
+)
 
 # openid identifies the clinician (OIDC sub) that pins the session (D12).
 OIDC_SCOPES: frozenset[str] = frozenset({"openid"})
 
 REQUESTED_SCOPES: frozenset[str] = OIDC_SCOPES | REQUIRED_FHIR_SCOPES
+
+# W2 uses a replacement delegated client rather than widening the carried W1 client.
+# Keeping this manifest separate preserves the frozen W1 minimum-scope contract while
+# making the document runtime's standard-REST + FHIR readback authority explicit
+# (W2-D1/D9; W2_ARCHITECTURE §2/§3).
+W2_DOCUMENT_SCOPES: frozenset[str] = frozenset(
+    {
+        "api:oemr",
+        "user/document.crs",
+        "user/DocumentReference.rs",
+        "user/Binary.read",
+        "user/vital.crus",
+        "user/Observation.rs",
+    }
+)
+W2_LAUNCH_SCOPES: frozenset[str] = frozenset(
+    {"openid", "offline_access", "launch", "launch/patient"}
+)
+W2_REQUESTED_SCOPES: frozenset[str] = (
+    W2_LAUNCH_SCOPES | REQUIRED_FHIR_SCOPES | W2_DOCUMENT_SCOPES
+)
 
 
 class ScopeCoverageError(Exception):
@@ -42,6 +65,12 @@ class ScopeCoverageError(Exception):
 def requested_scope_string() -> str:
     """The space-joined scope string for the authorize request (stable order)."""
     return " ".join(sorted(REQUESTED_SCOPES))
+
+
+def requested_w2_scope_string() -> str:
+    """Exact replacement-client manifest for the enabled document runtime."""
+
+    return " ".join(sorted(W2_REQUESTED_SCOPES))
 
 
 def missing_required_scopes(granted: list[str] | set[str]) -> set[str]:
@@ -55,4 +84,15 @@ def assert_required_scopes_granted(granted: list[str] | set[str]) -> None:
         raise ScopeCoverageError(
             "OpenEMR did not grant all required FHIR read scopes; the affected tools "
             f"would 401 at runtime. Missing: {sorted(missing)}"
+        )
+
+
+def assert_w2_scopes_granted(granted: list[str] | set[str]) -> None:
+    """Fail closed unless the replacement client granted the complete W2 manifest."""
+
+    missing = set(W2_REQUESTED_SCOPES) - set(granted)
+    if missing:
+        raise ScopeCoverageError(
+            "OpenEMR did not grant the complete delegated W2 document scope manifest. "
+            f"Missing: {sorted(missing)}"
         )

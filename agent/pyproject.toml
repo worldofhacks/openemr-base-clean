@@ -9,6 +9,8 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.5",
     "httpx>=0.27",
+    # Multipart document uploads for POST /documents (W2_ARCHITECTURE §2a).
+    "python-multipart>=0.0.20,<0.1",
     # LLM provider (Zone C, D4). Reached only through app/llm/provider.py's
     # llm.complete() seam, so the model is swappable by config, not code.
     "anthropic>=0.40",
@@ -19,6 +21,9 @@ dependencies = [
     # (clinician, patient) pin; lazy-imported in the composition root so it is never a hard
     # import dependency for the route tests (which inject a fake service).
     "asyncpg>=0.29",
+    # Authenticated encryption for the patient/clinician-bound delegated-job
+    # credential (W2-D1/D9; §3). Keys are environment-only SecretStr values.
+    "cryptography>=44,<47",
     # W2 orchestration framework (W2-R1, W2-D2 — binding). Supervisor + worker graph
     # lives in app/orchestrator/graph.py (W2-M3); the W1 direct loop runs unchanged
     # inside a worker node. Pre-staged on swarm/w2-wave0 so W2-M1 (container) and
@@ -51,6 +56,8 @@ dependencies = [
     # (License verification) and .tdd-swarm/gates.md Tier-2 Dependency check.
     # AGPL stays hard-banned at every level (PyMuPDF); no torch anywhere.
     "fastembed>=0.8,<0.9",
+    # Sparse half of the W2-D4 hybrid retriever (Apache-2.0; pure Python).
+    "rank-bm25>=0.2.2,<0.3",
 ]
 
 [project.optional-dependencies]

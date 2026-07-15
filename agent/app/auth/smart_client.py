@@ -19,10 +19,12 @@ import secrets
 from urllib.parse import urlencode
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, SecretStr
 
-# The ONLY grant type the agent is permitted to use (F-S.5 / D9).
+# Interactive exchange uses authorization_code. Background work may use only the
+# corresponding delegated refresh_token grant; client_credentials is never accepted.
 DELEGATED_GRANT_TYPE = "authorization_code"
+DELEGATED_REFRESH_GRANT_TYPE = "refresh_token"
 
 
 class SmartAuthError(Exception):
@@ -32,6 +34,14 @@ class SmartAuthError(Exception):
 class CoPilotNotEnabledError(SmartAuthError):
     """The OAuth client is disabled/unrecognized (D14: user-scoped apps register
     disabled until an admin enables them). Surfaced explicitly, never as a hang (§6)."""
+
+
+class DelegatedRefreshExpired(SmartAuthError):
+    """The user's refresh token expired/revoked; a fresh SMART launch is required."""
+
+
+class SmartAuthUnavailable(SmartAuthError):
+    """The token endpoint could not complete a delegated refresh right now."""
 
 
 def forbid_nondelegated_grant(grant_type: str) -> None:
@@ -75,8 +85,14 @@ def _clinician_sub_from_id_token(id_token: str | None) -> str | None:
 
 def generate_pkce() -> tuple[str, str, str]:
     """Return (code_verifier, code_challenge, method) for PKCE S256 (RFC 7636)."""
-    verifier = base64.urlsafe_b64encode(secrets.token_bytes(64)).rstrip(b"=").decode()[:96]
-    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    verifier = (
+        base64.urlsafe_b64encode(secrets.token_bytes(64)).rstrip(b"=").decode()[:96]
+    )
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+        .rstrip(b"=")
+        .decode()
+    )
     return verifier, challenge, "S256"
 
 
@@ -89,6 +105,7 @@ class TokenResponse(BaseModel):
     access_token: SecretStr
     token_type: str = "Bearer"
     expires_in: int | None = None
+    refresh_expires_in: int | None = None
     scope: str = ""
     patient: str | None = None  # SMART launch/patient context, when present
     refresh_token: SecretStr | None = None
@@ -101,7 +118,9 @@ class TokenResponse(BaseModel):
         return self.scope.split()
 
     def auth_header(self) -> dict[str, str]:
-        return {"Authorization": f"{self.token_type} {self.access_token.get_secret_value()}"}
+        return {
+            "Authorization": f"{self.token_type} {self.access_token.get_secret_value()}"
+        }
 
 
 class SmartClient:
@@ -158,13 +177,60 @@ class SmartClient:
             "client_secret": self._client_secret,
             "code_verifier": code_verifier,
         }
-        headers = {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"}
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+        }
         resp = await self._post_token(data, headers)
         return self._parse_token_response(resp)
 
+    async def refresh_token(self, *, refresh_token: SecretStr) -> TokenResponse:
+        """Refresh the same clinician delegation; never substitute a service principal.
+
+        The request has no path for ``client_credentials`` and failures deliberately omit
+        both the refresh value and the token endpoint response body.
+        """
+        data = {
+            "grant_type": DELEGATED_REFRESH_GRANT_TYPE,
+            "refresh_token": refresh_token.get_secret_value(),
+            "client_id": self._client_id,
+            "client_secret": self._client_secret,
+        }
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+        }
+        try:
+            resp = await self._post_token(data, headers)
+        except httpx.HTTPError as exc:
+            raise SmartAuthUnavailable("delegated token refresh unavailable") from exc
+        if resp.status_code in {400, 401}:
+            raise DelegatedRefreshExpired(
+                "delegated refresh expired; clinician reauthorization required"
+            )
+        if resp.status_code != 200:
+            raise SmartAuthUnavailable(
+                f"delegated token refresh unavailable (HTTP {resp.status_code})"
+            )
+        try:
+            payload = resp.json()
+        except Exception as exc:  # noqa: BLE001 - response bodies never cross this seam
+            raise SmartAuthUnavailable(
+                "delegated token refresh returned an invalid response"
+            ) from exc
+        if not isinstance(payload, dict) or "access_token" not in payload:
+            raise SmartAuthUnavailable(
+                "delegated token refresh returned an invalid response"
+            )
+        fields = {k: payload[k] for k in TokenResponse.model_fields if k in payload}
+        fields["clinician_sub"] = _clinician_sub_from_id_token(payload.get("id_token"))
+        return TokenResponse(**fields)
+
     async def _post_token(self, data: dict, headers: dict) -> httpx.Response:
         if self._http is not None:
-            return await self._http.post(self._token_endpoint, data=data, headers=headers)
+            return await self._http.post(
+                self._token_endpoint, data=data, headers=headers
+            )
         async with httpx.AsyncClient(timeout=10.0) as client:
             return await client.post(self._token_endpoint, data=data, headers=headers)
 
@@ -177,7 +243,9 @@ class SmartClient:
         try:
             payload = resp.json()
         except Exception as exc:  # noqa: BLE001
-            raise SmartAuthError(f"token endpoint returned non-JSON (HTTP {resp.status_code})") from exc
+            raise SmartAuthError(
+                f"token endpoint returned non-JSON (HTTP {resp.status_code})"
+            ) from exc
         if resp.status_code != 200 or "access_token" not in payload:
             # Never surface the raw error to a user; describe the failed operation (§ error handling).
             raise SmartAuthError(f"token exchange failed (HTTP {resp.status_code})")

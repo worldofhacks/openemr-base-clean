@@ -26,10 +26,6 @@ _W2 = {
     "source_document_category_acl": "patients|docs",
     "artifact_document_category_id": "artifact-category-synthetic",
     "artifact_document_category_acl": "patients|docs",
-    "openemr_legacy_patient_uuid": "11111111-1111-4111-8111-111111111111",
-    "openemr_legacy_patient_id": "731",
-    "openemr_legacy_encounter_uuid": "22222222-2222-4222-8222-222222222222",
-    "openemr_legacy_encounter_id": "912",
     "openemr_binary_readback_safe": True,
     "document_credential_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 }
@@ -54,10 +50,6 @@ def test_w2_runtime_config_is_typed_and_path_pinned() -> None:
         "source_document_category_acl",
         "artifact_document_category_id",
         "artifact_document_category_acl",
-        "openemr_legacy_patient_uuid",
-        "openemr_legacy_patient_id",
-        "openemr_legacy_encounter_uuid",
-        "openemr_legacy_encounter_id",
         "openemr_binary_readback_safe",
         "document_credential_key",
     ),
@@ -87,22 +79,21 @@ def test_w2_rest_url_rejects_plaintext() -> None:
         Settings(**{**_W2, "openemr_rest_base_url": "http://openemr.test/apis/default"})
 
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    (
-        ("openemr_legacy_patient_uuid", "not-a-uuid"),
-        ("openemr_legacy_patient_uuid", "11111111-1111-4111-8111-11111111111A"),
-        ("openemr_legacy_patient_id", "0"),
-        ("openemr_legacy_patient_id", "0731"),
-        ("openemr_legacy_encounter_uuid", "not-a-uuid"),
-        ("openemr_legacy_encounter_id", "9.12"),
-    ),
-)
-def test_w2_legacy_route_attestations_are_canonical(
-    field: str, value: str
-) -> None:
-    with pytest.raises(ValidationError):
-        Settings(**{**_W2, field: value})
+def test_enabled_runtime_does_not_require_one_global_patient_or_encounter() -> None:
+    settings = Settings(
+        **{
+            **_W2,
+            # Retired Railway values cannot influence the new resolver even during
+            # rolling cleanup because unknown environment keys are ignored.
+            "openemr_legacy_patient_uuid": "not-a-uuid",
+            "openemr_legacy_patient_id": "0",
+            "openemr_legacy_encounter_uuid": "not-a-uuid",
+            "openemr_legacy_encounter_id": "0",
+        }
+    )
+
+    assert settings.w2_document_runtime_enabled is True
+    assert not hasattr(settings, "openemr_legacy_patient_uuid")
 
 
 @pytest.mark.parametrize(

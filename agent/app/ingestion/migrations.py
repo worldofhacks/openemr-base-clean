@@ -9,6 +9,7 @@ _MIGRATIONS = (
     "003_document_jobs.sql",
     "004_extraction_refs.sql",
     "005_job_credentials.sql",
+    "006_route_attestations.sql",
 )
 
 

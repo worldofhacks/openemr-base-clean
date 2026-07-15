@@ -19,7 +19,10 @@ from app.schemas.extraction_report import DocumentExtractionReport
 from app.session.store import Session
 
 
-def _session(patient_id: str = "patient-synthetic") -> Session:
+def _session(
+    patient_id: str = "patient-synthetic",
+    encounter_id: str | None = None,
+) -> Session:
     now = datetime.now(timezone.utc)
     return Session(
         session_id="session-synthetic",
@@ -30,6 +33,7 @@ def _session(patient_id: str = "patient-synthetic") -> Session:
         token_expires_at=now + timedelta(hours=1),
         idle_timeout_s=1800,
         turn_cap=20,
+        encounter_id=encounter_id,
     )
 
 
@@ -54,6 +58,9 @@ class _LaunchServices:
     async def resolve_session(self, session_id: str) -> Session:
         assert session_id == "session-synthetic"
         return _session()
+
+    async def resolve_document_route_context(self, session: Session):
+        return True, session.encounter_id
 
 
 def _app_client(complete_env, services: object) -> TestClient:
@@ -115,13 +122,14 @@ def test_week2_page_disables_document_write_for_unattested_selected_patient():
     class Services:
         settings = SimpleNamespace(
             w2_document_runtime_enabled=True,
-            openemr_legacy_patient_uuid="patient-attested",
-            openemr_legacy_encounter_uuid="encounter-attested",
         )
 
         async def resolve_session(self, session_id: str) -> Session:
             assert session_id == "session-synthetic"
             return _session(patient_id="patient-selected")
+
+        async def resolve_document_route_context(self, session: Session):
+            return False, None
 
     app = FastAPI()
     app.state.services = Services()
@@ -133,9 +141,36 @@ def test_week2_page_disables_document_write_for_unattested_selected_patient():
     assert response.status_code == 200
     assert '"write_path_attested":false' in response.text
     assert "Document write is unavailable for this selected chart" in response.text
+    assert "Refresh the synthetic route attestations" in response.text
     assert 'byId("upload").disabled = true' in response.text
-    assert "patient-attested" not in response.text
-    assert "encounter-attested" not in response.text
+
+
+def test_week2_page_uses_only_attested_smart_encounter_context():
+    from app.routes.week2_ui import router
+
+    encounter_id = "22222222-2222-4222-8222-222222222222"
+
+    class Services:
+        settings = SimpleNamespace(w2_document_runtime_enabled=True)
+
+        async def resolve_session(self, session_id: str) -> Session:
+            assert session_id == "session-synthetic"
+            return _session(encounter_id=encounter_id)
+
+        async def resolve_document_route_context(self, session: Session):
+            assert session.encounter_id == encounter_id
+            return True, encounter_id
+
+    app = FastAPI()
+    app.state.services = Services()
+    app.include_router(router)
+
+    with TestClient(app) as client:
+        response = client.get("/week2", params={"sid": "session-synthetic"})
+
+    assert response.status_code == 200
+    assert '"write_path_attested":true' in response.text
+    assert f'"encounter_id":"{encounter_id}"' in response.text
 
 
 class _Documents:

@@ -86,28 +86,30 @@ class CategoryAttestation:
 
 @dataclass(frozen=True)
 class LegacyRouteAttestation:
-    """Exact UUID→numeric bindings for OpenEMR's legacy write routes."""
+    """One resolved patient route and, when supplied, one owned encounter route."""
 
     patient_uuid: str
     patient_id: str
-    encounter_uuid: str
-    encounter_id: str
+    encounter_uuid: str | None = None
+    encounter_id: str | None = None
 
     def __post_init__(self) -> None:
-        for name, value in (
-            ("patient_uuid", self.patient_uuid),
-            ("encounter_uuid", self.encounter_uuid),
-        ):
+        if (self.encounter_uuid is None) != (self.encounter_id is None):
+            raise ValueError("encounter route UUID and ID must be supplied together")
+        uuid_values = [("patient_uuid", self.patient_uuid)]
+        if self.encounter_uuid is not None:
+            uuid_values.append(("encounter_uuid", self.encounter_uuid))
+        for name, value in uuid_values:
             try:
                 canonical = str(UUID(value))
             except (ValueError, TypeError, AttributeError):
                 raise ValueError(f"{name} must be a canonical UUID") from None
             if canonical != value:
                 raise ValueError(f"{name} must be a canonical UUID")
-        for name, value in (
-            ("patient_id", self.patient_id),
-            ("encounter_id", self.encounter_id),
-        ):
+        legacy_values = [("patient_id", self.patient_id)]
+        if self.encounter_id is not None:
+            legacy_values.append(("encounter_id", self.encounter_id))
+        for name, value in legacy_values:
             if not isinstance(value, str) or _LEGACY_ID.fullmatch(value) is None:
                 raise ValueError(f"{name} must be a positive canonical decimal")
 
@@ -130,6 +132,14 @@ class LiveGatewayError(RuntimeError):
 
 class PatientRouteMismatch(LiveGatewayError):
     """The delegated patient lacks the exact attested UUID→pid route binding."""
+
+    reason = FailureReason.PATIENT_MISMATCH
+
+
+class EncounterRouteMismatch(LiveGatewayError):
+    """The requested encounter lacks an attested route owned by this patient."""
+
+    reason = FailureReason.ENCOUNTER_MISMATCH
 
 
 class BinaryReadbackUnsafe(LiveGatewayError):
@@ -390,11 +400,17 @@ class OpenEMRLiveGateway:
         return self._legacy_routes.patient_id
 
     def _legacy_encounter_id(self, encounter_id: str) -> str:
-        if not hmac.compare_digest(
-            self._legacy_routes.encounter_uuid, encounter_id
+        attested_uuid = self._legacy_routes.encounter_uuid
+        attested_id = self._legacy_routes.encounter_id
+        if (
+            attested_uuid is None
+            or attested_id is None
+            or not hmac.compare_digest(attested_uuid, encounter_id)
         ):
-            raise LiveGatewayError("OpenEMR encounter mapping did not match delegation")
-        return self._legacy_routes.encounter_id
+            raise EncounterRouteMismatch(
+                "OpenEMR encounter mapping did not match the pinned patient"
+            )
+        return attested_id
 
     def _require_attestation(
         self, category_path: str, *, writable: bool

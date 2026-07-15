@@ -133,12 +133,14 @@ async def test_exchange_code_parses_token_and_launch_patient_context():
             "access_token": "AT-xyz", "token_type": "Bearer", "expires_in": 3600,
             "scope": "openid user/Patient.read user/Condition.read",
             "patient": "a234b786-539a-4f9a-96a0-432293226f02", "refresh_token": "RT",
+            "encounter": "b345c897-64ab-4f9a-86b1-543394337f13",
         })
 
     tok = await _client(handler).exchange_code(code="c", code_verifier="v")
     assert isinstance(tok, TokenResponse)
     assert tok.access_token.get_secret_value() == "AT-xyz"
     assert tok.patient == "a234b786-539a-4f9a-96a0-432293226f02"   # launch/patient bound
+    assert tok.encounter == "b345c897-64ab-4f9a-86b1-543394337f13"
     assert "user/Condition.read" in tok.scopes
     assert "AT-xyz" not in repr(tok)                                # token never leaks via repr
 

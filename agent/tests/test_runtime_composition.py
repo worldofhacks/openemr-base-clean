@@ -30,10 +30,6 @@ def _settings_values() -> dict[str, object]:
         "source_document_category_acl": "patients|docs",
         "artifact_document_category_id": "artifact-category-synthetic",
         "artifact_document_category_acl": "patients|docs",
-        "openemr_legacy_patient_uuid": "11111111-1111-4111-8111-111111111111",
-        "openemr_legacy_patient_id": "731",
-        "openemr_legacy_encounter_uuid": "22222222-2222-4222-8222-222222222222",
-        "openemr_legacy_encounter_id": "912",
         "openemr_binary_readback_safe": True,
         "document_credential_key": _KEY,
     }
@@ -260,8 +256,18 @@ async def test_document_runtime_probe_requires_fresh_dedicated_worker_heartbeat(
             assert max_age_seconds == 120
             return False, "worker_heartbeat_missing"
 
+    class Routes:
+        async def healthcheck(self) -> bool:
+            return True
+
     runtime = type(
-        "Runtime", (), {"credential_vault": Vault(), "heartbeat_store": Heartbeats()}
+        "Runtime",
+        (),
+        {
+            "credential_vault": Vault(),
+            "heartbeat_store": Heartbeats(),
+            "route_resolver": Routes(),
+        },
     )()
     services = object.__new__(AgentServices)
     services.settings = type(
@@ -275,6 +281,30 @@ async def test_document_runtime_probe_requires_fresh_dedicated_worker_heartbeat(
     result = await services.probe_document_runtime(services.settings)
     assert result == DependencyResult(
         "document_runtime", "hard", False, "worker_heartbeat_missing"
+    )
+
+
+@pytest.mark.asyncio
+async def test_document_runtime_probe_fails_closed_when_route_registry_is_empty() -> None:
+    from app.health import DependencyResult
+    from app.service import AgentServices
+
+    class Routes:
+        async def healthcheck(self) -> bool:
+            return False
+
+    runtime = type("Runtime", (), {"route_resolver": Routes()})()
+    services = object.__new__(AgentServices)
+    services.settings = type(
+        "Settings", (), {"w2_document_runtime_enabled": True}
+    )()
+    services._document_schema_ready = True
+    services.document_runtime = runtime
+
+    result = await services.probe_document_runtime(services.settings)
+
+    assert result == DependencyResult(
+        "document_runtime", "hard", False, "route_attestations_unavailable"
     )
 
 

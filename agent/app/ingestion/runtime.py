@@ -61,11 +61,19 @@ from app.writeback.intents import ExactlyOnceWriter, PostgresIntentRepository
 from app.writeback.live_gateway import (
     BinaryReadGuard,
     CategoryAttestation,
+    EncounterRouteMismatch,
     LegacyRouteAttestation,
     OpenEMRLiveGateway,
+    PatientRouteMismatch,
 )
 from app.writeback.preflight import CategoryExpectation
 from app.writeback.rest_client import DelegatedPrincipal
+from app.writeback.route_attestations import (
+    EncounterRouteBinding,
+    PatientRouteBinding,
+    PostgresRouteAttestationRepository,
+    RouteAttestationNotFound,
+)
 from app.writeback.source_loader import OpenEMRSourceLoader
 from app.writeback.transports import (
     ExtractionArtifactTransport,
@@ -94,6 +102,22 @@ class CredentialVault(Protocol):
     ) -> DelegatedPrincipal: ...
 
     async def probe(self) -> bool: ...
+
+
+class RouteAttestationResolver(Protocol):
+    async def resolve_patient(
+        self, patient_uuid: str, *, generation_id: str | None = None
+    ) -> PatientRouteBinding: ...
+
+    async def resolve_encounter(
+        self,
+        patient_uuid: str,
+        encounter_uuid: str,
+        *,
+        generation_id: str | None = None,
+    ) -> EncounterRouteBinding: ...
+
+    async def healthcheck(self) -> bool: ...
 
 
 class PostgresDocumentWorkerHeartbeatStore:
@@ -158,9 +182,15 @@ class PostgresDocumentWorkerHeartbeatStore:
 
 
 class _GatewayFactory:
-    def __init__(self, settings: Settings, credentials: CredentialVault) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        credentials: CredentialVault,
+        route_resolver: RouteAttestationResolver,
+    ) -> None:
         self._settings = settings
         self._credentials = credentials
+        self._route_resolver = route_resolver
         source_id = settings.source_document_category_id
         artifact_id = settings.artifact_document_category_id
         rest_base = settings.openemr_rest_base_url
@@ -181,46 +211,61 @@ class _GatewayFactory:
                 settings.artifact_document_category_acl == "patients|docs",
             ),
         )
-        self._legacy_routes = LegacyRouteAttestation(
-            patient_uuid=_required(
-                settings.openemr_legacy_patient_uuid,
-                "OPENEMR_LEGACY_PATIENT_UUID",
-            ),
-            patient_id=_required(
-                settings.openemr_legacy_patient_id,
-                "OPENEMR_LEGACY_PATIENT_ID",
-            ),
-            encounter_uuid=_required(
-                settings.openemr_legacy_encounter_uuid,
-                "OPENEMR_LEGACY_ENCOUNTER_UUID",
-            ),
-            encounter_id=_required(
-                settings.openemr_legacy_encounter_id,
-                "OPENEMR_LEGACY_ENCOUNTER_ID",
-            ),
-        )
-
     async def for_record(self, record: DocumentRecord) -> OpenEMRLiveGateway:
         principal = await self._credentials.principal_for(
             record.credential_ref, expected_patient_id=record.patient_id
         )
-        return self._new(principal)
+        routes = await self._resolved_routes(record.patient_id, record.encounter_id)
+        return self._new(principal, routes)
 
     async def for_session(
-        self, session: Session
+        self, session: Session, *, encounter_id: str | None
     ) -> tuple[str, DelegatedPrincipal, OpenEMRLiveGateway]:
         credential_ref = await self._credentials.reference_for_session(session)
         principal = await self._credentials.principal_for(
             credential_ref, expected_patient_id=session.patient_id
         )
-        return credential_ref, principal, self._new(principal)
+        routes = await self._resolved_routes(session.patient_id, encounter_id)
+        return credential_ref, principal, self._new(principal, routes)
 
-    def _new(self, principal: DelegatedPrincipal) -> OpenEMRLiveGateway:
+    async def _resolved_routes(
+        self, patient_id: str, encounter_id: str | None
+    ) -> LegacyRouteAttestation:
+        try:
+            patient = await self._route_resolver.resolve_patient(patient_id)
+        except RouteAttestationNotFound as exc:
+            raise PatientRouteMismatch(
+                "selected patient has no attested OpenEMR route"
+            ) from exc
+        encounter = None
+        if encounter_id is not None:
+            try:
+                encounter = await self._route_resolver.resolve_encounter(
+                    patient_id,
+                    encounter_id,
+                    generation_id=patient.generation_id,
+                )
+            except RouteAttestationNotFound as exc:
+                raise EncounterRouteMismatch(
+                    "encounter has no route attested for the pinned patient"
+                ) from exc
+        return LegacyRouteAttestation(
+            patient_uuid=patient.patient_uuid,
+            patient_id=patient.legacy_patient_id,
+            encounter_uuid=(None if encounter is None else encounter.encounter_uuid),
+            encounter_id=(
+                None if encounter is None else encounter.legacy_encounter_id
+            ),
+        )
+
+    def _new(
+        self, principal: DelegatedPrincipal, routes: LegacyRouteAttestation
+    ) -> OpenEMRLiveGateway:
         return OpenEMRLiveGateway(
             base_url=self._base_url,
             principal=principal,
             category_attestations=self._attestations,
-            legacy_route_attestation=self._legacy_routes,
+            legacy_route_attestation=routes,
             # Settings validation admits enabled runtime only after the deploy attests
             # non-DEBUG Binary readback. No raw setting or response enters logs.
             binary_guard=BinaryReadGuard("attested-non-debug"),
@@ -238,13 +283,14 @@ class _DynamicDocumentPipeline:
         intent_repository: PostgresIntentRepository,
         artifact_store: PostgresArtifactStore,
         credentials: CredentialVault,
+        route_resolver: RouteAttestationResolver,
         vlm: AnthropicVlmExtractor,
     ) -> None:
         self._settings = settings
         self._repository = repository
         self._intents = intent_repository
         self._artifacts = artifact_store
-        self._gateways = _GatewayFactory(settings, credentials)
+        self._gateways = _GatewayFactory(settings, credentials, route_resolver)
         self._vlm = vlm
 
     async def extract_document(
@@ -262,6 +308,8 @@ class _DynamicDocumentPipeline:
             raise PipelineFailure(FailureReason.AUTH_EXPIRED) from exc
         except JobCredentialBindingError as exc:
             raise PipelineFailure(FailureReason.PATIENT_MISMATCH) from exc
+        except (PatientRouteMismatch, EncounterRouteMismatch) as exc:
+            raise PipelineFailure(exc.reason) from exc
         except JobCredentialUnavailable:
             # Storage/crypto availability may recover; the processor's bounded generic
             # failure path releases the lease and retries. It is never mislabeled as a
@@ -321,12 +369,13 @@ class _DocumentOperationsFacade:
         intent_repository: PostgresIntentRepository,
         artifact_store: PostgresArtifactStore,
         credentials: CredentialVault,
+        route_resolver: RouteAttestationResolver,
     ) -> None:
         self._settings = settings
         self._repository = repository
         self._intents = intent_repository
         self._artifacts = artifact_store
-        self._gateways = _GatewayFactory(settings, credentials)
+        self._gateways = _GatewayFactory(settings, credentials, route_resolver)
         self._renderer = EphemeralPageRenderer(
             repository, fetch_source=self._fetch_source
         )
@@ -339,7 +388,9 @@ class _DocumentOperationsFacade:
         encounter_id: str | None,
         correlation_id: str,
     ) -> DocumentSubmission:
-        credential_ref, principal, gateway = await self._gateways.for_session(session)
+        credential_ref, principal, gateway = await self._gateways.for_session(
+            session, encounter_id=encounter_id
+        )
         backend = OpenEMRDocumentBackend(
             gateway, category_path=self._settings.source_document_path
         )
@@ -521,6 +572,7 @@ class DocumentRuntime:
     documents: DocumentOperations
     credential_vault: CredentialVault
     heartbeat_store: PostgresDocumentWorkerHeartbeatStore
+    route_resolver: PostgresRouteAttestationRepository
 
 
 def build_document_runtime(
@@ -533,6 +585,7 @@ def build_document_runtime(
     repository = PostgresDocumentRepository(connect)
     intents = PostgresIntentRepository(connect)
     artifacts = PostgresArtifactStore(connect)
+    routes = PostgresRouteAttestationRepository(connect)
     vlm = AnthropicVlmExtractor(provider)
     pipeline = _DynamicDocumentPipeline(
         settings=settings,
@@ -540,6 +593,7 @@ def build_document_runtime(
         intent_repository=intents,
         artifact_store=artifacts,
         credentials=credential_vault,
+        route_resolver=routes,
         vlm=vlm,
     )
     heartbeats = PostgresDocumentWorkerHeartbeatStore(connect)
@@ -558,6 +612,7 @@ def build_document_runtime(
         intent_repository=intents,
         artifact_store=artifacts,
         credentials=credential_vault,
+        route_resolver=routes,
     )
     return DocumentRuntime(
         repository=repository,
@@ -567,6 +622,7 @@ def build_document_runtime(
         documents=documents,
         credential_vault=credential_vault,
         heartbeat_store=heartbeats,
+        route_resolver=routes,
     )
 
 

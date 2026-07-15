@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from functools import lru_cache
 from urllib.parse import urlsplit
-from uuid import UUID
 
 from cryptography.fernet import Fernet
 from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
@@ -101,13 +100,6 @@ class Settings(BaseSettings):
     artifact_document_path: str = "/AI-Extractions"
     artifact_document_category_id: str | None = None
     artifact_document_category_acl: str | None = None
-    # OpenEMR's document/vital standard routes use legacy numeric pid/eid even
-    # though SMART/FHIR binds the session with UUIDs. Activation discovers these
-    # exact synthetic-only pairs read-only; any other UUID fails closed.
-    openemr_legacy_patient_uuid: str | None = None
-    openemr_legacy_patient_id: str | None = None
-    openemr_legacy_encounter_uuid: str | None = None
-    openemr_legacy_encounter_id: str | None = None
     openemr_binary_readback_safe: bool = False
     document_credential_key: SecretStr | None = Field(
         default=None,
@@ -148,35 +140,6 @@ class Settings(BaseSettings):
             ) from exc
         return value
 
-    @field_validator(
-        "openemr_legacy_patient_uuid", "openemr_legacy_encounter_uuid"
-    )
-    @classmethod
-    def _require_canonical_uuid(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        try:
-            canonical = str(UUID(value))
-        except (ValueError, TypeError, AttributeError) as exc:
-            raise ValueError("legacy route UUID must be canonical") from exc
-        if canonical != value:
-            raise ValueError("legacy route UUID must be canonical")
-        return value
-
-    @field_validator("openemr_legacy_patient_id", "openemr_legacy_encounter_id")
-    @classmethod
-    def _require_canonical_legacy_id(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if (
-            not value.isascii()
-            or not value.isdecimal()
-            or int(value) <= 0
-            or str(int(value)) != value
-        ):
-            raise ValueError("legacy route ID must be a positive canonical decimal")
-        return value
-
     @model_validator(mode="after")
     def _require_complete_document_runtime(self) -> "Settings":
         if not self.w2_document_runtime_enabled:
@@ -205,14 +168,6 @@ class Settings(BaseSettings):
             missing.append("ARTIFACT_DOCUMENT_CATEGORY_ID")
         if self.artifact_document_category_acl != "patients|docs":
             missing.append("ARTIFACT_DOCUMENT_CATEGORY_ACL=patients|docs")
-        if self.openemr_legacy_patient_uuid is None:
-            missing.append("OPENEMR_LEGACY_PATIENT_UUID")
-        if self.openemr_legacy_patient_id is None:
-            missing.append("OPENEMR_LEGACY_PATIENT_ID")
-        if self.openemr_legacy_encounter_uuid is None:
-            missing.append("OPENEMR_LEGACY_ENCOUNTER_UUID")
-        if self.openemr_legacy_encounter_id is None:
-            missing.append("OPENEMR_LEGACY_ENCOUNTER_ID")
         if not self.openemr_binary_readback_safe:
             missing.append("OPENEMR_BINARY_READBACK_SAFE=true")
         if self.document_credential_key is None:

@@ -46,6 +46,7 @@ from app.schemas.workers import WorkerInput, WorkerOutput
 from app.session.store import PostgresSessionStore, Session
 from app.tools.fhir_client import FhirClient
 from app.tools.fhir_tools import run_previsit_fanout
+from app.writeback.route_attestations import RouteAttestationNotFound
 from corpus.retrieval import (
     HybridRetriever,
     QueryContractError,
@@ -245,6 +246,14 @@ class AgentServices:
                 "document_runtime", "hard", False, "composition_unavailable"
             )
         try:
+            routes_ready = await runtime.route_resolver.healthcheck()
+        except Exception:  # noqa: BLE001 - content-free fail-closed diagnostic
+            routes_ready = False
+        if not routes_ready:
+            return DependencyResult(
+                "document_runtime", "hard", False, "route_attestations_unavailable"
+            )
+        try:
             crypto_ready = await runtime.credential_vault.probe()
         except Exception:  # noqa: BLE001 - readiness emits no secret-bearing diagnostic
             return DependencyResult(
@@ -340,6 +349,7 @@ class AgentServices:
         session = await self.sessions.create(
             clinician_sub=token.clinician_sub or "openemr-clinician",
             patient_id=patient_id,
+            encounter_id=token.encounter,
             token_expires_at=token_deadline,
         )
         runtime = getattr(self, "document_runtime", None)
@@ -367,6 +377,35 @@ class AgentServices:
 
     async def resolve_session(self, session_id: str) -> Session:
         return await self.sessions.get(session_id)
+
+    async def resolve_document_route_context(
+        self, session: Session
+    ) -> tuple[bool, str | None]:
+        """Resolve only the pinned SMART patient and optional SMART encounter.
+
+        Unknown patients remain read-only. An absent or newly-created/unattested
+        encounter never becomes an ambient "latest" encounter; the UI stays
+        artifact-only until activation refreshes the registry.
+        """
+
+        runtime = self.document_runtime
+        if runtime is None:
+            return False, None
+        try:
+            patient = await runtime.route_resolver.resolve_patient(session.patient_id)
+        except RouteAttestationNotFound:
+            return False, None
+        if session.encounter_id is None:
+            return True, None
+        try:
+            await runtime.route_resolver.resolve_encounter(
+                session.patient_id,
+                session.encounter_id,
+                generation_id=patient.generation_id,
+            )
+        except RouteAttestationNotFound:
+            return True, None
+        return True, session.encounter_id
 
     def get_evidence_retriever(self) -> HybridRetriever:
         """Return the process-wide, integrity-checked retriever, initialized lazily."""

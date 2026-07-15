@@ -30,9 +30,11 @@ class _Smart:
 class _Sessions:
     def __init__(self) -> None:
         self.created = 0
+        self.last_create: dict[str, object] | None = None
 
-    async def create(self, **_kwargs):
+    async def create(self, **kwargs):
         self.created += 1
+        self.last_create = kwargs
         return type("Session", (), {"session_id": "session-synthetic"})()
 
 
@@ -162,6 +164,26 @@ async def test_callback_accepts_complete_w2_grant() -> None:
 
     assert services.sessions.created == 1
     assert set(services._tokens["session-synthetic"].scopes) == W2_REQUESTED_SCOPES
+
+
+@pytest.mark.asyncio
+async def test_callback_persists_optional_smart_encounter_with_patient_pin() -> None:
+    token = TokenResponse(
+        access_token="synthetic-token",
+        scope=" ".join(sorted(W2_REQUESTED_SCOPES)),
+        patient="patient-synthetic",
+        encounter="encounter-synthetic",
+        clinician_sub="Practitioner/synthetic",
+    )
+    services = _services(enabled=True, token=token)
+    services._pkce["state-synthetic"] = "verifier-synthetic"
+    services._token_deadline = lambda: datetime.now(timezone.utc) + timedelta(hours=1)
+
+    await services.complete_callback(code="code-synthetic", state="state-synthetic")
+
+    assert services.sessions.last_create is not None
+    assert services.sessions.last_create["patient_id"] == "patient-synthetic"
+    assert services.sessions.last_create["encounter_id"] == "encounter-synthetic"
 
 
 @pytest.mark.asyncio

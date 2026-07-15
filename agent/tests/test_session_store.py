@@ -37,6 +37,7 @@ def _session(**kw) -> Session:
         idle_timeout_s=1800,
         turn_cap=20,
         turns_used=0,
+        encounter_id=None,
     )
     base.update(kw)
     return Session(**base)
@@ -86,6 +87,20 @@ async def test_create_pins_session_to_clinician_and_patient():
 
 
 @pytest.mark.asyncio
+async def test_create_persists_optional_smart_encounter_context():
+    store = InMemorySessionStore(now=lambda: T0)
+    session = await store.create(
+        clinician_sub="clinician-A",
+        patient_id="patient-A",
+        encounter_id="encounter-A",
+        token_expires_at=T0 + timedelta(hours=1),
+    )
+
+    assert session.encounter_id == "encounter-A"
+    assert (await store.get(session.session_id)).encounter_id == "encounter-A"
+
+
+@pytest.mark.asyncio
 async def test_get_expired_session_is_refused():
     store = InMemorySessionStore(now=lambda: T0)
     s = await store.create(clinician_sub="c", patient_id="p",
@@ -119,8 +134,8 @@ class _FakeConn:
     """An asyncpg-shaped connection over a shared in-memory `agent_sessions` dict. Proves the
     store passes the right columns/args to INSERT/SELECT/UPDATE and reconstructs a Session."""
 
-    _COLS = ("session_id", "clinician_sub", "patient_id", "created_at", "last_activity_at",
-             "token_expires_at", "idle_timeout_s", "turn_cap", "turns_used")
+    _COLS = ("session_id", "clinician_sub", "patient_id", "encounter_id", "created_at",
+             "last_activity_at", "token_expires_at", "idle_timeout_s", "turn_cap", "turns_used")
 
     def __init__(self, table: dict) -> None:
         self.table = table
@@ -159,10 +174,12 @@ async def test_postgres_store_roundtrip_persists_and_enforces_lifetime():
     await store.ensure_schema()   # idempotent DDL flows through the seam
 
     s = await store.create(clinician_sub="clin-A", patient_id="pat-A",
+                           encounter_id="enc-A",
                            token_expires_at=T0 + timedelta(hours=1))
     # the pin survives the create call (durable across operations — the point of CXR-07)
     got = await store.get(s.session_id)
     assert got.clinician_sub == "clin-A" and got.patient_id == "pat-A" and got.turns_used == 0
+    assert got.encounter_id == "enc-A"
     got.authorize_patient("pat-A")                       # pin holds for the launched patient…
     with pytest.raises(CrossPatientError):
         got.authorize_patient("pat-B")                   # …and refuses any other (F-S.2/D12)

@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     session_id        TEXT        PRIMARY KEY,
     clinician_sub     TEXT        NOT NULL,
     patient_id        TEXT        NOT NULL,
+    encounter_id      TEXT        NULL,
     created_at        TIMESTAMPTZ NOT NULL,
     last_activity_at  TIMESTAMPTZ NOT NULL,
     token_expires_at  TIMESTAMPTZ NOT NULL,
@@ -62,6 +63,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     turn_cap          INTEGER     NOT NULL,
     turns_used        INTEGER     NOT NULL DEFAULT 0
 );
+ALTER TABLE agent_sessions ADD COLUMN IF NOT EXISTS encounter_id TEXT NULL;
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_token_expires_at ON agent_sessions (token_expires_at);
 """
 
@@ -77,6 +79,7 @@ class Session:
     idle_timeout_s: int
     turn_cap: int
     turns_used: int = 0
+    encounter_id: str | None = None
 
     def expires_at(self) -> datetime:
         """The time-based lifetime bound: MIN(token expiry, last activity + idle)."""
@@ -101,7 +104,8 @@ class Session:
 class SessionStore(ABC):
     @abstractmethod
     async def create(self, *, clinician_sub: str, patient_id: str,
-                     token_expires_at: datetime) -> Session: ...
+                     token_expires_at: datetime,
+                     encounter_id: str | None = None) -> Session: ...
 
     @abstractmethod
     async def get(self, session_id: str) -> Session: ...
@@ -122,7 +126,8 @@ class InMemorySessionStore(SessionStore):
         self._rows: dict[str, Session] = {}
 
     async def create(self, *, clinician_sub: str, patient_id: str,
-                     token_expires_at: datetime) -> Session:
+                     token_expires_at: datetime,
+                     encounter_id: str | None = None) -> Session:
         now = self._now()
         s = Session(
             session_id=secrets.token_urlsafe(24),
@@ -133,6 +138,7 @@ class InMemorySessionStore(SessionStore):
             token_expires_at=token_expires_at,
             idle_timeout_s=self._idle_timeout_s,
             turn_cap=self._turn_cap,
+            encounter_id=encounter_id,
         )
         self._rows[s.session_id] = s
         return s
@@ -182,11 +188,13 @@ class PostgresSessionStore(SessionStore):
             await self._release(conn)
 
     async def create(self, *, clinician_sub: str, patient_id: str,
-                     token_expires_at: datetime) -> Session:
+                     token_expires_at: datetime,
+                     encounter_id: str | None = None) -> Session:
         now = self._now()
         s = Session(
             session_id=secrets.token_urlsafe(24),
             clinician_sub=clinician_sub, patient_id=patient_id,
+            encounter_id=encounter_id,
             created_at=now, last_activity_at=now, token_expires_at=token_expires_at,
             idle_timeout_s=self._idle_timeout_s, turn_cap=self._turn_cap,
         )
@@ -238,11 +246,12 @@ class PostgresSessionStore(SessionStore):
     # --- backend SQL seams (wired to a real driver at provisioning time) ---
     async def _insert(self, conn, s: Session) -> None:  # pragma: no cover - needs live DB
         await conn.execute(
-            "INSERT INTO agent_sessions (session_id, clinician_sub, patient_id, created_at, "
+            "INSERT INTO agent_sessions (session_id, clinician_sub, patient_id, encounter_id, created_at, "
             "last_activity_at, token_expires_at, idle_timeout_s, turn_cap, turns_used) "
-            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-            s.session_id, s.clinician_sub, s.patient_id, s.created_at, s.last_activity_at,
-            s.token_expires_at, s.idle_timeout_s, s.turn_cap, s.turns_used,
+            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+            s.session_id, s.clinician_sub, s.patient_id, s.encounter_id, s.created_at,
+            s.last_activity_at, s.token_expires_at, s.idle_timeout_s, s.turn_cap,
+            s.turns_used,
         )
 
     async def _fetch(self, conn, session_id: str):  # pragma: no cover - needs live DB

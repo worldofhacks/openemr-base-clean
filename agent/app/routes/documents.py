@@ -34,7 +34,8 @@ from app.session.store import (
     SessionNotFound,
     SessionStoreUnavailable,
 )
-from app.writeback.live_gateway import PatientRouteMismatch
+from app.writeback.live_gateway import EncounterRouteMismatch, PatientRouteMismatch
+from app.writeback.route_attestations import RouteAttestationUnavailable
 
 router = APIRouter()
 
@@ -82,9 +83,22 @@ def _map_operation_error(exc: Exception) -> HTTPException:
             status_code=403,
             message="selected patient is not attested for the document write path",
         )
+    if isinstance(exc, EncounterRouteMismatch):
+        return _typed_http(
+            FailureReason.ENCOUNTER_MISMATCH,
+            status_code=403,
+            message="encounter is not attested for the pinned patient",
+        )
     if isinstance(exc, RetryConflict):
         return HTTPException(status_code=409, detail="job is not safely retryable")
     raise exc
+
+
+def _route_registry_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail="document route attestations unavailable",
+    )
 
 
 @router.post("/documents", response_model=UploadAccepted, status_code=202)
@@ -145,7 +159,14 @@ async def upload_document(
             encounter_id=encounter_id,
             correlation_id=correlation_id_var.get(),
         )
-    except (DocumentAccessError, EncounterMismatch, PatientRouteMismatch) as exc:
+    except RouteAttestationUnavailable:
+        raise _route_registry_unavailable() from None
+    except (
+        DocumentAccessError,
+        EncounterMismatch,
+        PatientRouteMismatch,
+        EncounterRouteMismatch,
+    ) as exc:
         raise _map_operation_error(exc)
     if submission.duplicate:
         response.status_code = 200
@@ -164,6 +185,12 @@ async def document_status(
         return await services.documents.status(session, document_id)
     except DocumentAccessError as exc:
         raise _map_operation_error(exc)
+    except (
+        RouteAttestationUnavailable,
+        PatientRouteMismatch,
+        EncounterRouteMismatch,
+    ):
+        raise _route_registry_unavailable() from None
 
 
 @router.get(
@@ -230,6 +257,12 @@ async def document_page(
         raise _map_operation_error(exc)
     except PageNotFound:
         raise HTTPException(status_code=404, detail="page not found")
+    except (
+        RouteAttestationUnavailable,
+        PatientRouteMismatch,
+        EncounterRouteMismatch,
+    ):
+        raise _route_registry_unavailable() from None
     if not isinstance(rendered, RenderedPage):
         raise HTTPException(status_code=503, detail="page renderer unavailable")
     return Response(
@@ -256,3 +289,9 @@ async def document_readback_verification(
         return await services.documents.verify_readback(session, document_id)
     except DocumentAccessError as exc:
         raise _map_operation_error(exc)
+    except (
+        RouteAttestationUnavailable,
+        PatientRouteMismatch,
+        EncounterRouteMismatch,
+    ):
+        raise _route_registry_unavailable() from None

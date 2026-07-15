@@ -108,6 +108,7 @@ class TokenResponse(BaseModel):
     refresh_expires_in: int | None = None
     scope: str = ""
     patient: str | None = None  # SMART launch/patient context, when present
+    encounter: str | None = None  # optional SMART launch/encounter context
     refresh_token: SecretStr | None = None
     # The launching clinician's identity, decoded from the id_token (D9/D5 provider attribution):
     # fhirUser when present, else sub. None when the response carried no (decodable) id_token.

@@ -175,6 +175,20 @@ class _PatientRouteMismatchOperations(_FakeDocumentOperations):
         raise PatientRouteMismatch("synthetic patient route is not attested")
 
 
+class _EncounterRouteMismatchOperations(_FakeDocumentOperations):
+    async def submit(self, session, upload, *, encounter_id, correlation_id):
+        from app.writeback.live_gateway import EncounterRouteMismatch
+
+        raise EncounterRouteMismatch("synthetic encounter route is not attested")
+
+
+class _RouteRegistryUnavailableOperations(_FakeDocumentOperations):
+    async def submit(self, session, upload, *, encounter_id, correlation_id):
+        from app.writeback.route_attestations import RouteAttestationUnavailable
+
+        raise RouteAttestationUnavailable("route registry unavailable")
+
+
 class _FakeServices:
     def __init__(self, patient_id: str = "patient-synthetic-a") -> None:
         now = datetime.now(timezone.utc)
@@ -265,6 +279,44 @@ def test_unattested_live_patient_route_is_typed_403_not_http_500():
         "reason": "patient_mismatch",
         "message": "selected patient is not attested for the document write path",
     }
+
+
+def test_unattested_live_encounter_route_is_typed_403_before_enqueue():
+    services = _FakeServices()
+    services.documents = _EncounterRouteMismatchOperations()
+    response = _documents_client(services).post(
+        "/documents",
+        data={
+            "session_id": "session-synthetic",
+            "patient_id": "patient-synthetic-a",
+            "encounter_id": "encounter-synthetic-a",
+            "doc_type": "intake_form",
+        },
+        files={"file": ("synthetic-intake.png", _synthetic_png(), "image/png")},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == {
+        "reason": "encounter_mismatch",
+        "message": "encounter is not attested for the pinned patient",
+    }
+
+
+def test_route_registry_outage_is_typed_503_before_enqueue():
+    services = _FakeServices()
+    services.documents = _RouteRegistryUnavailableOperations()
+    response = _documents_client(services).post(
+        "/documents",
+        data={
+            "session_id": "session-synthetic",
+            "patient_id": "patient-synthetic-a",
+            "doc_type": "intake_form",
+        },
+        files={"file": ("synthetic.png", _synthetic_png(), "image/png")},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "document route attestations unavailable"
 
 
 def test_documents_status_and_retry_use_typed_frozen_models():

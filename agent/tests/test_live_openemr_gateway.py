@@ -40,7 +40,8 @@ def _bundle(*resources: dict[str, object]) -> dict[str, object]:
 def _legacy_attestation(
     *,
     patient_uuid: str = PATIENT_ID,
-    encounter_uuid: str = ENCOUNTER_ID,
+    encounter_uuid: str | None = ENCOUNTER_ID,
+    encounter_id: str | None = STANDARD_ENCOUNTER_ID,
 ):
     from app.writeback.live_gateway import LegacyRouteAttestation
 
@@ -48,8 +49,49 @@ def _legacy_attestation(
         patient_uuid=patient_uuid,
         patient_id=STANDARD_PATIENT_ID,
         encounter_uuid=encounter_uuid,
-        encounter_id=STANDARD_ENCOUNTER_ID,
+        encounter_id=encounter_id,
     )
+
+
+@pytest.mark.asyncio
+async def test_patient_route_without_encounter_allows_documents_but_refuses_vitals():
+    from app.writeback.live_gateway import (
+        BinaryReadGuard,
+        CategoryAttestation,
+        EncounterRouteMismatch,
+        OpenEMRLiveGateway,
+    )
+
+    calls = 0
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = OpenEMRLiveGateway(
+            base_url=BASE_URL,
+            principal=_principal(),
+            category_attestations=(
+                CategoryAttestation("/AI-Source-Documents", "17", True),
+            ),
+            legacy_route_attestation=_legacy_attestation(
+                encounter_uuid=None, encounter_id=None
+            ),
+            binary_guard=BinaryReadGuard("WARNING"),
+            http_client=client,
+        )
+
+        assert await gateway.list_documents(
+            patient_id=PATIENT_ID, category_path="/AI-Source-Documents"
+        ) == []
+        with pytest.raises(EncounterRouteMismatch):
+            await gateway.list_vitals(
+                patient_id=PATIENT_ID, encounter_id=ENCOUNTER_ID
+            )
+
+    assert calls == 1
 
 
 @pytest.mark.asyncio

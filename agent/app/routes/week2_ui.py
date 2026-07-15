@@ -19,6 +19,7 @@ from app.session.store import (
     SessionNotFound,
     SessionStoreUnavailable,
 )
+from app.writeback.route_attestations import RouteAttestationUnavailable
 
 router = APIRouter()
 
@@ -197,7 +198,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
         </label>
         <button class="primary" id="upload" type="button">Upload and extract</button>
         <p class="section-note">The source, grounded artifact, and eligible vitals use the verified exactly-once write path.</p>
-        <div class="notice" id="runtimeNotice" hidden>Document write is unavailable for this selected chart because its UUID-to-route binding is not attested. Relaunch Week 2 from the configured synthetic verification patient.</div>
+        <div class="notice" id="runtimeNotice" hidden>Document write is unavailable for this selected chart because its UUID-to-route binding is not attested. Refresh the synthetic route attestations, then relaunch Week 2 for this patient.</div>
         <div class="status-panel" id="statusPanel" data-status-contract="/documents/{document_id}/status" hidden>
           <div class="status-line"><span class="eyebrow">Processing</span><span class="pill" id="statusPill">queued</span></div>
           <div class="progress"><span id="progressBar"></span></div>
@@ -592,13 +593,14 @@ async def week2_page(
     except SessionStoreUnavailable:
         raise HTTPException(status_code=503, detail="session store unavailable")
 
-    write_path_attested = (
-        settings is None
-        or settings.openemr_legacy_patient_uuid == session.patient_id
-    )
-    encounter_id: str | None = None
-    if settings is not None and write_path_attested:
-        encounter_id = settings.openemr_legacy_encounter_uuid
+    try:
+        write_path_attested, encounter_id = (
+            await services.resolve_document_route_context(session)
+        )
+    except RouteAttestationUnavailable:
+        raise HTTPException(
+            status_code=503, detail="document route attestations unavailable"
+        ) from None
     context = _script_json(
         {
             "session_id": session.session_id,

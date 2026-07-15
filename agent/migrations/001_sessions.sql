@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     session_id        TEXT        PRIMARY KEY,
     clinician_sub     TEXT        NOT NULL,   -- the delegated clinician (OIDC sub)
     patient_id        TEXT        NOT NULL,   -- pinned SMART launch/patient (FHIR id)
+    encounter_id      TEXT        NULL,       -- optional SMART launch/encounter (FHIR id)
     created_at        TIMESTAMPTZ NOT NULL,
     last_activity_at  TIMESTAMPTZ NOT NULL,
     token_expires_at  TIMESTAMPTZ NOT NULL,

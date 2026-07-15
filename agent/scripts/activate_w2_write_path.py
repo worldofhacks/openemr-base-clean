@@ -1172,6 +1172,7 @@ class SeleniumSmartSession:
         self._ensure_loopback_selenium(selenium_url)
         try:
             from selenium import webdriver
+            from selenium.common.exceptions import NoSuchFrameException
             from selenium.webdriver.chrome.options import Options
             from selenium.webdriver.common.by import By
             from selenium.webdriver.support import expected_conditions as EC
@@ -1260,13 +1261,10 @@ class SeleniumSmartSession:
             if isinstance(next_step, str):
                 session_id = next_step
             else:
-                stage = "SMART consent context"
-                self._select_unique_consent_context(driver)
-                self._require_origin(
-                    driver.current_url, self._config.openemr_base_url, "authorization"
-                )
                 stage = "SMART consent preparation"
-                self._prepare_exact_scope_consent(driver)
+                self._prepare_consent_with_frame_recovery(
+                    driver, NoSuchFrameException
+                )
                 stage = "SMART consent submission"
                 self._submit_prepared_scope_consent(driver)
                 stage = "SMART callback"
@@ -1320,6 +1318,23 @@ class SeleniumSmartSession:
             raise ActivationError(
                 "SMART authorization window was not available at submission"
             ) from None
+
+    def _prepare_consent_with_frame_recovery(
+        self, driver: Any, frame_error: type[Exception]
+    ) -> None:
+        """Retry only idempotent DOM attestation across a detached-frame reload."""
+
+        for attempt in range(3):
+            self._select_unique_consent_context(driver)
+            self._require_origin(
+                driver.current_url, self._config.openemr_base_url, "authorization"
+            )
+            try:
+                self._prepare_exact_scope_consent(driver)
+                return
+            except frame_error:
+                if attempt == 2:
+                    raise
 
     @staticmethod
     def _prepare_exact_scope_consent(driver: Any) -> None:

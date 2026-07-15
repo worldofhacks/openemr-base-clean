@@ -695,6 +695,66 @@ def test_smart_consent_stops_when_authorization_window_is_not_unique() -> None:
         session._select_unique_consent_context(driver)
 
 
+class _SyntheticDetachedFrame(Exception):
+    pass
+
+
+def test_smart_consent_recovers_only_read_only_dom_attestation_from_detach(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = SeleniumSmartSession(ActivationConfig.from_env(_ENV))
+    driver = SimpleNamespace(
+        current_url="https://openemr.example/oauth2/default/device/code"
+    )
+    selections: list[str] = []
+    attempts = 0
+
+    monkeypatch.setattr(
+        session,
+        "_select_unique_consent_context",
+        lambda _driver: selections.append("selected"),
+    )
+
+    def prepare(_driver: object) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise _SyntheticDetachedFrame()
+
+    monkeypatch.setattr(session, "_prepare_exact_scope_consent", prepare)
+
+    session._prepare_consent_with_frame_recovery(driver, _SyntheticDetachedFrame)
+
+    assert attempts == 3
+    assert selections == ["selected", "selected", "selected"]
+
+
+def test_smart_consent_frame_recovery_is_bounded_and_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = SeleniumSmartSession(ActivationConfig.from_env(_ENV))
+    driver = SimpleNamespace(
+        current_url="https://openemr.example/oauth2/default/device/code"
+    )
+    attempts = 0
+
+    monkeypatch.setattr(session, "_select_unique_consent_context", lambda _driver: None)
+
+    def prepare(_driver: object) -> None:
+        nonlocal attempts
+        attempts += 1
+        raise _SyntheticDetachedFrame()
+
+    monkeypatch.setattr(session, "_prepare_exact_scope_consent", prepare)
+
+    with pytest.raises(_SyntheticDetachedFrame):
+        session._prepare_consent_with_frame_recovery(
+            driver, _SyntheticDetachedFrame
+        )
+
+    assert attempts == 3
+
+
 @pytest.mark.parametrize(
     ("buttons", "marker_count"),
     [([], 1), ([_ConsentElement(), _ConsentElement()], 1), ([_ConsentElement()], 0)],

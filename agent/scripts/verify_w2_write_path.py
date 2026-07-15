@@ -417,7 +417,13 @@ def main(
         with client_factory(
             timeout=config.request_timeout_seconds,
             follow_redirects=False,
-            headers={"User-Agent": "openemr-copilot-w2-verifier/1"},
+            headers={
+                "User-Agent": "openemr-copilot-w2-verifier/1",
+                # Railway occasionally completes a gzip/chunked response upstream
+                # while the local HTTPX decoder waits for framing termination. Keep
+                # verifier transport deterministic; response contracts stay unchanged.
+                "Accept-Encoding": "identity",
+            },
         ) as client:
             result = LiveWritePathVerifier(config, client=client, sleep=sleep).run()
     except VerificationError as exc:

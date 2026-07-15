@@ -372,11 +372,17 @@ def test_verifier_fails_closed_on_inactive_runtime_readback_mismatch_or_missing_
 def test_cli_output_never_prints_session_patient_encounter_hash_or_fixture_content(capsys):
     config = VerificationConfig.from_env(_ENV)
     transport, _requests = _transport(config)
+    client_options: dict[str, object] = {}
 
-    def client_factory(**_kwargs: object) -> httpx.Client:
-        return httpx.Client(transport=transport)
+    def client_factory(**kwargs: object) -> httpx.Client:
+        client_options.update(kwargs)
+        return httpx.Client(transport=transport, **kwargs)
 
     assert main(environ=_ENV, client_factory=client_factory, sleep=_zero_sleep) == 0
+    assert client_options["headers"] == {
+        "User-Agent": "openemr-copilot-w2-verifier/1",
+        "Accept-Encoding": "identity",
+    }
     output = capsys.readouterr().out
     assert "PASS" in output
     forbidden: Iterator[str] = iter(

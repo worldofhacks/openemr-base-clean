@@ -144,6 +144,29 @@ class _FakeDocumentOperations:
         assert page_number == 1
         return RenderedPage(content=b"\x89PNG\r\n\x1a\nsynthetic")
 
+    async def verify_readback(self, session, document_id):
+        from app.ingestion.readback import (
+            BinaryReadbackVerification,
+            DocumentReadbackVerification,
+        )
+        from app.ingestion.service import DocumentAccessError
+
+        if session.patient_id != "patient-synthetic-a":
+            raise DocumentAccessError(document_id)
+        return DocumentReadbackVerification(
+            document_id=document_id,
+            source=BinaryReadbackVerification(
+                expected_hash="a" * 64,
+                observed_hash="a" * 64,
+                verified=True,
+            ),
+            artifact=BinaryReadbackVerification(
+                expected_hash="b" * 64,
+                observed_hash="b" * 64,
+                verified=True,
+            ),
+        )
+
 
 class _FakeServices:
     def __init__(self, patient_id: str = "patient-synthetic-a") -> None:
@@ -225,6 +248,40 @@ def test_document_page_endpoint_is_patient_pinned_png_only():
     other = _FakeServices(patient_id="patient-other")
     denied = _documents_client(other).get(
         "/documents/doc-synthetic-1/pages/1",
+        params={"session_id": "session-synthetic"},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["reason"] == "patient_mismatch"
+
+
+def test_document_readback_verification_is_patient_pinned_and_digest_only():
+    services = _FakeServices()
+    response = _documents_client(services).get(
+        "/documents/doc-synthetic-1/readback-verification",
+        params={"session_id": "session-synthetic"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "document_id": "doc-synthetic-1",
+        "source": {
+            "algorithm": "sha256",
+            "expected_hash": "a" * 64,
+            "observed_hash": "a" * 64,
+            "verified": True,
+        },
+        "artifact": {
+            "algorithm": "sha256",
+            "expected_hash": "b" * 64,
+            "observed_hash": "b" * 64,
+            "verified": True,
+        },
+    }
+    serialized = response.text.casefold()
+    assert "content" not in serialized
+    assert "token" not in serialized
+
+    denied = _documents_client(_FakeServices(patient_id="patient-other")).get(
+        "/documents/doc-synthetic-1/readback-verification",
         params={"session_id": "session-synthetic"},
     )
     assert denied.status_code == 403

@@ -13,6 +13,7 @@ from app.ingestion.service import (
     RetryConflict,
 )
 from app.ingestion.pages import PageNotFound, RenderedPage
+from app.ingestion.readback import DocumentReadbackVerification
 from app.ingestion.uploads import UploadValidationError, validate_upload
 from app.middleware.correlation import correlation_id_var
 from app.schemas.documents import (
@@ -203,3 +204,22 @@ async def document_page(
         media_type="image/png",
         headers={"Cache-Control": "private, no-store"},
     )
+
+
+@router.get(
+    "/documents/{document_id}/readback-verification",
+    response_model=DocumentReadbackVerification,
+)
+async def document_readback_verification(
+    document_id: str,
+    request: Request,
+    session_id: Annotated[str, Query(min_length=1)],
+) -> DocumentReadbackVerification:
+    """Return content-free digests from fresh, patient-pinned FHIR Binary reads."""
+
+    services: DocumentRouteServices = request.app.state.services
+    session = await _session(services, session_id)
+    try:
+        return await services.documents.verify_readback(session, document_id)
+    except DocumentAccessError as exc:
+        raise _map_operation_error(exc)

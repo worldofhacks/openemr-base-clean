@@ -19,6 +19,7 @@ from app.schemas.documents import (
     RetryRequest,
     UploadAccepted,
 )
+from app.ingestion.readback import DocumentReadbackVerification
 from app.session.store import Session
 from app.schemas.writeback import WriteLeg, WriteState
 from app.writeback.intents import (
@@ -72,6 +73,10 @@ class DocumentOperations(Protocol):
     async def page_png(
         self, session: Session, document_id: str, page_number: int
     ) -> object: ...
+
+    async def verify_readback(
+        self, session: Session, document_id: str
+    ) -> DocumentReadbackVerification: ...
 
 
 class PageRenderer(Protocol):

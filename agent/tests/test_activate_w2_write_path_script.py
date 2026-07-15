@@ -335,6 +335,22 @@ def test_railway_ssh_preserves_the_attestation_as_one_remote_command(
     assert calls[0][-1] == "sh -lc 'set -eu; echo safe'"
 
 
+def test_openemr_attestation_discovers_the_schema_instead_of_trusting_template_db() -> None:
+    config = ActivationConfig.from_env(
+        {
+            **_ENV,
+            "W2_VERIFY_PATIENT_ID": "a234b786-539a-4f9a-96a0-432293226f02",
+        }
+    )
+    inspector = RailwayOpenEMRInspectorImpl(config, object())  # type: ignore[arg-type]
+
+    remote_script = inspector._remote_script(config.patient_id)
+
+    assert "information_schema.tables" in remote_script
+    assert "HAVING COUNT(DISTINCT table_name)=5" in remote_script
+    assert "DB=${MYSQLDATABASE" not in remote_script
+
+
 def test_worker_ensure_and_disabled_prepare_are_idempotent_without_secret_reads() -> None:
     events, _config, railway, _verifier, orchestrator = _components()
     orchestrator.run()

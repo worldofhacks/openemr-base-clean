@@ -928,12 +928,23 @@ JOIN patient_data AS pd ON pd.pid=fe.pid
 WHERE HEX(pd.uuid)=REPLACE(UPPER('{patient_id}'),'-','') AND fe.uuid IS NOT NULL
 ORDER BY fe.date DESC, fe.id DESC LIMIT 1;
 """.strip()
+        schema_sql = """
+SELECT table_schema
+FROM information_schema.tables
+WHERE table_name IN ('categories','globals','oauth_clients','form_encounter','patient_data')
+  AND table_schema NOT IN ('information_schema','mysql','performance_schema','sys')
+GROUP BY table_schema
+HAVING COUNT(DISTINCT table_name)=5
+ORDER BY table_schema;
+""".strip()
         return (
             "set -eu; "
-            "DB=${MYSQLDATABASE:-${MYSQL_DATABASE:-openemr}}; "
             "DBUSER=${MYSQLUSER:-${MYSQL_USER:-root}}; "
             "DBPASS=${MYSQLPASSWORD:-${MYSQL_PASSWORD:-${MYSQL_ROOT_PASSWORD:-}}}; "
             "test -n \"$DBPASS\"; export MYSQL_PWD=\"$DBPASS\"; "
+            f"DB=$(mysql --batch --skip-column-names --raw -u \"$DBUSER\" -e {shlex.quote(schema_sql)}); "
+            "DB_COUNT=$(printf '%s\\n' \"$DB\" | awk 'NF{n++} END{print n+0}'); "
+            "test \"$DB_COUNT\" -eq 1; "
             f"mysql --batch --skip-column-names --raw -u \"$DBUSER\" \"$DB\" -e {shlex.quote(base_sql)}; "
             f"mysql --batch --skip-column-names --raw -u \"$DBUSER\" \"$DB\" -e {shlex.quote(client_sql)}; "
             f"mysql --batch --skip-column-names --raw -u \"$DBUSER\" \"$DB\" -e {shlex.quote(encounter_sql)}"

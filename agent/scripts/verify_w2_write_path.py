@@ -27,6 +27,7 @@ from typing import Any
 from urllib.parse import quote, urlsplit
 
 import httpx
+import requests
 
 REQUIRED_ENV_NAMES = (
     "W2_VERIFY_AGENT_BASE_URL",
@@ -140,6 +141,30 @@ class _FreshRequestClient:
             return client.request(method, url, **kwargs)
 
 
+class _RequestsClient:
+    """Use urllib3's isolated one-shot transport for live verification requests."""
+
+    def __init__(self, timeout: float) -> None:
+        self._timeout = timeout
+
+    def request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
+        caller_headers = dict(kwargs.pop("headers", {}))
+        headers = {
+            **caller_headers,
+            "User-Agent": "openemr-copilot-w2-verifier/1",
+            "Accept-Encoding": "identity",
+        }
+        with requests.Session() as session:
+            return session.request(
+                method,
+                url,
+                timeout=self._timeout,
+                allow_redirects=False,
+                headers=headers,
+                **kwargs,
+            )
+
+
 class LiveWritePathVerifier:
     """Run the live contract without ever handling raw SMART credentials."""
 
@@ -147,7 +172,7 @@ class LiveWritePathVerifier:
         self,
         config: VerificationConfig,
         *,
-        client: httpx.Client | _FreshRequestClient,
+        client: httpx.Client | _FreshRequestClient | _RequestsClient,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -385,7 +410,7 @@ class LiveWritePathVerifier:
                     method, self._config.agent_base_url + path, **kwargs
                 )
                 break
-            except httpx.HTTPError as exc:
+            except (httpx.HTTPError, requests.RequestException) as exc:
                 if attempt + 1 >= transport_attempts:
                     raise VerificationError(
                         "deployed agent request failed "
@@ -425,25 +450,27 @@ def _digest_verified(value: object, *, expected_hash: str | None = None) -> bool
 def main(
     *,
     environ: Mapping[str, str] | None = None,
-    client_factory: Callable[..., httpx.Client] = httpx.Client,
+    client_factory: Callable[..., httpx.Client] | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> int:
     try:
         config = VerificationConfig.from_env(environ)
-        client = _FreshRequestClient(
-            client_factory,
-            {
-                "timeout": config.request_timeout_seconds,
-                "follow_redirects": False,
-                "headers": {
-                    "User-Agent": "openemr-copilot-w2-verifier/1",
-                    # Railway occasionally completes a gzip/chunked response upstream
-                    # while the local HTTPX decoder waits for framing termination. Keep
-                    # verifier transport deterministic; contracts stay unchanged.
-                    "Accept-Encoding": "identity",
+        if client_factory is None:
+            client: httpx.Client | _FreshRequestClient | _RequestsClient = (
+                _RequestsClient(config.request_timeout_seconds)
+            )
+        else:
+            client = _FreshRequestClient(
+                client_factory,
+                {
+                    "timeout": config.request_timeout_seconds,
+                    "follow_redirects": False,
+                    "headers": {
+                        "User-Agent": "openemr-copilot-w2-verifier/1",
+                        "Accept-Encoding": "identity",
+                    },
                 },
-            },
-        )
+            )
         result = LiveWritePathVerifier(config, client=client, sleep=sleep).run()
     except VerificationError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)

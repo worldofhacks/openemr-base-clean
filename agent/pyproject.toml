@@ -68,6 +68,9 @@ dev = [
     # login/consent to prove the token returns real FHIR data). The runtime agent
     # never imports it.
     "selenium>=4.20",
+    # The local activation verifier uses urllib3's one-shot transport after Selenium;
+    # it is never imported by the deployed agent runtime.
+    "requests>=2.32,<3",
 ]
 # Opt-in browser deps for the pure-frontend /app UI smoke test (tests/test_ui_smoke.py).
 # NOT in the default install, so `pip install -e .` + `pytest` stays browser-free and the

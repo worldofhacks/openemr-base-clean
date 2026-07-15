@@ -7,6 +7,7 @@ from collections.abc import Iterator
 
 import httpx
 import pytest
+import scripts.verify_w2_write_path as verify_module
 
 from scripts.verify_w2_write_path import (
     REQUIRED_ENV_NAMES,
@@ -400,3 +401,58 @@ def test_cli_output_never_prints_session_patient_encounter_hash_or_fixture_conte
         )
     )
     assert all(value not in output for value in forbidden)
+
+
+def test_cli_defaults_to_the_isolated_requests_transport(monkeypatch, capsys) -> None:
+    config = VerificationConfig.from_env(_ENV)
+    transport, _requests = _transport(config)
+    fallback = httpx.Client(transport=transport)
+    configured_timeouts: list[float] = []
+
+    def requests_client(timeout: float) -> httpx.Client:
+        configured_timeouts.append(timeout)
+        return fallback
+
+    monkeypatch.setattr(verify_module, "_RequestsClient", requests_client)
+    try:
+        assert verify_module.main(environ=_ENV, sleep=_zero_sleep) == 0
+    finally:
+        fallback.close()
+
+    assert configured_timeouts == [config.request_timeout_seconds]
+    assert "PASS" in capsys.readouterr().out
+
+
+def test_requests_transport_is_one_shot_identity_encoded_and_redirect_closed(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+    response = object()
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def request(self, method: str, url: str, **kwargs: object):
+            captured.update({"method": method, "url": url, **kwargs})
+            return response
+
+    monkeypatch.setattr(verify_module.requests, "Session", _Session)
+    client = verify_module._RequestsClient(timeout=17.0)
+
+    assert client.request(
+        "POST",
+        "https://agent.example/chat",
+        json={"synthetic": True},
+        headers={"X-Copilot-Request-Id": "synthetic-request"},
+    ) is response
+    assert captured["timeout"] == 17.0
+    assert captured["allow_redirects"] is False
+    assert captured["headers"] == {
+        "X-Copilot-Request-Id": "synthetic-request",
+        "User-Agent": "openemr-copilot-w2-verifier/1",
+        "Accept-Encoding": "identity",
+    }

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from io import BytesIO
+import json
 
 import pytest
 from PIL import Image
@@ -398,6 +399,58 @@ class _StrictVlm:
             ),
             source_document_id=source_document_id,
         )
+
+
+@pytest.mark.asyncio
+async def test_postgres_artifact_restart_reloads_strict_json_types() -> None:
+    from app.ingestion.artifacts import PostgresArtifactStore
+    from app.schemas.extraction import ExtractionArtifact
+
+    measured = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    extraction = await _StrictVlm().extract(
+        doc_type="intake_form",
+        source=b"synthetic",
+        words_boxes=_words_reader(None, b"synthetic"),
+        source_document_id="document-synthetic",
+    )
+    artifact = ExtractionArtifact(
+        artifact_version=1,
+        document_id="document-synthetic",
+        content_hash="a" * 64,
+        correlation_id="correlation-synthetic",
+        doc_type="intake_form",
+        extraction=extraction,
+        grounding_summary={"fields_grounded": 0, "fields_unsupported": 3},
+        created_ts=measured.isoformat(),
+        agent_version="test-runtime",
+    )
+    artifact_ref = "document:document-synthetic:extraction:v1:artifact"
+
+    class _Connection:
+        async def fetch(self, query, document_ids):
+            assert "FROM agent_extraction_refs" in query
+            assert document_ids == ["document-synthetic"]
+            return [
+                {
+                    "ref": artifact_ref,
+                    "document_id": "document-synthetic",
+                    "kind": "artifact",
+                    "ordinal": 0,
+                    # asyncpg returns JSONB as an already-decoded Python value in the
+                    # deployed configuration; strict JSON-mode validation must restore
+                    # Decimal/datetime fields after a worker restart.
+                    "payload": json.loads(artifact.model_dump_json(warnings=False)),
+                }
+            ]
+
+        async def close(self):
+            return None
+
+    store = PostgresArtifactStore(lambda: _return(_Connection()))
+    refs = await store.refs_for_document("document-synthetic")
+
+    assert refs is not None and refs.artifact_ref == artifact_ref
+    assert store.resolve(artifact_ref) == artifact
 
 
 def _words_reader(_record, _source: bytes) -> WordsBoxes:

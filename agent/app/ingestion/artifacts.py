@@ -188,7 +188,9 @@ class PostgresArtifactStore:
             if len(artifact_rows) != 1:
                 raise ValueError(f"invalid artifact rows for {document_id}")
             artifact_row = artifact_rows[0]
-            artifact = ExtractionArtifact.model_validate(_json(artifact_row["payload"]))
+            artifact = ExtractionArtifact.model_validate_json(
+                _json_payload(artifact_row["payload"])
+            )
             citation_rows = sorted(
                 (row for row in stored if row["kind"] == "citation"),
                 key=lambda row: int(str(row["ordinal"])),
@@ -198,7 +200,7 @@ class PostgresArtifactStore:
                 citation_refs=tuple(str(row["ref"]) for row in citation_rows),
             )
             citations = tuple(
-                CitationV2.model_validate(_json(row["payload"]))
+                CitationV2.model_validate_json(_json_payload(row["payload"]))
                 for row in citation_rows
             )
             self._cache(artifact, refs, citations)
@@ -217,10 +219,12 @@ class PostgresArtifactStore:
         self._by_document[artifact.document_id] = refs
 
 
-def _json(value: object) -> object:
-    if isinstance(value, str):
-        return json.loads(value)
-    return value
+def _json_payload(value: object) -> str | bytes | bytearray:
+    """Preserve Pydantic's strict schema while parsing persisted JSON representations."""
+
+    if isinstance(value, (str, bytes, bytearray)):
+        return value
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
 async def _close(conn: object) -> None:

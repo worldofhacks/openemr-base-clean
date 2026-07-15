@@ -1842,6 +1842,7 @@ class VerifyScript:
                 text=True,
                 timeout=900,
                 check=False,
+                start_new_session=True,
             )
         except (OSError, subprocess.TimeoutExpired):
             raise ActivationError("synthetic deployed write-path verification failed")

@@ -601,6 +601,7 @@ def test_verify_script_runs_in_a_secret_isolated_child_process(capsys) -> None:
     assert kwargs["text"] is True
     assert kwargs["timeout"] == 900
     assert kwargs["check"] is False
+    assert kwargs["start_new_session"] is True
     assert "20 grounded citations" in capsys.readouterr().out
 
 

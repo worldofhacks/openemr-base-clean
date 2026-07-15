@@ -144,7 +144,7 @@ class _FreshRequestClient:
             return client.request(method, url, **kwargs)
 
 
-class _TransportError(RuntimeError):
+class CurlTransportError(RuntimeError):
     """Content-free local transport failure."""
 
 
@@ -181,14 +181,14 @@ class _CurlClient:
             or parsed.username is not None
             or parsed.password is not None
         ):
-            raise _TransportError("curl transport contract rejected")
+            raise CurlTransportError("curl transport contract rejected")
         params = kwargs.pop("params", None)
         json_body = kwargs.pop("json", None)
         data = kwargs.pop("data", None)
         files = kwargs.pop("files", None)
         caller_headers = dict(kwargs.pop("headers", {}))
         if kwargs or (json_body is not None and (data is not None or files is not None)):
-            raise _TransportError("curl transport contract rejected")
+            raise CurlTransportError("curl transport contract rejected")
         if params is not None:
             query = urlencode(dict(params), doseq=True)
             url += ("&" if parsed.query else "?") + query
@@ -272,9 +272,9 @@ class _CurlClient:
                 body, status = completed.stdout.rsplit("\n", 1)
                 status_code = int(status)
         except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
-            raise _TransportError("curl transport failed") from exc
+            raise CurlTransportError("curl transport failed") from exc
         if completed.returncode != 0 or not 100 <= status_code <= 599:
-            raise _TransportError("curl transport failed")
+            raise CurlTransportError("curl transport failed")
         return _CurlResponse(status_code, body)
 
 
@@ -536,7 +536,7 @@ class LiveWritePathVerifier:
                     method, self._config.agent_base_url + path, **kwargs
                 )
                 break
-            except (httpx.HTTPError, _TransportError) as exc:
+            except (httpx.HTTPError, CurlTransportError) as exc:
                 if attempt + 1 >= transport_attempts:
                     raise VerificationError(
                         "deployed agent request failed "

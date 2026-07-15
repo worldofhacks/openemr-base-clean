@@ -44,6 +44,7 @@ Register and enable one replacement client named exactly
 {
   "application_type": "private",
   "client_name": "AgentForge Week 2 Write Client",
+  "initiate_login_uri": "https://agent-production-9f62.up.railway.app/week2/launch",
   "redirect_uris": ["https://agent-production-9f62.up.railway.app/callback"],
   "token_endpoint_auth_method": "client_secret_post",
   "grant_types": ["authorization_code", "refresh_token"],
@@ -70,14 +71,25 @@ The exact case-sensitive scope set is:
 15. `user/vital.crus`
 16. `user/Observation.rs`
 
+The **App Launch URI** (OpenEMR's `initiate_login_uri`) and callback are different
+by design:
+
+- App Launch URI: `https://agent-production-9f62.up.railway.app/week2/launch`
+- Redirect URI: `https://agent-production-9f62.up.railway.app/callback`
+
+Do not use `/launch`: that route intentionally remains the separate Week 1 pre-visit
+application and returns to `/app`. The Week 2 launch binds its one-time OAuth state to
+`/week2` on the server; neither OpenEMR nor a callback query chooses that destination.
+
 In OpenEMR, enable the client after registration; manual-approval scopes cause new
 registrations to start disabled. Do not add `user/DocumentReference.write`,
 `user/Observation.write`, `password`, `client_credentials`, or `private_key_jwt`.
 
 The automation discovers the public `client_id` from the exact live registration. It
 requires one unrevoked record with that exact name, enabled/private/secret-backed state,
-the sole callback above, the two exact grants, no skipped EHR authorization, and exactly
-the 16 scopes. It selects only a boolean that a stored secret exists, never the secret.
+the sole callback above, the exact Week 2 App Launch URI, the two exact grants, no skipped
+EHR authorization, and exactly the 16 scopes. It selects only a boolean that a stored
+secret exists, never the secret.
 
 ## 2. Exact OpenEMR categories, grants, and DEBUG-off state
 
@@ -195,10 +207,11 @@ On every run, `agent/scripts/activate_w2_write_path.py` performs this idempotent
    `W2_DOCUMENT_RUNTIME_ENABLED=true` last, deploys it, and requires `/ready` to report
    overall `ready` plus `document_runtime: {ok: true, kind: hard, detail: ready}`.
 8. Starts the repository Selenium service automatically when the configured loopback
-   endpoint is absent, performs authorization-code + PKCE, and selects the exact canonical
-   synthetic UUID from OpenEMR's `data-patient-id`. It refuses an absent, ambiguous, or
-   defaulted patient. Only the opaque agent session remains in memory; the token never
-   leaves the web service.
+   endpoint is absent, opens `/week2/launch`, performs authorization-code + PKCE, and
+   requires the callback to land on the distinct `/week2` workbench before selecting the
+   exact canonical synthetic UUID from OpenEMR's `data-patient-id`. It refuses an absent,
+   ambiguous, or defaulted patient. Only the opaque agent session remains in memory; the
+   token never leaves the web service.
 9. Runs `agent/scripts/verify_w2_write_path.py` in a clean child process containing only
    the five `W2_VERIFY_*` synthetic context variables; the OpenEMR admin password and
    owner-managed secrets are never inherited. The intake form is uploaded first, so

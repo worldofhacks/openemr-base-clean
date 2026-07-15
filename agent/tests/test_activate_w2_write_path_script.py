@@ -342,6 +342,7 @@ def test_read_only_discovery_validates_client_categories_logging_and_encounter()
             "authorization_code refresh_token",
             " ".join(sorted(REQUIRED_SMART_SCOPES)),
             "0",
+            "https://agent.example/week2/launch",
         ]
     )
     output = "\n".join(
@@ -362,6 +363,7 @@ def test_read_only_discovery_validates_client_categories_logging_and_encounter()
 
         def ssh_mysql(self, remote_script: str) -> str:
             assert "SELECT" in remote_script
+            assert "initiate_login_uri" in remote_script
             assert all(
                 value not in remote_script for value in _OWNER_SECRET_VALUES.values()
             )

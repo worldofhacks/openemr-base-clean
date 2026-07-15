@@ -1141,7 +1141,7 @@ class RailwayOpenEMRInspectorImpl:
                 logging_values.append(fields[1])
             elif fields[0] == "UPLOAD" and len(fields) == 3:
                 upload_values.append((fields[1], fields[2]))
-            elif fields[0] == "CLIENT" and len(fields) == 9:
+            elif fields[0] == "CLIENT" and len(fields) == 10:
                 clients.append(fields[1:])
             elif fields[0] == "PATIENT" and len(fields) == 3:
                 patients.append((fields[1], fields[2]))
@@ -1198,6 +1198,7 @@ class RailwayOpenEMRInspectorImpl:
             grant_types,
             scopes,
             skip_ehr_launch,
+            initiate_login_uri,
         ) = values
         if enabled != "1" or confidential != "1" or has_secret != "1":
             raise ActivationError(
@@ -1209,6 +1210,10 @@ class RailwayOpenEMRInspectorImpl:
             )
         if set(redirect_uri.split("|")) != {self._config.callback_url}:
             raise ActivationError("replacement SMART client redirect URI is not exact")
+        if initiate_login_uri != f"{self._config.agent_base_url}/week2/launch":
+            raise ActivationError(
+                "replacement SMART client Week 2 App Launch URI is not exact"
+            )
         grants = {item for item in re.split(r"[|,\s]+", grant_types) if item}
         if grants != REQUIRED_GRANT_TYPES:
             raise ActivationError("replacement SMART client grant types are not exact")
@@ -1261,7 +1266,8 @@ ON DUPLICATE KEY UPDATE option_id='application/json', title='application/json', 
         client_sql = f"""
 SELECT 'CLIENT', client_id, CAST(is_enabled AS CHAR), CAST(is_confidential AS CHAR),
        IF(client_secret IS NOT NULL AND client_secret<>'', '1', '0'), redirect_uri,
-       grant_types, scope, CAST(skip_ehr_launch_authorization_flow AS CHAR)
+       grant_types, scope, CAST(skip_ehr_launch_authorization_flow AS CHAR),
+       COALESCE(initiate_login_uri, '__MISSING__')
 FROM oauth_clients
 WHERE BINARY client_name='{DEFAULT_SMART_CLIENT_NAME}' AND revoke_date IS NULL;
 """.strip()
@@ -1350,7 +1356,7 @@ class SeleniumSmartSession:
                 {"urls": [f"{self._config.agent_base_url}/chat*"]},
             )
             stage = "agent launch redirect"
-            driver.get(f"{self._config.agent_base_url}/launch")
+            driver.get(f"{self._config.agent_base_url}/week2/launch")
             self._require_origin(
                 driver.current_url, self._config.openemr_base_url, "login"
             )
@@ -1393,7 +1399,7 @@ class SeleniumSmartSession:
 
             def session_from_callback(current: Any) -> str | bool:
                 parsed = urlsplit(current.current_url)
-                if parsed.path != "/app":
+                if parsed.path != "/week2":
                     return False
                 self._require_origin(
                     current.current_url, self._config.agent_base_url, "agent callback"
@@ -1769,7 +1775,9 @@ class SeleniumSmartSession:
         if matches(self._config.agent_base_url):
             path = (
                 parsed.path
-                if parsed.path in {"/launch", "/callback", "/app"}
+                if parsed.path in {
+                    "/launch", "/week2/launch", "/callback", "/app", "/week2"
+                }
                 else "other"
             )
             return f"agent:{path}"

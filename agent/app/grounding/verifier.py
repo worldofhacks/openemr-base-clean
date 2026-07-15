@@ -18,7 +18,14 @@ from app.schemas.citations import CitationV2
 from app.schemas.extraction import GroundedField
 
 T = TypeVar("T")
-_NON_ALNUM = re.compile(r"[^0-9a-z]+")
+# Preserve numerically-significant characters: a decimal point and a leading/interior
+# minus sign carry value. Stripping them (final-review CRITICAL, W2-D3/§5) let numerically
+# DISTINCT clinical values collapse to one token — '6.5' grounded against a page reading
+# '65' (a 10x error) and reached the chart write. Only true separators are removed.
+_NON_ALNUM = re.compile(r"[^0-9a-z.\-]+")
+# A comma between two digits is a thousands separator: '1,000' and '1000' are the SAME
+# number and must still match. Every other comma is a separator and is dropped by _NON_ALNUM.
+_THOUSANDS_COMMA = re.compile(r"(?<=\d),(?=\d)")
 
 
 @dataclass(frozen=True)
@@ -52,7 +59,8 @@ def _text(value: object) -> str:
 
 
 def _normalize(token: str) -> str:
-    return _NON_ALNUM.sub("", token.casefold())
+    folded = _THOUSANDS_COMMA.sub("", token.casefold())
+    return _NON_ALNUM.sub("", folded)
 
 
 def _phrase_tokens(value: object) -> tuple[str, ...]:

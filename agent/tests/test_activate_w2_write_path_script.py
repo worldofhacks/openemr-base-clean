@@ -412,6 +412,31 @@ def test_web_disabled_check_requires_the_explicit_hard_ready_contract(
     RailwayCLI(ActivationConfig.from_env(_ENV)).require_web_disabled("agent")
 
 
+def test_deploy_tracks_the_exact_new_deployment_from_deployment_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    railway = RailwayCLI(ActivationConfig.from_env(_ENV))
+    histories = iter(
+        [
+            [
+                {"id": "new-deployment", "status": "BUILDING"},
+                {"id": "old-deployment", "status": "SUCCESS"},
+            ],
+            [
+                {"id": "unrelated-later-deployment", "status": "SUCCESS"},
+                {"id": "new-deployment", "status": "SUCCESS"},
+                {"id": "old-deployment", "status": "REMOVED"},
+            ],
+        ]
+    )
+    monkeypatch.setattr(
+        railway, "_deployment_history", lambda _service: next(histories)
+    )
+    monkeypatch.setattr(activation_module.time, "sleep", lambda _seconds: None)
+
+    railway._wait_for_success("agent", previous_deployments={"old-deployment"})
+
+
 def test_openemr_attestation_discovers_the_schema_instead_of_trusting_template_db() -> (
     None
 ):

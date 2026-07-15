@@ -632,13 +632,17 @@ class RailwayCLI:
         )
 
     def deploy(self, service: str) -> None:
-        previous_deployment = self._service_metadata(service).get("deploymentId")
+        previous_deployments = {
+            str(item.get("id"))
+            for item in self._deployment_history(service)
+            if item.get("id")
+        }
         if service == self._config.worker_service:
             with self._worker_context() as context:
                 self._upload(service, context)
         else:
             self._upload(service, self._config.agent_root)
-        self._wait_for_success(service, previous_deployment=previous_deployment)
+        self._wait_for_success(service, previous_deployments=previous_deployments)
 
     def require_service_running(self, service: str) -> None:
         deadline = time.monotonic() + self._config.ready_timeout_seconds
@@ -790,22 +794,54 @@ class RailwayCLI:
             discard=True,
         )
 
-    def _wait_for_success(self, service: str, *, previous_deployment: object) -> None:
+    def _wait_for_success(
+        self, service: str, *, previous_deployments: set[str]
+    ) -> None:
         deadline = time.monotonic() + self._config.deploy_timeout_seconds
+        deployment_id = ""
         while time.monotonic() < deadline:
-            metadata = self._service_metadata(service)
-            status = str(metadata.get("status") or "")
-            current_deployment = metadata.get("deploymentId")
-            started = (
-                bool(current_deployment) and current_deployment != previous_deployment
-            )
-            if started and status == "SUCCESS":
+            history = self._deployment_history(service)
+            indexed = {str(item.get("id")): item for item in history if item.get("id")}
+            if not deployment_id:
+                new_ids = set(indexed).difference(previous_deployments)
+                if len(new_ids) > 1:
+                    raise ActivationError(
+                        f"{service} deployment was ambiguous with a concurrent upload"
+                    )
+                if len(new_ids) == 1:
+                    deployment_id = new_ids.pop()
+            status = str(indexed.get(deployment_id, {}).get("status") or "")
+            if deployment_id and status == "SUCCESS":
                 return
-            if started and status in {"FAILED", "CRASHED", "REMOVED"}:
+            if deployment_id and status in {
+                "FAILED",
+                "CRASHED",
+                "REMOVED",
+                "REMOVING",
+            }:
                 raise ActivationError(f"{service} deployment did not become successful")
             time.sleep(5)
         raise ActivationError(
             f"{service} deployment did not become successful before timeout"
+        )
+
+    def _deployment_history(self, service: str) -> list[dict[str, Any]]:
+        return self._run_json(
+            [
+                "railway",
+                "deployment",
+                "list",
+                "--project",
+                self._config.project_id,
+                "--environment",
+                self._config.environment,
+                "--service",
+                service,
+                "--limit",
+                "20",
+                "--json",
+            ],
+            label=f"Railway deployment history for {service}",
         )
 
     def _service_metadata(self, service: str) -> dict[str, Any]:

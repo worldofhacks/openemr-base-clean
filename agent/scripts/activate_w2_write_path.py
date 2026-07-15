@@ -1350,9 +1350,10 @@ class SeleniumSmartSession:
         control of the submission.
         """
 
-        result = driver.execute_script(
-            r"""
-            const expected = new Set(arguments[0]);
+        manifest = json.dumps(sorted(REQUIRED_SMART_SCOPES))
+        expression = r"""
+            ((manifest) => {
+            const expected = new Set(manifest);
             const form = document.getElementById('userLogin');
             const button = document.getElementById('authorize-btn');
             const dynamic = document.getElementById('dynamic-scopes-container');
@@ -1468,9 +1469,16 @@ class SeleniumSmartSession:
                 return 'collision_not_exact';
             }
             return 'prepared';
-            """,
-            sorted(REQUIRED_SMART_SCOPES),
+            })
+            """ + f"({manifest})"
+        response = driver.execute_cdp_cmd(
+            "Runtime.evaluate",
+            {"expression": expression, "returnByValue": True},
         )
+        try:
+            result = response["result"]["value"]
+        except (KeyError, TypeError):
+            result = "runtime_evaluation_failed"
         if result != "prepared":
             raise ActivationError(
                 "exact SMART consent preparation failed closed "

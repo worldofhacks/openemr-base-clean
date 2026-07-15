@@ -56,33 +56,69 @@ def _strings(value: Any) -> Iterable[str]:
             yield from _strings(nested)
 
 
-def _case_signatures(case: GoldenCase) -> set[str]:
-    """Build safe-to-hold signatures without reading the canonical fixture.
+_DATE_SIG = re.compile(r"^\d{4}-\d{1,2}-\d{1,2}$|^\d{1,2}/\d{1,2}/\d{2,4}$")
+_NUMERIC_SIG = re.compile(r"^-?\d[\d,]*\.?\d*$")
 
-    The unique canary is always included.  Long expected leaf phrases act as the
-    fixture n-gram inventory available in the manifest; short numbers/units are
-    omitted to avoid matching ordinary telemetry counters.
+
+def _is_short_phi_value(value: str) -> bool:
+    """A short expected-field value distinctive enough to be PHI, not a stray counter.
+
+    Final-review finding (HIGH, W2-D7): the >=12-char phrase rule missed the short-PHI
+    classes the invariant names — DOB / collection dates, multi-digit clinical values and
+    MRNs, and name/contact identifiers ("John Smith" is 10 chars). Those are caught here.
+    Single characters (e.g. a sex code "X"/"M") and bare units are deliberately skipped —
+    signature-matching them would fire on ordinary telemetry and make the 100% gate flaky.
     """
 
-    signatures = {f"ZZPHI-{case.case_id}".casefold()}
+    if _DATE_SIG.match(value):
+        return True
+    if _NUMERIC_SIG.match(value):
+        digits = value.replace(",", "").replace(".", "").lstrip("-")
+        return len(digits) >= 2  # multi-digit value or MRN; single digit is too noisy
+    return (
+        len(value) >= 5
+        and any(ch.isalnum() for ch in value)
+        and (" " in value or any(ch.isdigit() for ch in value))
+    )
+
+
+def _case_signatures(case: GoldenCase) -> tuple[set[str], set[str]]:
+    """Safe-to-hold signatures without reading the canonical fixture.
+
+    Returns ``(phrases, tokens)``. ``phrases`` (the canary + long leaf phrases) match as
+    substrings; ``tokens`` (short PHI values — dates, numbers, MRNs, name/contact ids)
+    match with numeric-safe boundaries so ``92`` does not fire inside ``92ms``.
+    """
+
+    phrases = {f"ZZPHI-{case.case_id}".casefold()}
+    tokens: set[str] = set()
     for value in _strings(case.expected_fields):
         normalized = " ".join(value.split()).casefold()
+        if not normalized:
+            continue
         words = normalized.split()
         if len(normalized) >= 12 and (len(words) >= 3 or "@" in normalized):
-            signatures.add(normalized)
+            phrases.add(normalized)
             if len(words) >= 4:
-                signatures.update(
+                phrases.update(
                     " ".join(words[index : index + 4])
                     for index in range(len(words) - 3)
                 )
-    return signatures
+        elif _is_short_phi_value(normalized):
+            tokens.add(normalized)
+    return phrases, tokens
 
 
-def _contains_leak(text: str, signatures: set[str]) -> int:
+def _contains_leak(text: str, phrases: set[str], tokens: set[str]) -> int:
     matches = len(_CANARY_PATTERN.findall(text))
     matches += len(_EMAIL_PATTERN.findall(text))
     folded = text.casefold()
-    matches += sum(signature in folded for signature in signatures)
+    matches += sum(phrase in folded for phrase in phrases)
+    for token in tokens:
+        # Boundary that treats a digit/./_ /word char as "inside a token", so a leaked
+        # clinical value/date/MRN is caught but a substring of a longer run is not.
+        if re.search(rf"(?<![\w.]){re.escape(token)}(?![\w.])", folded):
+            matches += 1
     return matches
 
 
@@ -107,11 +143,11 @@ def scan_generated_surfaces(
         "recordings": generated.recordings,
         "screenshots": generated.screenshots,
     }
-    signatures = _case_signatures(case)
+    phrases, tokens = _case_signatures(case)
     leak_channels: list[str] = []
     match_count = 0
     for channel in _CHANNELS:
-        channel_matches = _contains_leak(_serialize(targets[channel]), signatures)
+        channel_matches = _contains_leak(_serialize(targets[channel]), phrases, tokens)
         if channel_matches:
             leak_channels.append(channel)
             match_count += channel_matches

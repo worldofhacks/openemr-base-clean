@@ -272,11 +272,13 @@ def test_verifier_stops_before_upload_after_bounded_ready_transport_failures() -
     transport, requests = _transport(config, ready_transport_failures=3)
 
     with httpx.Client(transport=transport) as client:
-        with pytest.raises(VerificationError, match="deployed agent request failed"):
+        with pytest.raises(VerificationError, match="deployed agent request failed") as caught:
             LiveWritePathVerifier(config, client=client, sleep=_zero_sleep).run()
 
     paths = [request.url.path for request in requests]
     assert paths == ["/ready", "/ready", "/ready"]
+    assert "ReadError" in str(caught.value)
+    assert "synthetic Railway transport drop" not in str(caught.value)
 
 
 def test_verifier_retries_each_existing_worker_restart_once_via_typed_route():

@@ -371,7 +371,10 @@ class LiveWritePathVerifier:
                 break
             except httpx.HTTPError as exc:
                 if attempt + 1 >= transport_attempts:
-                    raise VerificationError("deployed agent request failed") from exc
+                    raise VerificationError(
+                        "deployed agent request failed "
+                        f"({type(exc).__name__})"
+                    ) from exc
                 self._sleep(self._config.poll_interval_seconds)
         if response.status_code not in expected_status:
             # Do not render URL, headers, response body, or owner context.

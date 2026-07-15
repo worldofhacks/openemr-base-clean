@@ -1263,8 +1263,10 @@ class SeleniumSmartSession:
                 self._require_origin(
                     driver.current_url, self._config.openemr_base_url, "authorization"
                 )
+                stage = "SMART consent preparation"
                 self._prepare_exact_scope_consent(driver)
-                next_step.click()
+                stage = "SMART consent submission"
+                self._submit_prepared_scope_consent(driver)
                 stage = "SMART callback"
                 session_id = wait.until(session_from_callback)
             return {
@@ -1427,6 +1429,25 @@ class SeleniumSmartSession:
                 "exact SMART consent preparation failed closed "
                 f"({result if isinstance(result, str) else 'unknown'})"
             )
+
+    @staticmethod
+    def _submit_prepared_scope_consent(driver: Any) -> None:
+        """Reacquire the consent button from a valid top-level browser context."""
+
+        driver.switch_to.default_content()
+        markers = driver.find_elements(
+            "css selector", 'input[data-w2-observation-rs="1"]'
+        )
+        buttons = driver.find_elements("id", "authorize-btn")
+        if (
+            len(markers) != 1
+            or len(buttons) != 1
+            or buttons[0].get_dom_attribute("disabled") is not None
+        ):
+            raise ActivationError(
+                "prepared SMART consent submission was not uniquely available"
+            )
+        buttons[0].click()
 
     def _ensure_loopback_selenium(self, selenium_url: str) -> None:
         parsed = urlsplit(selenium_url)

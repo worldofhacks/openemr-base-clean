@@ -554,6 +554,40 @@ class _ConsentDriver:
         return self.result
 
 
+class _ConsentElement:
+    def __init__(self, *, disabled: str | None = None) -> None:
+        self.disabled = disabled
+        self.clicks = 0
+
+    def get_dom_attribute(self, name: str) -> str | None:
+        assert name == "disabled"
+        return self.disabled
+
+    def click(self) -> None:
+        self.clicks += 1
+
+
+class _PreparedConsentDriver:
+    def __init__(self, *, buttons: list[_ConsentElement], marker_count: int = 1) -> None:
+        self.buttons = buttons
+        self.marker_count = marker_count
+        self.default_content_calls = 0
+        self.switch_to = SimpleNamespace(default_content=self._default_content)
+
+    def _default_content(self) -> None:
+        self.default_content_calls += 1
+
+    def find_elements(self, by: str, value: str) -> list[_ConsentElement]:
+        if (by, value) == ("id", "authorize-btn"):
+            return self.buttons
+        if (by, value) == (
+            "css selector",
+            'input[data-w2-observation-rs="1"]',
+        ):
+            return [_ConsentElement()] * self.marker_count
+        return []
+
+
 def test_smart_consent_prepares_only_the_known_mixed_version_scope_collision() -> None:
     driver = _ConsentDriver("prepared")
 
@@ -566,6 +600,31 @@ def test_smart_consent_prepares_only_the_known_mixed_version_scope_collision() -
     assert "button.click()" not in script
     assert "form.submit()" not in script
     assert "removeAttribute('name')" not in script
+
+
+def test_smart_consent_reenters_top_context_and_reacquires_button_before_click() -> None:
+    button = _ConsentElement()
+    driver = _PreparedConsentDriver(buttons=[button])
+
+    SeleniumSmartSession._submit_prepared_scope_consent(driver)
+
+    assert driver.default_content_calls == 1
+    assert button.clicks == 1
+
+
+@pytest.mark.parametrize(
+    ("buttons", "marker_count"),
+    [([], 1), ([_ConsentElement(), _ConsentElement()], 1), ([_ConsentElement()], 0)],
+)
+def test_smart_consent_does_not_submit_without_unique_button_and_patch_marker(
+    buttons: list[_ConsentElement], marker_count: int
+) -> None:
+    driver = _PreparedConsentDriver(buttons=buttons, marker_count=marker_count)
+
+    with pytest.raises(ActivationError, match="prepared SMART consent submission"):
+        SeleniumSmartSession._submit_prepared_scope_consent(driver)
+
+    assert all(button.clicks == 0 for button in buttons)
 
 
 @pytest.mark.parametrize(

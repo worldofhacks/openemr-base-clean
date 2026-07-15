@@ -124,6 +124,22 @@ class _UploadedDocument:
     content_hash: str
 
 
+class _FreshRequestClient:
+    """Fully read each response on a fresh transport connection before closing it."""
+
+    def __init__(
+        self,
+        factory: Callable[..., httpx.Client],
+        options: Mapping[str, object],
+    ) -> None:
+        self._factory = factory
+        self._options = dict(options)
+
+    def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        with self._factory(**self._options) as client:
+            return client.request(method, url, **kwargs)
+
+
 class LiveWritePathVerifier:
     """Run the live contract without ever handling raw SMART credentials."""
 
@@ -131,7 +147,7 @@ class LiveWritePathVerifier:
         self,
         config: VerificationConfig,
         *,
-        client: httpx.Client,
+        client: httpx.Client | _FreshRequestClient,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -414,18 +430,21 @@ def main(
 ) -> int:
     try:
         config = VerificationConfig.from_env(environ)
-        with client_factory(
-            timeout=config.request_timeout_seconds,
-            follow_redirects=False,
-            headers={
-                "User-Agent": "openemr-copilot-w2-verifier/1",
-                # Railway occasionally completes a gzip/chunked response upstream
-                # while the local HTTPX decoder waits for framing termination. Keep
-                # verifier transport deterministic; response contracts stay unchanged.
-                "Accept-Encoding": "identity",
+        client = _FreshRequestClient(
+            client_factory,
+            {
+                "timeout": config.request_timeout_seconds,
+                "follow_redirects": False,
+                "headers": {
+                    "User-Agent": "openemr-copilot-w2-verifier/1",
+                    # Railway occasionally completes a gzip/chunked response upstream
+                    # while the local HTTPX decoder waits for framing termination. Keep
+                    # verifier transport deterministic; contracts stay unchanged.
+                    "Accept-Encoding": "identity",
+                },
             },
-        ) as client:
-            result = LiveWritePathVerifier(config, client=client, sleep=sleep).run()
+        )
+        result = LiveWritePathVerifier(config, client=client, sleep=sleep).run()
     except VerificationError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1

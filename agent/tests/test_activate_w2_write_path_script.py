@@ -719,7 +719,7 @@ class _PreparedConsentDriver:
             return self.buttons
         if (by, value) == (
             "css selector",
-            'input[data-w2-observation-rs="1"]',
+            'form[data-w2-exact-scope-consent="1"]',
         ):
             return [_ConsentElement()] * self.marker_count
         return []
@@ -769,7 +769,7 @@ class _AuthorizationWindowDriver:
         return []
 
 
-def test_smart_consent_prepares_only_the_known_mixed_version_scope_collision() -> None:
+def test_smart_consent_attests_native_mixed_versions_without_scope_injection() -> None:
     driver = _ConsentDriver("prepared")
 
     SeleniumSmartSession._prepare_exact_scope_consent(driver)
@@ -781,13 +781,18 @@ def test_smart_consent_prepares_only_the_known_mixed_version_scope_collision() -
     assert params["returnByValue"] is True
     expression = params["expression"]
     assert json.dumps(sorted(REQUIRED_SMART_SCOPES)) in expression
-    assert "user/Observation.rs" in expression
+    assert ".resource-version-actions" in expression
+    assert "JSON.parse" in expression
+    assert "w2ExactScopeConsent" in expression
     assert "arguments[0]" not in expression
     assert "button.click()" not in expression
     assert "form.submit()" not in expression
     assert "removeAttribute('name')" not in expression
-    assert "form.appendChild(input)" in expression
+    assert "document.createElement('input')" not in expression
+    assert "input.name =" not in expression
+    assert "form.appendChild(input)" not in expression
     assert "form.insertBefore" not in expression
+    assert "dataW2ObservationRs" not in expression
 
 
 def test_smart_consent_reacquires_button_after_context_selection() -> None:
@@ -895,9 +900,14 @@ def test_smart_consent_frame_recovery_is_bounded_and_fails_closed(
 
 @pytest.mark.parametrize(
     ("buttons", "marker_count"),
-    [([], 1), ([_ConsentElement(), _ConsentElement()], 1), ([_ConsentElement()], 0)],
+    [
+        ([], 1),
+        ([_ConsentElement(), _ConsentElement()], 1),
+        ([_ConsentElement()], 0),
+        ([_ConsentElement(disabled="disabled")], 1),
+    ],
 )
-def test_smart_consent_does_not_submit_without_unique_button_and_patch_marker(
+def test_smart_consent_does_not_submit_without_unique_button_and_attestation_marker(
     buttons: list[_ConsentElement], marker_count: int
 ) -> None:
     driver = _PreparedConsentDriver(buttons=buttons, marker_count=marker_count)
@@ -912,9 +922,10 @@ def test_smart_consent_does_not_submit_without_unique_button_and_patch_marker(
     "result",
     [
         "consent_not_ready",
+        "scope_metadata_missing",
+        "scope_metadata_invalid",
         "non_resource_scope_mismatch",
         "resource_scope_mismatch",
-        "collision_not_exact",
     ],
 )
 def test_smart_consent_stops_fail_closed_when_exact_submission_is_not_attested(

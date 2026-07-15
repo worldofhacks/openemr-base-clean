@@ -655,6 +655,8 @@ def test_smart_consent_prepares_only_the_known_mixed_version_scope_collision() -
     assert "button.click()" not in expression
     assert "form.submit()" not in expression
     assert "removeAttribute('name')" not in expression
+    assert "form.appendChild(input)" in expression
+    assert "form.insertBefore" not in expression
 
 
 def test_smart_consent_reacquires_button_after_context_selection() -> None:

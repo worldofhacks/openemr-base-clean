@@ -1454,7 +1454,7 @@ class SeleniumSmartSession:
                 input.name = 'scope[user/Observation.rs]';
                 input.value = target;
                 input.dataset.w2ObservationRs = '1';
-                form.insertBefore(input, dynamic);
+                form.appendChild(input);
             } else if (
                 existing[0].name !== 'scope[user/Observation.rs]' ||
                 existing[0].value !== target || existing[0].type !== 'hidden'

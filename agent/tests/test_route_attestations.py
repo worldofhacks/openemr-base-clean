@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
@@ -176,6 +177,30 @@ async def test_import_is_additive_atomic_and_activates_complete_union() -> None:
         if "agent_patient_route_generation_membership" in sql
     ]
     assert len(membership_batches[0]) == 2
+    patient_inserts = [
+        args
+        for sql, args in conn.executed_many
+        if "INSERT INTO agent_patient_route_attestations" in sql
+    ]
+    encounter_inserts = [
+        args
+        for sql, args in conn.executed_many
+        if "INSERT INTO agent_encounter_route_attestations" in sql
+    ]
+    assert len(patient_inserts) == 1 and len(patient_inserts[0]) == 1
+    assert patient_inserts[0][0][:3] == (
+        UUID(PATIENT_B),
+        20,
+        result.generation_id,
+    )
+    assert len(encounter_inserts) == 1 and len(encounter_inserts[0]) == 1
+    assert encounter_inserts[0][0][:4] == (
+        UUID(ENCOUNTER_B),
+        200,
+        UUID(PATIENT_B),
+        result.generation_id,
+    )
+    assert all(isinstance(row[1], UUID) for row in membership_batches[0])
     assert conn.closed is True
 
 
@@ -259,7 +284,7 @@ async def test_encounter_resolution_is_patient_qualified_and_does_not_leak_ids()
     with pytest.raises(RouteAttestationNotFound) as exc_info:
         await repository.resolve_encounter(PATIENT_B, ENCOUNTER_A)
 
-    assert conn.args == (PATIENT_B, ENCOUNTER_A, None)
+    assert conn.args == (UUID(PATIENT_B), UUID(ENCOUNTER_A), None)
     assert str(exc_info.value) == "attested route not found"
     assert PATIENT_B not in str(exc_info.value)
     assert ENCOUNTER_A not in str(exc_info.value)

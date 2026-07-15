@@ -381,7 +381,7 @@ class PostgresRouteAttestationRepository:
                     ON p.patient_uuid=m.patient_uuid
                  WHERE p.patient_uuid=$1::uuid
                 """,
-                patient_uuid,
+                UUID(patient_uuid),
                 generation_id,
             )
         except Exception as exc:  # noqa: BLE001 - backend ambiguity must fail closed
@@ -428,8 +428,8 @@ class PostgresRouteAttestationRepository:
                  WHERE e.encounter_uuid=$2::uuid
                    AND e.patient_uuid=$1::uuid
                 """,
-                patient_uuid,
-                encounter_uuid,
+                UUID(patient_uuid),
+                UUID(encounter_uuid),
                 generation_id,
             )
         except Exception as exc:  # noqa: BLE001 - backend ambiguity must fail closed
@@ -515,8 +515,13 @@ class PostgresRouteAttestationRepository:
                         VALUES ($1::uuid,$2::bigint,$3,$4)
                         """,
                         [
-                            (uuid, patients[uuid], generation_id, now)
-                            for uuid in sorted(new_patient_ids)
+                            (
+                                UUID(route_uuid),
+                                int(patients[route_uuid]),
+                                generation_id,
+                                now,
+                            )
+                            for route_uuid in sorted(new_patient_ids)
                         ],
                     )
                 if new_encounter_ids:
@@ -529,13 +534,13 @@ class PostgresRouteAttestationRepository:
                         """,
                         [
                             (
-                                uuid,
-                                encounters[uuid][0],
-                                encounters[uuid][1],
+                                UUID(route_uuid),
+                                int(encounters[route_uuid][0]),
+                                UUID(encounters[route_uuid][1]),
                                 generation_id,
                                 now,
                             )
-                            for uuid in sorted(new_encounter_ids)
+                            for route_uuid in sorted(new_encounter_ids)
                         ],
                     )
                 await conn.executemany(  # type: ignore[attr-defined]
@@ -545,7 +550,10 @@ class PostgresRouteAttestationRepository:
                     VALUES ($1,$2::uuid)
                     ON CONFLICT DO NOTHING
                     """,
-                    [(generation_id, uuid) for uuid in sorted(patients)],
+                    [
+                        (generation_id, UUID(route_uuid))
+                        for route_uuid in sorted(patients)
+                    ],
                 )
                 if encounters:
                     await conn.executemany(  # type: ignore[attr-defined]
@@ -555,7 +563,10 @@ class PostgresRouteAttestationRepository:
                         VALUES ($1,$2::uuid)
                         ON CONFLICT DO NOTHING
                         """,
-                        [(generation_id, uuid) for uuid in sorted(encounters)],
+                        [
+                            (generation_id, UUID(route_uuid))
+                            for route_uuid in sorted(encounters)
+                        ],
                     )
                 await conn.execute(  # type: ignore[attr-defined]
                     """

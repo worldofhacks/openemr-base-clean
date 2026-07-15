@@ -795,6 +795,7 @@ class RailwayCLI:
                 "--detach",
                 "--yes",
                 "--json",
+                "--path-as-root",
                 ".",
             ],
             label=f"Railway deployment upload for {service}",

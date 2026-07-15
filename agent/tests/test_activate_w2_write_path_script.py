@@ -437,6 +437,26 @@ def test_deploy_tracks_the_exact_new_deployment_from_deployment_history(
     railway._wait_for_success("agent", previous_deployments={"old-deployment"})
 
 
+def test_upload_uses_the_explicit_context_as_archive_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], object]] = []
+    railway = RailwayCLI(ActivationConfig.from_env(_ENV))
+    monkeypatch.setattr(
+        railway,
+        "_run",
+        lambda command, **kwargs: calls.append((command, kwargs.get("cwd"))) or "",
+    )
+
+    railway._upload("document-worker", activation_module.Path("/tmp/worker-context"))
+
+    assert len(calls) == 1
+    command, cwd = calls[0]
+    assert "--path-as-root" in command
+    assert command[-1] == "."
+    assert cwd == activation_module.Path("/tmp/worker-context")
+
+
 def test_openemr_attestation_discovers_the_schema_instead_of_trusting_template_db() -> (
     None
 ):

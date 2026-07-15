@@ -199,10 +199,12 @@ On every run, `agent/scripts/activate_w2_write_path.py` performs this idempotent
    synthetic UUID from OpenEMR's `data-patient-id`. It refuses an absent, ambiguous, or
    defaulted patient. Only the opaque agent session remains in memory; the token never
    leaves the web service.
-9. Runs `agent/scripts/verify_w2_write_path.py` in-process. The intake form is uploaded
-   first, so delegated encounter ownership fails before any document write. It then runs
-   intake + lab through extract, ground, exactly-once write, fresh Binary readback, cite,
-   and answer, and requires `/ready` green again.
+9. Runs `agent/scripts/verify_w2_write_path.py` in a clean child process containing only
+   the five `W2_VERIFY_*` synthetic context variables; the OpenEMR admin password and
+   owner-managed secrets are never inherited. The intake form is uploaded first, so
+   delegated encounter ownership fails before any document write. It then runs intake +
+   lab through extract, ground, exactly-once write, fresh Binary readback, cite, and
+   answer, and requires `/ready` green again.
 10. On any failure after an enable attempt, pins both services disabled and redeploys the
     disabled configuration. Re-running is safe: patient + content hash drive the durable
     exactly-once ledger.

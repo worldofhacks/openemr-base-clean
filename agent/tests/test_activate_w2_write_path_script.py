@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-import importlib
 import json
 import subprocess
 from types import SimpleNamespace
@@ -560,20 +559,70 @@ def test_openemr_attestation_provisions_json_mime_and_discovers_the_schema() -> 
     assert "application/*" not in semantic_script
 
 
-def test_verify_script_imports_its_sibling_under_direct_script_execution(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    imported: list[str] = []
+def test_verify_script_runs_in_a_secret_isolated_child_process(capsys) -> None:
+    verification_env = {
+        "W2_VERIFY_AGENT_BASE_URL": "https://agent.example",
+        "W2_VERIFY_SESSION_ID": "opaque-session",
+        "W2_VERIFY_PATIENT_ID": _PATIENT_UUID,
+        "W2_VERIFY_ENCOUNTER_ID": _ENCOUNTER_UUID,
+        "W2_VERIFY_SYNTHETIC_ONLY_ACK": "synthetic-patient-and-documents",
+    }
+    calls: list[tuple[list[str], dict[str, object]]] = []
 
-    def fake_import(name: str) -> object:
-        imported.append(name)
-        return SimpleNamespace(main=lambda **_kwargs: 0)
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=(
+                "PASS: deployed W2 write path verified "
+                "(2 documents, 2 source Binaries, 2 artifact Binaries, "
+                "20 grounded citations)\n"
+            ),
+            stderr="",
+        )
 
-    monkeypatch.setattr(activation_module, "__package__", "")
-    monkeypatch.setattr(importlib, "import_module", fake_import)
+    assert VerifyScript(run_command=run).run(verification_env) is True
+    assert len(calls) == 1
+    command, kwargs = calls[0]
+    assert command == [
+        activation_module.sys.executable,
+        str(
+            activation_module.Path(activation_module.__file__)
+            .resolve()
+            .with_name("verify_w2_write_path.py")
+        ),
+    ]
+    assert kwargs["env"] == verification_env
+    assert kwargs["cwd"] == activation_module.Path(
+        activation_module.__file__
+    ).resolve().parents[1]
+    assert kwargs["capture_output"] is True
+    assert kwargs["text"] is True
+    assert kwargs["timeout"] == 900
+    assert kwargs["check"] is False
+    assert "20 grounded citations" in capsys.readouterr().out
 
-    assert VerifyScript().run({}) is True
-    assert imported == ["verify_w2_write_path"]
+
+def test_verify_script_never_forwards_child_failure_output(capsys) -> None:
+    leaked = "owner-secret-must-not-render"
+    verification_env = {
+        "W2_VERIFY_AGENT_BASE_URL": "https://agent.example",
+        "W2_VERIFY_SESSION_ID": "opaque-session",
+        "W2_VERIFY_PATIENT_ID": _PATIENT_UUID,
+        "W2_VERIFY_ENCOUNTER_ID": _ENCOUNTER_UUID,
+        "W2_VERIFY_SYNTHETIC_ONLY_ACK": "synthetic-patient-and-documents",
+    }
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr=leaked)
+
+    with pytest.raises(ActivationError, match="synthetic deployed write-path"):
+        VerifyScript(run_command=run).run(verification_env)
+
+    captured = capsys.readouterr()
+    assert leaked not in captured.out
+    assert leaked not in captured.err
 
 
 def test_smart_browser_failure_reports_only_stage_and_exception_type() -> None:

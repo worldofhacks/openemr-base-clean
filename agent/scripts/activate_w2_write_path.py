@@ -17,7 +17,6 @@ W2-D1/D3/D6/D9/D10; W2_ARCHITECTURE §3/§5.
 
 from __future__ import annotations
 
-import importlib
 import json
 import os
 import re
@@ -28,7 +27,7 @@ import sys
 import tempfile
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -46,6 +45,21 @@ DEFAULT_OPENEMR_BASE_URL = "https://openemr-production-cc95.up.railway.app"
 DEFAULT_SYNTHETIC_PATIENT_ID = "a234b786-539a-4f9a-96a0-432293226f02"
 DEFAULT_SMART_CLIENT_NAME = "AgentForge Week 2 Write Client"
 SYNTHETIC_ACK = "synthetic-patient-and-documents"
+
+_VERIFY_ENV_NAMES = frozenset(
+    {
+        "W2_VERIFY_AGENT_BASE_URL",
+        "W2_VERIFY_SESSION_ID",
+        "W2_VERIFY_PATIENT_ID",
+        "W2_VERIFY_ENCOUNTER_ID",
+        "W2_VERIFY_SYNTHETIC_ONLY_ACK",
+    }
+)
+_VERIFY_PASS = re.compile(
+    r"PASS: deployed W2 write path verified "
+    r"\((\d+) documents, (\d+) source Binaries, (\d+) artifact Binaries, "
+    r"(\d+) grounded citations\)"
+)
 
 REQUIRED_SMART_SCOPES = frozenset(
     {
@@ -1767,16 +1781,43 @@ class SeleniumSmartSession:
 
 
 class VerifyScript:
-    def run(self, environ: Mapping[str, str]) -> object:
-        module_name = (
-            f"{__package__}.verify_w2_write_path"
-            if __package__
-            else "verify_w2_write_path"
-        )
-        verify_main = importlib.import_module(module_name).main
+    def __init__(
+        self,
+        *,
+        run_command: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    ) -> None:
+        self._run_command = run_command
 
-        if verify_main(environ=environ) != 0:
+    def run(self, environ: Mapping[str, str]) -> object:
+        child_env = dict(environ)
+        if set(child_env) != _VERIFY_ENV_NAMES or not all(child_env.values()):
+            raise ActivationError("synthetic deployed write-path environment rejected")
+        verify_path = Path(__file__).resolve().with_name("verify_w2_write_path.py")
+        command = [sys.executable, str(verify_path)]
+        try:
+            completed = self._run_command(
+                command,
+                cwd=verify_path.parents[1],
+                env=child_env,
+                capture_output=True,
+                text=True,
+                timeout=900,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
             raise ActivationError("synthetic deployed write-path verification failed")
+
+        match = _VERIFY_PASS.fullmatch(completed.stdout.strip())
+        if completed.returncode != 0 or match is None:
+            raise ActivationError("synthetic deployed write-path verification failed")
+        documents, sources, artifacts, citations = map(int, match.groups())
+        if (documents, sources, artifacts) != (2, 2, 2) or citations < 2:
+            raise ActivationError("synthetic deployed write-path verification failed")
+        print(
+            "PASS: deployed W2 write path verified "
+            f"({documents} documents, {sources} source Binaries, "
+            f"{artifacts} artifact Binaries, {citations} grounded citations)"
+        )
         return True
 
 

@@ -90,9 +90,12 @@ def assert_required_scopes_granted(granted: list[str] | set[str]) -> None:
 def assert_w2_scopes_granted(granted: list[str] | set[str]) -> None:
     """Fail closed unless the replacement client granted the complete W2 manifest."""
 
-    missing = set(W2_REQUESTED_SCOPES) - set(granted)
-    if missing:
+    granted_set = set(granted)
+    expected = set(W2_REQUESTED_SCOPES)
+    missing = expected - granted_set
+    unexpected = granted_set - expected
+    if missing or unexpected:
         raise ScopeCoverageError(
-            "OpenEMR did not grant the complete delegated W2 document scope manifest. "
-            f"Missing: {sorted(missing)}"
+            "OpenEMR did not grant exactly the delegated W2 document scope manifest. "
+            f"Missing: {sorted(missing)}; Unexpected: {sorted(unexpected)}"
         )

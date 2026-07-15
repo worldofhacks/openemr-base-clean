@@ -11,6 +11,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
+import hmac
 from typing import Protocol, cast
 
 from app.auth.job_credentials import (
@@ -21,6 +23,10 @@ from app.auth.job_credentials import (
 from app.auth.smart_client import TokenResponse
 from app.config import Settings
 from app.ingestion.artifacts import PostgresArtifactStore
+from app.ingestion.readback import (
+    BinaryReadbackVerification,
+    DocumentReadbackVerification,
+)
 from app.ingestion.pages import EphemeralPageRenderer
 from app.ingestion.pipeline import DocumentExtractionPipeline, PipelineFailure
 from app.ingestion.processor import DocumentProcessor
@@ -40,6 +46,7 @@ from app.schemas.documents import (
     RetryAccepted,
     RetryRequest,
 )
+from app.schemas.extraction import ExtractionArtifact
 from app.session.store import Session
 from app.tools.fhir_client import FhirClient
 from app.writeback.documents_api import OpenEMRDocumentBackend
@@ -155,8 +162,16 @@ class _GatewayFactory:
             )
         self._base_url = str(rest_base)
         self._attestations = (
-            CategoryAttestation(settings.source_document_path, source_id, True),
-            CategoryAttestation(settings.artifact_document_path, artifact_id, True),
+            CategoryAttestation(
+                settings.source_document_path,
+                source_id,
+                settings.source_document_category_acl == "patients|docs",
+            ),
+            CategoryAttestation(
+                settings.artifact_document_path,
+                artifact_id,
+                settings.artifact_document_category_acl == "patients|docs",
+            ),
         )
 
     async def for_record(self, record: DocumentRecord) -> OpenEMRLiveGateway:
@@ -277,11 +292,13 @@ class _DocumentOperationsFacade:
         settings: Settings,
         repository: PostgresDocumentRepository,
         intent_repository: PostgresIntentRepository,
+        artifact_store: PostgresArtifactStore,
         credentials: CredentialVault,
     ) -> None:
         self._settings = settings
         self._repository = repository
         self._intents = intent_repository
+        self._artifacts = artifact_store
         self._gateways = _GatewayFactory(settings, credentials)
         self._renderer = EphemeralPageRenderer(
             repository, fetch_source=self._fetch_source
@@ -357,6 +374,53 @@ class _DocumentOperationsFacade:
     ) -> object:
         return await self._renderer.page_png(session, document_id, page_number)
 
+    async def verify_readback(
+        self, session: Session, document_id: str
+    ) -> DocumentReadbackVerification:
+        """Independently re-read both OpenEMR Binaries and expose digests only.
+
+        The record check happens before credential or network access. The existing
+        record-bound delegated credential then performs the OpenEMR reads, preserving
+        both the patient pin and the non-DEBUG Binary-readback guard.
+        """
+
+        record = await self._repository.get(document_id)
+        if record.patient_id != session.patient_id:
+            from app.ingestion.service import DocumentAccessError
+
+            raise DocumentAccessError(document_id)
+        gateway = await self._gateways.for_record(record)
+        source = await _verify_binary_digest(
+            gateway,
+            patient_id=record.patient_id,
+            category_path=self._settings.source_document_path,
+            marker=f"document:{record.document_id}:source:v1",
+            expected_hash=record.content_hash,
+        )
+
+        artifact_result: BinaryReadbackVerification | None = None
+        refs = await self._artifacts.refs_for_document(record.document_id)
+        if refs is not None:
+            artifact = self._artifacts.resolve(refs.artifact_ref)
+            if not isinstance(artifact, ExtractionArtifact):
+                raise ValueError("persisted extraction artifact is unavailable")
+            artifact_bytes = artifact.model_dump_json(warnings=False).encode("utf-8")
+            artifact_result = await _verify_binary_digest(
+                gateway,
+                patient_id=record.patient_id,
+                category_path=self._settings.artifact_document_path,
+                marker=(
+                    f"document:{record.document_id}:artifact:"
+                    f"v{artifact.artifact_version}"
+                ),
+                expected_hash=hashlib.sha256(artifact_bytes).hexdigest(),
+            )
+        return DocumentReadbackVerification(
+            document_id=record.document_id,
+            source=source,
+            artifact=artifact_result,
+        )
+
     async def _fetch_source(self, record: DocumentRecord) -> bytes:
         gateway = await self._gateways.for_record(record)
         return await OpenEMRSourceLoader(
@@ -427,6 +491,7 @@ def build_document_runtime(
         settings=settings,
         repository=repository,
         intent_repository=intents,
+        artifact_store=artifacts,
         credentials=credential_vault,
     )
     return DocumentRuntime(
@@ -476,6 +541,43 @@ async def _encounter_belongs_to_patient(
         ):
             matches += 1
     return matches == 1
+
+
+async def _verify_binary_digest(
+    gateway: OpenEMRLiveGateway,
+    *,
+    patient_id: str,
+    category_path: str,
+    marker: str,
+    expected_hash: str,
+) -> BinaryReadbackVerification:
+    """Require one marker candidate, then hash bytes re-read through FHIR Binary."""
+
+    candidates = [
+        item
+        for item in await gateway.list_documents(
+            patient_id=patient_id, category_path=category_path
+        )
+        if item.filename.startswith(f"{marker}-")
+    ]
+    if len(candidates) != 1:
+        return BinaryReadbackVerification(
+            expected_hash=expected_hash,
+            observed_hash=None,
+            verified=False,
+        )
+    content = await gateway.read_document_bytes(
+        patient_id=patient_id, remote_id=candidates[0].remote_id
+    )
+    observed_hash = hashlib.sha256(content).hexdigest() if content is not None else None
+    return BinaryReadbackVerification(
+        expected_hash=expected_hash,
+        observed_hash=observed_hash,
+        verified=(
+            observed_hash is not None
+            and hmac.compare_digest(observed_hash, expected_hash)
+        ),
+    )
 
 
 def _patient_reference_matches(reference: str, patient_id: str) -> bool:

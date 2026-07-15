@@ -10,6 +10,7 @@ wrapped in Pydantic SecretStr so they never leak through repr()/logs.
 from __future__ import annotations
 
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet
 from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
@@ -91,8 +92,10 @@ class Settings(BaseSettings):
     openemr_rest_base_url: HttpUrl | None = None
     source_document_path: str = "/AI-Source-Documents"
     source_document_category_id: str | None = None
+    source_document_category_acl: str | None = None
     artifact_document_path: str = "/AI-Extractions"
     artifact_document_category_id: str | None = None
+    artifact_document_category_acl: str | None = None
     openemr_binary_readback_safe: bool = False
     document_credential_key: SecretStr | None = Field(
         default=None,
@@ -140,10 +143,27 @@ class Settings(BaseSettings):
         missing: list[str] = []
         if self.openemr_rest_base_url is None:
             missing.append("OPENEMR_REST_BASE_URL")
+        callback = urlsplit(self.agent_callback_url)
+        if (
+            callback.scheme != "https"
+            or not callback.netloc
+            or callback.path != "/callback"
+            or callback.query
+            or callback.fragment
+        ):
+            missing.append("AGENT_CALLBACK_URL=https://<agent-host>/callback")
+        if self.source_document_path != "/AI-Source-Documents":
+            missing.append("SOURCE_DOCUMENT_PATH=/AI-Source-Documents")
         if not (self.source_document_category_id or "").strip():
             missing.append("SOURCE_DOCUMENT_CATEGORY_ID")
+        if self.source_document_category_acl != "patients|docs":
+            missing.append("SOURCE_DOCUMENT_CATEGORY_ACL=patients|docs")
+        if self.artifact_document_path != "/AI-Extractions":
+            missing.append("ARTIFACT_DOCUMENT_PATH=/AI-Extractions")
         if not (self.artifact_document_category_id or "").strip():
             missing.append("ARTIFACT_DOCUMENT_CATEGORY_ID")
+        if self.artifact_document_category_acl != "patients|docs":
+            missing.append("ARTIFACT_DOCUMENT_CATEGORY_ACL=patients|docs")
         if not self.openemr_binary_readback_safe:
             missing.append("OPENEMR_BINARY_READBACK_SAFE=true")
         if self.document_credential_key is None:

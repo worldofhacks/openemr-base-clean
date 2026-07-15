@@ -23,10 +23,13 @@ def _settings_values() -> dict[str, object]:
         "smart_client_secret": "synthetic-secret",
         "anthropic_api_key": "synthetic-provider-key",
         "session_store_dsn": "postgresql://u:p@localhost:5432/agent",
+        "agent_callback_url": "https://agent.test/callback",
         "w2_document_runtime_enabled": True,
         "openemr_rest_base_url": "https://openemr.test/apis/default",
         "source_document_category_id": "source-category-synthetic",
+        "source_document_category_acl": "patients|docs",
         "artifact_document_category_id": "artifact-category-synthetic",
+        "artifact_document_category_acl": "patients|docs",
         "openemr_binary_readback_safe": True,
         "document_credential_key": _KEY,
     }

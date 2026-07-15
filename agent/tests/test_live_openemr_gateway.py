@@ -667,6 +667,44 @@ async def test_vital_create_rejects_a_marker_hash_mismatch_before_http():
 
 
 @pytest.mark.asyncio
+async def test_vital_reconcile_maps_bound_ids_and_accepts_empty_404():
+    from app.writeback.live_gateway import BinaryReadGuard, OpenEMRLiveGateway
+
+    calls: list[tuple[str, str]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        assert request.headers["authorization"] == f"Bearer {TOKEN}"
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = OpenEMRLiveGateway(
+            base_url=BASE_URL,
+            principal=_principal(),
+            category_attestations=(),
+            legacy_route_attestation=_legacy_attestation(),
+            binary_guard=BinaryReadGuard("WARNING"),
+            http_client=client,
+        )
+
+        assert (
+            await gateway.list_vitals(
+                patient_id=PATIENT_ID,
+                encounter_id=ENCOUNTER_ID,
+            )
+            == []
+        )
+
+    assert calls == [
+        (
+            "GET",
+            f"/apis/default/api/patient/{STANDARD_PATIENT_ID}/encounter/"
+            f"{STANDARD_ENCOUNTER_ID}/vital",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_vital_route_rejects_unattested_encounter_before_http():
     from app.writeback.live_gateway import (
         BinaryReadGuard,

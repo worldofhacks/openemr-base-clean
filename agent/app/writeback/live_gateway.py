@@ -280,7 +280,13 @@ class OpenEMRLiveGateway:
         self._authorize_patient(patient_id)
         body = await self._get_json(
             self._vital_url(patient_id, encounter_id),
+            missing_ok=True,
         )
+        # OpenEMR's standard vital collection route maps a valid empty result to 404.
+        # Both legacy IDs were matched to the delegated UUIDs by ``_vital_url`` before
+        # dispatch, so this endpoint-specific response is safe to reconcile as empty.
+        if body is None:
+            return []
         records: list[VitalRecord] = []
         for row in _records(body):
             remote_id = row.get("id")

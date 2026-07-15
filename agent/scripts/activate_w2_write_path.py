@@ -1263,6 +1263,7 @@ class SeleniumSmartSession:
                 self._require_origin(
                     driver.current_url, self._config.openemr_base_url, "authorization"
                 )
+                self._prepare_exact_scope_consent(driver)
                 next_step.click()
                 stage = "SMART callback"
                 session_id = wait.until(session_from_callback)
@@ -1285,6 +1286,147 @@ class SeleniumSmartSession:
                     driver.quit()
                 except Exception:
                     pass
+
+    @staticmethod
+    def _prepare_exact_scope_consent(driver: Any) -> None:
+        """Patch only OpenEMR's known mixed V1/V2 Observation UI collision.
+
+        OpenEMR's server still validates every submitted scope against both the
+        original authorization request and the registered client.  The browser
+        helper first reconstructs the page's prospective grant and requires that
+        its *only* gap from the frozen 16-scope manifest is ``Observation.rs``
+        collapsed into the preceding V1 ``Observation.read`` card.  It then adds
+        that one requested scope outside the container OpenEMR rebuilds on click;
+        the normal authorize button, CSRF check, and server validation remain in
+        control of the submission.
+        """
+
+        result = driver.execute_script(
+            r"""
+            const expected = new Set(arguments[0]);
+            const form = document.getElementById('userLogin');
+            const button = document.getElementById('authorize-btn');
+            const dynamic = document.getElementById('dynamic-scopes-container');
+            if (!form || !button || !dynamic || button.disabled) {
+                return 'consent_not_ready';
+            }
+
+            const prospective = new Set();
+            document.querySelectorAll('input.app-scope').forEach((input) => {
+                if (input.type === 'hidden' || input.checked) {
+                    prospective.add(input.value);
+                }
+            });
+
+            const actionOrder = ['c', 'r', 'u', 'd', 's'];
+            document.querySelectorAll('.resource-context').forEach((contextInput) => {
+                const resource = contextInput.dataset.resource;
+                const context = contextInput.value;
+                const versionInput = document.querySelector(
+                    `.resource-version[data-resource="${resource}"]`
+                );
+                const version = versionInput ? versionInput.value : 'v2';
+                const actions = Array.from(document.querySelectorAll(
+                    `.action-checkbox[data-resource="${resource}"]:checked`
+                )).map((input) => input.dataset.action);
+                if (actions.length === 0) return;
+
+                if (version === 'v1') {
+                    if (actions.includes('r') || actions.includes('s')) {
+                        prospective.add(`${context}/${resource}.read`);
+                    }
+                    if (actions.includes('c') || actions.includes('u') || actions.includes('d')) {
+                        prospective.add(`${context}/${resource}.write`);
+                    }
+                    return;
+                }
+
+                actions.sort((left, right) =>
+                    actionOrder.indexOf(left) - actionOrder.indexOf(right)
+                );
+                const suffix = actions.join('');
+                const master = document.querySelector(
+                    `.resource-master-checkbox[data-resource="${resource}"]`
+                );
+                const masterChecked = master ? master.checked : true;
+                const unrestricted = master && master.dataset.unrestricted === '1';
+                const restrictions = Array.from(document.querySelectorAll(
+                    `.restriction-checkbox[data-resource="${resource}"]:checked`
+                )).map((input) => input.dataset.restriction);
+                if (!masterChecked || !unrestricted) {
+                    restrictions.forEach((restriction) => prospective.add(
+                        `${context}/${resource}.${suffix}?category=${restriction}`
+                    ));
+                } else {
+                    prospective.add(`${context}/${resource}.${suffix}`);
+                }
+            });
+
+            const target = 'user/Observation.rs';
+            const missing = Array.from(expected).filter((scope) => !prospective.has(scope));
+            const unexpected = Array.from(prospective).filter((scope) => !expected.has(scope));
+            const nonResource = (scope) => !/^(patient|user|system)\//.test(scope);
+            if (missing.some(nonResource) || unexpected.some(nonResource)) {
+                return 'non_resource_scope_mismatch';
+            }
+            if (missing.length !== 1 || missing[0] !== target || unexpected.length !== 0) {
+                return 'resource_scope_mismatch';
+            }
+
+            const observationContext = document.querySelector(
+                '.resource-context[data-resource="Observation"]'
+            );
+            const observationVersion = document.querySelector(
+                '.resource-version[data-resource="Observation"]'
+            );
+            const observationMaster = document.querySelector(
+                '.resource-master-checkbox[data-resource="Observation"]'
+            );
+            const observationActions = Array.from(document.querySelectorAll(
+                '.action-checkbox[data-resource="Observation"]:checked'
+            )).map((input) => input.dataset.action).sort();
+            if (
+                !observationContext || observationContext.value !== 'user' ||
+                !observationVersion || observationVersion.value !== 'v1' ||
+                !observationMaster || !observationMaster.checked ||
+                observationActions.join(',') !== 'r,s' ||
+                !prospective.has('user/Observation.read') ||
+                !prospective.has('api:oemr')
+            ) {
+                return 'collision_not_exact';
+            }
+
+            const existing = form.querySelectorAll('[data-w2-observation-rs="1"]');
+            if (existing.length > 1) return 'collision_not_exact';
+            if (existing.length === 0) {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'scope[user/Observation.rs]';
+                input.value = target;
+                input.dataset.w2ObservationRs = '1';
+                form.insertBefore(input, dynamic);
+            } else if (
+                existing[0].name !== 'scope[user/Observation.rs]' ||
+                existing[0].value !== target || existing[0].type !== 'hidden'
+            ) {
+                return 'collision_not_exact';
+            }
+            prospective.add(target);
+            if (
+                prospective.size !== expected.size ||
+                Array.from(expected).some((scope) => !prospective.has(scope))
+            ) {
+                return 'collision_not_exact';
+            }
+            return 'prepared';
+            """,
+            sorted(REQUIRED_SMART_SCOPES),
+        )
+        if result != "prepared":
+            raise ActivationError(
+                "exact SMART consent preparation failed closed "
+                f"({result if isinstance(result, str) else 'unknown'})"
+            )
 
     def _ensure_loopback_selenium(self, selenium_url: str) -> None:
         parsed = urlsplit(selenium_url)

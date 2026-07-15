@@ -544,6 +544,48 @@ def test_smart_browser_failure_reports_only_stage_and_exception_type() -> None:
     assert category == "token-exchange-http-400"
 
 
+class _ConsentDriver:
+    def __init__(self, result: str) -> None:
+        self.result = result
+        self.calls: list[tuple[str, list[str]]] = []
+
+    def execute_script(self, script: str, scopes: list[str]) -> str:
+        self.calls.append((script, scopes))
+        return self.result
+
+
+def test_smart_consent_prepares_only_the_known_mixed_version_scope_collision() -> None:
+    driver = _ConsentDriver("prepared")
+
+    SeleniumSmartSession._prepare_exact_scope_consent(driver)
+
+    assert len(driver.calls) == 1
+    script, scopes = driver.calls[0]
+    assert scopes == sorted(REQUIRED_SMART_SCOPES)
+    assert "user/Observation.rs" in script
+    assert "button.click()" not in script
+    assert "form.submit()" not in script
+    assert "removeAttribute('name')" not in script
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        "consent_not_ready",
+        "non_resource_scope_mismatch",
+        "resource_scope_mismatch",
+        "collision_not_exact",
+    ],
+)
+def test_smart_consent_stops_fail_closed_when_exact_submission_is_not_attested(
+    result: str,
+) -> None:
+    driver = _ConsentDriver(result)
+
+    with pytest.raises(ActivationError, match="exact SMART consent preparation"):
+        SeleniumSmartSession._prepare_exact_scope_consent(driver)
+
+
 def test_worker_ensure_and_disabled_prepare_are_idempotent_without_secret_reads() -> (
     None
 ):

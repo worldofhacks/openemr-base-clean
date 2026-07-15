@@ -230,9 +230,22 @@ class OpenEMRLiveGateway:
             if _reference_matches(resource.get("subject"), "Patient", patient_fhir_id)
             for binary_id in _binary_ids(resource, filename, self._base_parts)
         }
-        if len(binary_ids) != 1:
+        if len(binary_ids) == 1:
+            binary_id = next(iter(binary_ids))
+        elif not binary_ids and _LEGACY_ID.fullmatch(remote_id) is not None:
+            # This OpenEMR fork's regular DocumentReference patient search currently
+            # maps the FHIR ``patient`` parameter to ``puuid`` but then looks for the
+            # original key, yielding an empty Bundle. Its FHIR Binary controller
+            # explicitly accepts either a document UUID or numeric document ID.
+            #
+            # The fallback does not accept an ambient/caller ID: ``filename`` proves
+            # this exact numeric ID was first returned by the attested patient/category
+            # standard list and cached under the delegated patient's UUID. Binary still
+            # performs OpenEMR's independent user/category ACL check, and the non-DEBUG
+            # guard above remains unbypassable.
+            binary_id = remote_id
+        else:
             return None
-        binary_id = next(iter(binary_ids))
         response = await self._get_response(
             f"{self._base}/fhir/Binary/{quote(binary_id, safe='')}",
             fhir=True,

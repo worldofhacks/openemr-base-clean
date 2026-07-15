@@ -319,6 +319,127 @@ async def test_document_readback_resolves_documentreference_then_binary():
     ]
 
 
+@pytest.mark.asyncio
+async def test_document_readback_uses_patient_list_bound_numeric_binary_fallback():
+    """OpenEMR's Binary controller accepts the numeric ID from its patient list.
+
+    The deployed fork currently returns an empty DocumentReference bundle for regular
+    patient documents because its internal patient search field is mis-keyed.  The
+    fallback remains patient-bound: the numeric ID must first be cached by the attested
+    patient/category standard list, and bytes are still read through the guarded FHIR
+    Binary endpoint under the delegated principal.
+    """
+
+    from app.writeback.live_gateway import (
+        BinaryReadGuard,
+        CategoryAttestation,
+        OpenEMRLiveGateway,
+    )
+
+    marker = "document:synthetic:source:v1-source.pdf"
+    calls: list[tuple[str, str, dict[str, str]]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path, dict(request.url.params)))
+        assert request.headers["authorization"] == f"Bearer {TOKEN}"
+        if request.url.path.endswith(
+            f"/api/patient/{STANDARD_PATIENT_ID}/document"
+        ):
+            return httpx.Response(200, json=[{"id": "42", "filename": marker}])
+        if request.url.path.endswith("/fhir/DocumentReference"):
+            return httpx.Response(200, json=_bundle())
+        if request.url.path.endswith("/fhir/Binary/42"):
+            return httpx.Response(200, content=b"%PDF-persisted-synthetic")
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = OpenEMRLiveGateway(
+            base_url=BASE_URL,
+            principal=_principal(),
+            category_attestations=(
+                CategoryAttestation("/AI-Source-Documents", "17", True),
+            ),
+            legacy_route_attestation=_legacy_attestation(),
+            binary_guard=BinaryReadGuard("WARNING"),
+            http_client=client,
+        )
+        documents = await gateway.list_documents(
+            patient_id=PATIENT_ID, category_path="/AI-Source-Documents"
+        )
+        assert documents == [DocumentRecord("42", marker)]
+        assert (
+            await gateway.read_document_bytes(patient_id=PATIENT_ID, remote_id="42")
+            == b"%PDF-persisted-synthetic"
+        )
+
+    assert calls == [
+        (
+            "GET",
+            f"/apis/default/api/patient/{STANDARD_PATIENT_ID}/document",
+            {"path": "/AI-Source-Documents"},
+        ),
+        (
+            "GET",
+            "/apis/default/fhir/DocumentReference",
+            {"patient": PATIENT_ID, "_count": "100"},
+        ),
+        ("GET", "/apis/default/fhir/Binary/42", {}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_document_numeric_binary_fallback_rejects_uncached_or_noncanonical_ids():
+    from app.writeback.live_gateway import (
+        BinaryReadGuard,
+        CategoryAttestation,
+        OpenEMRLiveGateway,
+    )
+
+    calls: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path.endswith(
+            f"/api/patient/{STANDARD_PATIENT_ID}/document"
+        ):
+            return httpx.Response(
+                200, json=[{"id": "0042", "filename": "synthetic.pdf"}]
+            )
+        if request.url.path.endswith("/fhir/DocumentReference"):
+            return httpx.Response(200, json=_bundle())
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = OpenEMRLiveGateway(
+            base_url=BASE_URL,
+            principal=_principal(),
+            category_attestations=(
+                CategoryAttestation("/AI-Source-Documents", "17", True),
+            ),
+            legacy_route_attestation=_legacy_attestation(),
+            binary_guard=BinaryReadGuard("WARNING"),
+            http_client=client,
+        )
+        assert (
+            await gateway.read_document_bytes(patient_id=PATIENT_ID, remote_id="42")
+            is None
+        )
+        assert await gateway.list_documents(
+            patient_id=PATIENT_ID, category_path="/AI-Source-Documents"
+        ) == [DocumentRecord("0042", "synthetic.pdf")]
+        assert (
+            await gateway.read_document_bytes(patient_id=PATIENT_ID, remote_id="0042")
+            is None
+        )
+
+    # The cached noncanonical ID may participate in normal DocumentReference
+    # discovery, but it can never be interpolated into the numeric fallback URL.
+    assert calls == [
+        f"/apis/default/api/patient/{STANDARD_PATIENT_ID}/document",
+        "/apis/default/fhir/DocumentReference",
+    ]
+
+
 @dataclass
 class _SourceGateway:
     documents: list[DocumentRecord]

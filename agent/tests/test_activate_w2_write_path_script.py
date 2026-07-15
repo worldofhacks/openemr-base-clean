@@ -18,6 +18,7 @@ import pytest
 import scripts.activate_w2_write_path as activation_module
 
 from scripts.activate_w2_write_path import (
+    LEGACY_ROUTE_VARIABLE_NAMES,
     OWNER_ONLY_SECRET_NAMES,
     ActivationConfig,
     ActivationError,
@@ -26,6 +27,7 @@ from scripts.activate_w2_write_path import (
     RailwayCLI,
     RailwayOpenEMRInspectorImpl,
     REQUIRED_SMART_SCOPES,
+    RouteAttestationSnapshot,
     SeleniumSmartSession,
     VerifyScript,
 )
@@ -40,6 +42,10 @@ _PATIENT_UUID = "a234b786-539a-4f9a-96a0-432293226f02"
 _PATIENT_ID = "731"
 _ENCOUNTER_UUID = "12345678-1234-4234-9234-123456789abc"
 _ENCOUNTER_ID = "912"
+_PATIENT_UUID_2 = "b345c897-64ab-4fab-a7b1-543304337a13"
+_PATIENT_ID_2 = "732"
+_ENCOUNTER_UUID_2 = "23456789-2345-4345-a345-23456789abcd"
+_ENCOUNTER_ID_2 = "913"
 
 _ENV = {
     "W2_ACTIVATE_RAILWAY_PROJECT_ID": "project-test",
@@ -105,6 +111,15 @@ class _FakeRailway:
         assert OWNER_ONLY_SECRET_NAMES.isdisjoint(copied)
         self.events.append(("set_variables", service, copied))
 
+    def remove_variables(self, service: str, names: list[str]) -> None:
+        assert frozenset(names) == LEGACY_ROUTE_VARIABLE_NAMES
+        self.events.append(("remove_variables", service, tuple(names)))
+
+    def import_route_attestations(
+        self, service: str, payload: Mapping[str, object]
+    ) -> None:
+        self.events.append(("import_route_attestations", service, dict(payload)))
+
     def deploy(self, service: str) -> None:
         self.events.append(("deploy", service))
         if self.fail_deploy == service:
@@ -164,10 +179,15 @@ class _FakeOpenEMR:
             secure_upload="1",
             json_mime_enabled="1",
             client_id="replacement-client-public-id",
-            patient_uuid=_PATIENT_UUID,
-            patient_id=_PATIENT_ID,
-            encounter_uuid=_ENCOUNTER_UUID,
-            encounter_id=_ENCOUNTER_ID,
+            patient_rows=[
+                (_PATIENT_UUID_2, _PATIENT_ID_2),
+                (_PATIENT_UUID, _PATIENT_ID),
+            ],
+            encounter_rows=[
+                (_ENCOUNTER_UUID_2, _ENCOUNTER_ID_2, _PATIENT_UUID_2),
+                (_ENCOUNTER_UUID, _ENCOUNTER_ID, _PATIENT_UUID),
+            ],
+            verification_patient_uuid=_PATIENT_UUID,
         )
 
 
@@ -261,6 +281,16 @@ def test_config_is_environment_only_and_does_not_read_owner_secret_values() -> N
     # The public client/encounter IDs are discovered from read-only OpenEMR state;
     # neither is an owner copy/paste prerequisite.
     assert config.encounter_id == ""
+    assert config.synthetic_only_acknowledged is True
+
+    with pytest.raises(ActivationError, match="synthetic-only"):
+        ActivationConfig.from_env(
+            {
+                key: value
+                for key, value in _ENV.items()
+                if key != "W2_VERIFY_SYNTHETIC_ONLY_ACK"
+            }
+        )
 
 
 def test_openemr_attestation_requires_exact_categories_acl_and_warning() -> None:
@@ -284,10 +314,9 @@ def test_openemr_attestation_requires_exact_categories_acl_and_warning() -> None
         system_error_logging="WARNING",
         secure_upload="1",
         json_mime_enabled="1",
-        patient_uuid=_PATIENT_UUID,
-        patient_id=_PATIENT_ID,
-        encounter_uuid=_ENCOUNTER_UUID,
-        encounter_id=_ENCOUNTER_ID,
+        patient_rows=[(_PATIENT_UUID, _PATIENT_ID)],
+        encounter_rows=[(_ENCOUNTER_UUID, _ENCOUNTER_ID, _PATIENT_UUID)],
+        verification_patient_uuid=_PATIENT_UUID,
     )
     assert attestation.source_category_id == "101"
     assert attestation.artifact_category_id == "202"
@@ -307,10 +336,11 @@ def test_openemr_attestation_requires_exact_categories_acl_and_warning() -> None
                 system_error_logging=logging_value,
                 secure_upload="1",
                 json_mime_enabled="1",
-                patient_uuid=_PATIENT_UUID,
-                patient_id=_PATIENT_ID,
-                encounter_uuid=_ENCOUNTER_UUID,
-                encounter_id=_ENCOUNTER_ID,
+                patient_rows=[(_PATIENT_UUID, _PATIENT_ID)],
+                encounter_rows=[
+                    (_ENCOUNTER_UUID, _ENCOUNTER_ID, _PATIENT_UUID)
+                ],
+                verification_patient_uuid=_PATIENT_UUID,
             )
 
     for secure_upload, json_mime_enabled in (("0", "1"), ("1", "0")):
@@ -320,14 +350,54 @@ def test_openemr_attestation_requires_exact_categories_acl_and_warning() -> None
                 system_error_logging="WARNING",
                 secure_upload=secure_upload,
                 json_mime_enabled=json_mime_enabled,
-                patient_uuid=_PATIENT_UUID,
-                patient_id=_PATIENT_ID,
-                encounter_uuid=_ENCOUNTER_UUID,
-                encounter_id=_ENCOUNTER_ID,
+                patient_rows=[(_PATIENT_UUID, _PATIENT_ID)],
+                encounter_rows=[
+                    (_ENCOUNTER_UUID, _ENCOUNTER_ID, _PATIENT_UUID)
+                ],
+                verification_patient_uuid=_PATIENT_UUID,
             )
 
 
-def test_read_only_discovery_validates_client_categories_logging_and_encounter() -> (
+def test_route_snapshot_is_sorted_hashed_and_ownership_checked() -> None:
+    first = RouteAttestationSnapshot.from_rows(
+        [(_PATIENT_UUID_2, _PATIENT_ID_2), (_PATIENT_UUID, _PATIENT_ID)],
+        [
+            (_ENCOUNTER_UUID_2, _ENCOUNTER_ID_2, _PATIENT_UUID_2),
+            (_ENCOUNTER_UUID, _ENCOUNTER_ID, _PATIENT_UUID),
+        ],
+    )
+    second = RouteAttestationSnapshot.from_rows(
+        [(_PATIENT_UUID, _PATIENT_ID), (_PATIENT_UUID_2, _PATIENT_ID_2)],
+        [
+            (_ENCOUNTER_UUID, _ENCOUNTER_ID, _PATIENT_UUID),
+            (_ENCOUNTER_UUID_2, _ENCOUNTER_ID_2, _PATIENT_UUID_2),
+        ],
+    )
+
+    assert first.payload() == second.payload()
+    assert first.payload()["patient_count"] == 2
+    assert first.payload()["encounter_count"] == 2
+    assert (
+        first.snapshot_hash
+        == "aad1eab678ec41daa446a765f646b8287c5631ba5b95d48e2d78ea13b439b9ac"
+    )
+    assert [row["patient_uuid"] for row in first.payload()["patients"]] == sorted(
+        [_PATIENT_UUID, _PATIENT_UUID_2]
+    )
+
+    with pytest.raises(ActivationError, match="unattested patient"):
+        RouteAttestationSnapshot.from_rows(
+            [(_PATIENT_UUID, _PATIENT_ID)],
+            [(_ENCOUNTER_UUID_2, _ENCOUNTER_ID_2, _PATIENT_UUID_2)],
+        )
+    with pytest.raises(ActivationError, match="duplicated"):
+        RouteAttestationSnapshot.from_rows(
+            [(_PATIENT_UUID, _PATIENT_ID), (_PATIENT_UUID, _PATIENT_ID_2)],
+            [],
+        )
+
+
+def test_read_only_discovery_validates_client_categories_and_all_routes() -> (
     None
 ):
     encounter_id = _ENCOUNTER_UUID
@@ -352,8 +422,10 @@ def test_read_only_discovery_validates_client_categories_logging_and_encounter()
             "LOGGING\tWARNING",
             "UPLOAD\t1\t1",
             client_row,
+            f"PATIENT\t{_PATIENT_UUID_2}\t{_PATIENT_ID_2}",
             f"PATIENT\t{_PATIENT_UUID}\t{_PATIENT_ID}",
-            f"ENCOUNTER\t{encounter_id}\t{_ENCOUNTER_ID}",
+            f"ENCOUNTER\t{_ENCOUNTER_UUID_2}\t{_ENCOUNTER_ID_2}\t{_PATIENT_UUID_2}",
+            f"ENCOUNTER\t{encounter_id}\t{_ENCOUNTER_ID}\t{_PATIENT_UUID}",
         ]
     )
 
@@ -380,10 +452,11 @@ def test_read_only_discovery_validates_client_categories_logging_and_encounter()
     attestation = inspector.discover_attestation()
 
     assert attestation.client_id == "public-client-id"
-    assert attestation.patient_uuid == _PATIENT_UUID
-    assert attestation.patient_id == _PATIENT_ID
-    assert attestation.encounter_uuid == _ENCOUNTER_UUID
-    assert attestation.encounter_id == _ENCOUNTER_ID
+    assert attestation.verification_patient_uuid == _PATIENT_UUID
+    assert attestation.verification_encounter_uuid == _ENCOUNTER_UUID
+    assert attestation.route_snapshot is not None
+    assert attestation.route_snapshot.payload()["patient_count"] == 2
+    assert attestation.route_snapshot.payload()["encounter_count"] == 2
     assert attestation.source_category_id == "101"
     assert attestation.artifact_category_id == "202"
     assert attestation.secure_upload_enabled is True
@@ -409,6 +482,78 @@ def test_railway_ssh_preserves_the_attestation_as_one_remote_command(
 
     assert output == "safe-output\n"
     assert calls[0][-1] == "sh -lc 'set -eu; echo safe'"
+
+
+def test_route_registry_import_uses_stdin_not_argv_or_output(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    railway = RailwayCLI(ActivationConfig.from_env(_ENV))
+    monkeypatch.setattr(
+        railway,
+        "_run",
+        lambda command, **kwargs: calls.append((command, kwargs)) or "",
+    )
+    snapshot = RouteAttestationSnapshot.from_rows(
+        [(_PATIENT_UUID, _PATIENT_ID)],
+        [(_ENCOUNTER_UUID, _ENCOUNTER_ID, _PATIENT_UUID)],
+    )
+
+    railway.import_route_attestations("agent", snapshot.payload())
+
+    assert len(calls) == 1
+    command, kwargs = calls[0]
+    assert command[-1] == "python -m app.writeback.route_attestations import-stdin"
+    assert _PATIENT_UUID not in " ".join(command)
+    assert _ENCOUNTER_UUID not in " ".join(command)
+    imported = json.loads(str(kwargs["input_text"]))
+    assert imported == snapshot.payload()
+    assert kwargs["discard"] is True
+    assert capsys.readouterr().out == ""
+
+
+def test_retired_singleton_variables_are_removed_without_listing_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+    railway = RailwayCLI(ActivationConfig.from_env(_ENV))
+    monkeypatch.setattr(
+        railway,
+        "_run",
+        lambda command, **kwargs: calls.append((command, kwargs)) or "",
+    )
+
+    railway.remove_variables("agent", sorted(LEGACY_ROUTE_VARIABLE_NAMES))
+
+    assert len(calls) == 4
+    assert all(call[0][1:3] == ["variable", "delete"] for call in calls)
+    assert all("list" not in call[0] for call in calls)
+    assert all(call[1]["allow_not_found"] is True for call in calls)
+
+
+def test_retired_variable_removal_is_idempotent_but_not_error_blind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    railway = RailwayCLI(ActivationConfig.from_env(_ENV))
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command, 1, stdout="", stderr="variable not found"
+        ),
+    )
+    railway.remove_variables("agent", ["OPENEMR_LEGACY_PATIENT_ID"])
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command, 1, stdout="", stderr="authentication failed"
+        ),
+    )
+    with pytest.raises(ActivationError, match="retired route configuration"):
+        railway.remove_variables("agent", ["OPENEMR_LEGACY_PATIENT_ID"])
 
 
 def test_railway_stop_scales_each_live_worker_region_to_zero(
@@ -542,7 +687,7 @@ def test_openemr_attestation_provisions_json_mime_and_discovers_the_schema() -> 
     )
     inspector = RailwayOpenEMRInspectorImpl(config, object())  # type: ignore[arg-type]
 
-    remote_script = inspector._remote_script(config.patient_id)
+    remote_script = inspector._remote_script()
     semantic_script = remote_script.replace("'\"'\"'", "'")
 
     assert "information_schema.tables" in semantic_script
@@ -559,6 +704,10 @@ def test_openemr_attestation_provisions_json_mime_and_discovers_the_schema() -> 
     assert "DELETE " not in semantic_script
     assert "UPDATE globals" not in semantic_script
     assert "application/*" not in semantic_script
+    assert "LIMIT 1" not in semantic_script
+    assert "WHERE HEX(pd.uuid)" not in semantic_script
+    assert "ORDER BY HEX(pd.uuid), pd.pid" in semantic_script
+    assert "CAST(fe.encounter AS CHAR)" in semantic_script
 
 
 def test_verify_script_runs_in_a_secret_isolated_child_process(capsys) -> None:
@@ -983,6 +1132,11 @@ def test_activation_flips_worker_then_web_last_and_invokes_opaque_verifier() -> 
     orchestrator.run()
 
     discover = events.index(("discover_openemr_attestation",))
+    imported = next(
+        index
+        for index, event in enumerate(events)
+        if event[0] == "import_route_attestations"
+    )
     session = events.index(("establish_smart_session",))
     worker_true = _enable_event_index(events, "document-worker", "true")
     web_true = _enable_event_index(events, "agent", "true")
@@ -994,12 +1148,21 @@ def test_activation_flips_worker_then_web_last_and_invokes_opaque_verifier() -> 
     # cache would otherwise be erased by the deployment.
     assert (
         discover
+        < imported
         < worker_true
         < worker_running
         < web_true
         < web_ready
         < session
         < verify
+    )
+    pre_import = events[:imported]
+    assert ("deploy", "agent") in pre_import
+    assert pre_import[-1] == ("require_web_disabled", "agent")
+    assert not any(
+        event[0] == "set_variables"
+        and event[2].get("W2_DOCUMENT_RUNTIME_ENABLED") == "true"
+        for event in pre_import
     )
 
     category_sets = [
@@ -1012,13 +1175,20 @@ def test_activation_flips_worker_then_web_last_and_invokes_opaque_verifier() -> 
         variables["W2_GRAPH_ENABLED"] == "1"
         and variables["SOURCE_DOCUMENT_CATEGORY_ID"] == "101"
         and variables["ARTIFACT_DOCUMENT_CATEGORY_ID"] == "202"
-        and variables["OPENEMR_LEGACY_PATIENT_UUID"] == _PATIENT_UUID
-        and variables["OPENEMR_LEGACY_PATIENT_ID"] == _PATIENT_ID
-        and variables["OPENEMR_LEGACY_ENCOUNTER_UUID"] == _ENCOUNTER_UUID
-        and variables["OPENEMR_LEGACY_ENCOUNTER_ID"] == _ENCOUNTER_ID
+        and LEGACY_ROUTE_VARIABLE_NAMES.isdisjoint(variables)
         and variables["OPENEMR_BINARY_READBACK_SAFE"] == "true"
         for variables in category_sets
     )
+
+    removal_services = {
+        event[1] for event in events if event[0] == "remove_variables"
+    }
+    assert removal_services == {"agent", "document-worker"}
+    import_event = events[imported]
+    assert import_event[1] == "agent"
+    assert import_event[2]["patient_count"] == 2
+    assert import_event[2]["encounter_count"] == 2
+    assert len(import_event[2]["snapshot_hash"]) == 64
 
     assert len(verifier.calls) == 1
     verification_env = verifier.calls[0]

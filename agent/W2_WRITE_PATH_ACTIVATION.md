@@ -7,15 +7,19 @@ The default remains fail-closed. The automation pins both services to
 prerequisites, enables the worker, then enables the attested graph/web path, and rolls
 both flags back to disabled on any failure.
 
-The single activation/verification command is:
+After confirming that the OpenEMR deployment contains synthetic/demo charts only, the
+single activation/verification command is:
 
 ```bash
-python agent/scripts/activate_w2_write_path.py
+W2_VERIFY_SYNTHETIC_ONLY_ACK=synthetic-patient-and-documents \
+  python agent/scripts/activate_w2_write_path.py
 ```
 
-It uses only committed synthetic PDFs and the canonical synthetic Week 1 patient UUID.
-It never accepts secrets as arguments, calls Railway's variable-list command, prints an
-opaque session, or returns document bytes.
+It enrolls every current synthetic patient and encounter in an immutable attested route
+registry, then uses only committed synthetic PDFs and the canonical synthetic Week 1
+patient UUID for the live verification sample. It never accepts secrets as arguments,
+calls Railway's variable-list command, prints an opaque session or route identifier, or
+returns document bytes.
 
 ## Owner checklist — only these three provisioning actions
 
@@ -118,16 +122,31 @@ and exact ACLs, then sets `SOURCE_DOCUMENT_CATEGORY_ID` and
 `ARTIFACT_DOCUMENT_CATEGORY_ID` itself. No owner copies an ID, and no OpenEMR schema or
 source code is changed.
 
-OpenEMR's SMART/FHIR context identifies the patient and encounter with UUIDs, while its
+OpenEMR's SMART/FHIR context identifies patients and encounters with UUIDs, while its
 legacy document and vital routes require numeric `pid`/`eid` values. The frozen exact-16
 scope set deliberately does not add the separate lowercase standard-patient lookup
-scope. During the same database attestation, the script therefore resolves
-the canonical synthetic UUIDs to one positive numeric patient ID and one positive
-numeric encounter ID. It installs the four non-secret bindings below on web and worker.
-Runtime keeps the UUIDs for delegated authorization, ledgers, FHIR reads, and citations;
-it uses numeric IDs only in those legacy routes and rejects any UUID mismatch before
-HTTP. This enables only the canonical synthetic verification patient and fails closed
-for every other patient.
+scope. During the same database attestation, the script therefore deterministically
+enumerates every current non-null patient UUID/PID pair and every current non-null
+encounter UUID/EID pair together with its owning patient UUID.
+
+The script validates canonical UUIDs, positive canonical decimal IDs, UUID and numeric-ID
+uniqueness, and encounter ownership. It sorts the arrays, calculates a SHA-256 hash over
+their canonical JSON, and sends the payload through stdin—not command arguments—to
+`python -m app.writeback.route_attestations import-stdin` inside the disabled Agent web
+service. The importer validates the supplied counts/hash and atomically activates the
+snapshot in Agent Postgres. Re-importing the same snapshot is idempotent; additions are
+allowed, changing an existing UUID-to-numeric binding is a hard conflict, and omitted
+existing bindings remain preserved rather than being deleted.
+Only aggregate counts/hash status may be logged.
+
+Runtime keeps UUIDs for the SMART patient pin, delegated authorization, ledgers, FHIR
+reads, and citations. It resolves numeric IDs only for legacy routes and still requires
+the encounter mapping to belong to the pinned patient before HTTP. The retired four
+`OPENEMR_LEGACY_*` singleton variables are removed from web and worker while both are
+disabled. The canonical Week 1 synthetic patient remains only the end-to-end verification
+target; every patient in the attested snapshot is supported by its own pinned SMART
+session. A patient or encounter created after the snapshot remains fail-closed until this
+activation command is rerun.
 
 The same read-only attestation requires `system_error_logging=WARNING`. If it is not
 already `WARNING`, the script stops fail-closed and emits this owner-admin remediation:
@@ -190,35 +209,38 @@ On every run, `agent/scripts/activate_w2_write_path.py` performs this idempotent
 2. Sets the full non-secret baseline on web and worker with
    `W2_DOCUMENT_RUNTIME_ENABLED=false` and `W2_GRAPH_ENABLED=0` before inspecting
    mutable prerequisites.
-3. Requires OpenEMR secure upload to remain enabled, idempotently enables only the
+3. Requires the exact synthetic-only acknowledgment, OpenEMR secure upload to remain
+   enabled, idempotently enables only the
    architecture-required `application/json` whitelist entry, and attests it is active.
    It then validates the SMART registration, both category paths/IDs/ACLs,
-   `system_error_logging=WARNING`, the canonical synthetic patient, and that patient's
-   deterministic latest encounter UUID plus the exact numeric `pid/eid` bindings required
-   by legacy write routes.
-4. Sets the discovered public SMART client ID, both category IDs, and all four
-   UUID-to-numeric route attestations without owner copy/paste.
-5. Deploys the worker from a temporary context in which the committed
+   `system_error_logging=WARNING`, every current synthetic patient UUID/PID mapping, and
+   every current encounter UUID/EID/owner mapping required by legacy write routes.
+4. Sets the discovered public SMART client ID and both category IDs with both services
+   disabled; removes the retired singleton `OPENEMR_LEGACY_*` variables.
+5. Deploys the web service disabled so migrations and the registry importer are present,
+   then imports the validated deterministic snapshot over stdin. Any conflict or import
+   failure leaves both services disabled.
+6. Deploys the worker from a temporary context in which the committed
    `agent/railway.worker.json` is the active `railway.json`. Its real start command is
    `python -m app.ingestion.worker`; there is no fake HTTP health endpoint.
-6. Sets worker `W2_DOCUMENT_RUNTIME_ENABLED=true`, deploys it, and requires one running,
+7. Sets worker `W2_DOCUMENT_RUNTIME_ENABLED=true`, deploys it, and requires one running,
    non-crashed replica before touching web.
-7. Sets the attested `W2_GRAPH_ENABLED=1` configuration and web
+8. Sets the attested `W2_GRAPH_ENABLED=1` configuration and web
    `W2_DOCUMENT_RUNTIME_ENABLED=true` last, deploys it, and requires `/ready` to report
    overall `ready` plus `document_runtime: {ok: true, kind: hard, detail: ready}`.
-8. Starts the repository Selenium service automatically when the configured loopback
+9. Starts the repository Selenium service automatically when the configured loopback
    endpoint is absent, opens `/week2/launch`, performs authorization-code + PKCE, and
    requires the callback to land on the distinct `/week2` workbench before selecting the
    exact canonical synthetic UUID from OpenEMR's `data-patient-id`. It refuses an absent,
    ambiguous, or defaulted patient. Only the opaque agent session remains in memory; the
    token never leaves the web service.
-9. Runs `agent/scripts/verify_w2_write_path.py` in a clean child process containing only
+10. Runs `agent/scripts/verify_w2_write_path.py` in a clean child process containing only
    the five `W2_VERIFY_*` synthetic context variables; the OpenEMR admin password and
    owner-managed secrets are never inherited. The intake form is uploaded first, so
    delegated encounter ownership fails before any document write. It then runs intake +
    lab through extract, ground, exactly-once write, fresh Binary readback, cite, and
    answer, and requires `/ready` green again.
-10. On any failure after an enable attempt, pins both services disabled and redeploys the
+11. On any failure after an enable attempt, pins both services disabled and redeploys the
     disabled configuration. Re-running is safe: patient + content hash drive the durable
     exactly-once ledger.
 
@@ -240,10 +262,6 @@ SOURCE_DOCUMENT_CATEGORY_ACL
 ARTIFACT_DOCUMENT_PATH
 ARTIFACT_DOCUMENT_CATEGORY_ID
 ARTIFACT_DOCUMENT_CATEGORY_ACL
-OPENEMR_LEGACY_PATIENT_UUID
-OPENEMR_LEGACY_PATIENT_ID
-OPENEMR_LEGACY_ENCOUNTER_UUID
-OPENEMR_LEGACY_ENCOUNTER_ID
 OPENEMR_BINARY_READBACK_SAFE
 DOCUMENT_WORKER_ID
 DOCUMENT_WORKER_POLL_SECONDS
@@ -271,7 +289,14 @@ W2_ACTIVATE_OPENEMR_BASE_URL
 W2_VERIFY_AGENT_BASE_URL
 SELENIUM_URL
 OE_USERNAME
+W2_VERIFY_PATIENT_ID
+W2_VERIFY_ENCOUNTER_ID
 ```
+
+`W2_VERIFY_PATIENT_ID` and `W2_VERIFY_ENCOUNTER_ID` select only the synthetic live
+verification sample; they do not limit registry enrollment. The patient must exist in the
+snapshot and the encounter must be attested beneath that patient. If the encounter is
+omitted, activation chooses a deterministic attested encounter for that patient.
 
 The three OpenEMR bases and callback are pinned to their exact HTTPS deployed-origin
 shapes; divergent values fail before activation.
@@ -279,10 +304,12 @@ shapes; divergent values fail before activation.
 ## Run and interpret the result
 
 From the repository root, with the owner checklist complete and `OE_ADMIN_PASS` supplied
-through the process environment, run only:
+through the process environment, first confirm the target OpenEMR contains synthetic/demo
+charts only, then run only:
 
 ```bash
-python agent/scripts/activate_w2_write_path.py
+W2_VERIFY_SYNTHETIC_ONLY_ACK=synthetic-patient-and-documents \
+  python agent/scripts/activate_w2_write_path.py
 ```
 
 Success prints aggregate evidence only: activation complete plus the verifier's counts

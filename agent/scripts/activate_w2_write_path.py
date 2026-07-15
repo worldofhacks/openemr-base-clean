@@ -17,6 +17,7 @@ W2-D1/D3/D6/D9/D10; W2_ARCHITECTURE §3/§5.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -27,7 +28,7 @@ import sys
 import tempfile
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -37,6 +38,14 @@ import httpx
 
 
 OWNER_ONLY_SECRET_NAMES = frozenset({"SMART_CLIENT_SECRET", "DOCUMENT_CREDENTIAL_KEY"})
+LEGACY_ROUTE_VARIABLE_NAMES = frozenset(
+    {
+        "OPENEMR_LEGACY_PATIENT_UUID",
+        "OPENEMR_LEGACY_PATIENT_ID",
+        "OPENEMR_LEGACY_ENCOUNTER_UUID",
+        "OPENEMR_LEGACY_ENCOUNTER_ID",
+    }
+)
 
 DEFAULT_PROJECT_ID = "1bddbc72-6307-4ec9-b6dd-8184310fbdcf"
 DEFAULT_ENVIRONMENT = "production"
@@ -203,6 +212,7 @@ class ActivationConfig:
     selenium_url: str = "http://localhost:4444/wd/hub"
     oe_username: str = "admin"
     oe_password: str = field(default="", repr=False)
+    synthetic_only_acknowledged: bool = False
     deploy_timeout_seconds: float = 600.0
     ready_timeout_seconds: float = 180.0
     agent_root: Path = field(
@@ -275,6 +285,12 @@ class ActivationConfig:
                     f"{name} does not match the pinned deployed origin"
                 )
 
+        synthetic_only_ack = _env(values, "W2_VERIFY_SYNTHETIC_ONLY_ACK")
+        if synthetic_only_ack != SYNTHETIC_ACK:
+            raise ActivationError(
+                "synthetic-only activation acknowledgment is missing or invalid"
+            )
+
         return cls(
             project_id=project_id,
             environment=environment,
@@ -298,7 +314,170 @@ class ActivationConfig:
             selenium_url=_env(values, "SELENIUM_URL", "http://localhost:4444/wd/hub"),
             oe_username=_env(values, "OE_USERNAME", "admin"),
             oe_password=_env(values, "OE_ADMIN_PASS"),
+            synthetic_only_acknowledged=True,
         )
+
+
+@dataclass(frozen=True)
+class PatientRouteAttestation:
+    patient_uuid: str
+    legacy_patient_id: str
+
+
+@dataclass(frozen=True)
+class EncounterRouteAttestation:
+    encounter_uuid: str
+    legacy_encounter_id: str
+    patient_uuid: str
+
+
+@dataclass(frozen=True)
+class RouteAttestationSnapshot:
+    patients: tuple[PatientRouteAttestation, ...]
+    encounters: tuple[EncounterRouteAttestation, ...]
+    snapshot_hash: str
+
+    @classmethod
+    def from_rows(
+        cls,
+        patient_rows: Sequence[tuple[str, str]],
+        encounter_rows: Sequence[tuple[str, str, str]],
+    ) -> "RouteAttestationSnapshot":
+        if not patient_rows:
+            raise ActivationError("no synthetic patient route attestations were found")
+
+        patients = tuple(
+            sorted(
+                (
+                    PatientRouteAttestation(
+                        patient_uuid=_canonical_uuid(patient_uuid, "synthetic patient"),
+                        legacy_patient_id=_positive_decimal(
+                            legacy_patient_id, "synthetic patient"
+                        ),
+                    )
+                    for patient_uuid, legacy_patient_id in patient_rows
+                ),
+                key=lambda item: item.patient_uuid,
+            )
+        )
+        encounters = tuple(
+            sorted(
+                (
+                    EncounterRouteAttestation(
+                        encounter_uuid=_canonical_uuid(
+                            encounter_uuid, "synthetic encounter"
+                        ),
+                        legacy_encounter_id=_positive_decimal(
+                            legacy_encounter_id, "synthetic encounter"
+                        ),
+                        patient_uuid=_canonical_uuid(
+                            patient_uuid, "synthetic encounter patient"
+                        ),
+                    )
+                    for (
+                        encounter_uuid,
+                        legacy_encounter_id,
+                        patient_uuid,
+                    ) in encounter_rows
+                ),
+                key=lambda item: item.encounter_uuid,
+            )
+        )
+
+        _require_unique_route_values(
+            ((item.patient_uuid, item.legacy_patient_id) for item in patients),
+            "synthetic patient",
+        )
+        _require_unique_route_values(
+            ((item.encounter_uuid, item.legacy_encounter_id) for item in encounters),
+            "synthetic encounter",
+        )
+        patient_uuids = {item.patient_uuid for item in patients}
+        if any(item.patient_uuid not in patient_uuids for item in encounters):
+            raise ActivationError(
+                "synthetic encounter attestation references an unattested patient"
+            )
+
+        core = {
+            "schema_version": 1,
+            "patients": [
+                {
+                    "patient_uuid": item.patient_uuid,
+                    "legacy_patient_id": item.legacy_patient_id,
+                }
+                for item in patients
+            ],
+            "encounters": [
+                {
+                    "encounter_uuid": item.encounter_uuid,
+                    "legacy_encounter_id": item.legacy_encounter_id,
+                    "patient_uuid": item.patient_uuid,
+                }
+                for item in encounters
+            ],
+        }
+        canonical = json.dumps(
+            core, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode("utf-8")
+        return cls(
+            patients=patients,
+            encounters=encounters,
+            snapshot_hash=hashlib.sha256(canonical).hexdigest(),
+        )
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "patients": [
+                {
+                    "patient_uuid": item.patient_uuid,
+                    "legacy_patient_id": item.legacy_patient_id,
+                }
+                for item in self.patients
+            ],
+            "encounters": [
+                {
+                    "encounter_uuid": item.encounter_uuid,
+                    "legacy_encounter_id": item.legacy_encounter_id,
+                    "patient_uuid": item.patient_uuid,
+                }
+                for item in self.encounters
+            ],
+            "patient_count": len(self.patients),
+            "encounter_count": len(self.encounters),
+            "snapshot_hash": self.snapshot_hash,
+        }
+
+
+def _canonical_uuid(value: str, label: str) -> str:
+    try:
+        canonical = str(uuid.UUID(value))
+    except ValueError:
+        raise ActivationError(f"{label} ID is not a UUID") from None
+    if canonical != value:
+        raise ActivationError(f"{label} ID is not canonical")
+    return canonical
+
+
+def _positive_decimal(value: str, label: str) -> str:
+    if (
+        not value.isascii()
+        or not value.isdecimal()
+        or int(value) <= 0
+        or str(int(value)) != value
+    ):
+        raise ActivationError(f"{label} legacy ID is invalid")
+    return value
+
+
+def _require_unique_route_values(
+    pairs: Iterable[tuple[str, str]], label: str
+) -> None:
+    values = tuple(pairs)
+    if len({uuid_value for uuid_value, _legacy_id in values}) != len(values):
+        raise ActivationError(f"{label} UUID mapping is duplicated")
+    if len({legacy_id for _uuid_value, legacy_id in values}) != len(values):
+        raise ActivationError(f"{label} legacy ID mapping is duplicated")
 
 
 @dataclass(frozen=True)
@@ -309,10 +488,9 @@ class OpenEMRAttestation:
     secure_upload_enabled: bool
     json_mime_enabled: bool
     client_id: str = ""
-    patient_uuid: str = ""
-    patient_id: str = ""
-    encounter_uuid: str = ""
-    encounter_id: str = ""
+    route_snapshot: RouteAttestationSnapshot | None = None
+    verification_patient_uuid: str = ""
+    verification_encounter_uuid: str = ""
 
     @classmethod
     def from_rows(
@@ -322,10 +500,10 @@ class OpenEMRAttestation:
         system_error_logging: str,
         secure_upload: str,
         json_mime_enabled: str,
-        patient_uuid: str,
-        patient_id: str,
-        encounter_uuid: str,
-        encounter_id: str,
+        patient_rows: Sequence[tuple[str, str]],
+        encounter_rows: Sequence[tuple[str, str, str]],
+        verification_patient_uuid: str,
+        verification_encounter_uuid: str = "",
         client_id: str = "",
     ) -> "OpenEMRAttestation":
         if system_error_logging != "WARNING":
@@ -364,27 +542,36 @@ class OpenEMRAttestation:
         ids = {str(row["id"]) for row in indexed.values()}
         if len(ids) != 2:
             raise ActivationError("OpenEMR document category IDs are not distinct")
-        for label, value in (
-            ("synthetic patient", patient_uuid),
-            ("synthetic encounter", encounter_uuid),
-        ):
-            try:
-                canonical = str(uuid.UUID(value))
-            except ValueError:
-                raise ActivationError(f"{label} ID is not a UUID") from None
-            if canonical != value:
-                raise ActivationError(f"{label} ID is not canonical")
-        for label, value in (
-            ("synthetic patient", patient_id),
-            ("synthetic encounter", encounter_id),
-        ):
-            if (
-                not value.isascii()
-                or not value.isdecimal()
-                or int(value) <= 0
-                or str(int(value)) != value
+        snapshot = RouteAttestationSnapshot.from_rows(patient_rows, encounter_rows)
+        patient_uuid = _canonical_uuid(
+            verification_patient_uuid, "synthetic verification patient"
+        )
+        if patient_uuid not in {item.patient_uuid for item in snapshot.patients}:
+            raise ActivationError(
+                "synthetic verification patient is not in the attested snapshot"
+            )
+        patient_encounters = tuple(
+            item
+            for item in snapshot.encounters
+            if item.patient_uuid == patient_uuid
+        )
+        if verification_encounter_uuid:
+            encounter_uuid = _canonical_uuid(
+                verification_encounter_uuid, "synthetic verification encounter"
+            )
+            if not any(
+                item.encounter_uuid == encounter_uuid for item in patient_encounters
             ):
-                raise ActivationError(f"{label} legacy ID is invalid")
+                raise ActivationError(
+                    "synthetic verification encounter is not owned by the "
+                    "verification patient"
+                )
+        elif patient_encounters:
+            encounter_uuid = patient_encounters[0].encounter_uuid
+        else:
+            raise ActivationError(
+                "synthetic verification patient has no attested encounter"
+            )
         return cls(
             source_category_id=str(indexed["AI-Source-Documents"]["id"]),
             artifact_category_id=str(indexed["AI-Extractions"]["id"]),
@@ -392,16 +579,19 @@ class OpenEMRAttestation:
             secure_upload_enabled=True,
             json_mime_enabled=True,
             client_id=client_id,
-            patient_uuid=patient_uuid,
-            patient_id=patient_id,
-            encounter_uuid=encounter_uuid,
-            encounter_id=encounter_id,
+            route_snapshot=snapshot,
+            verification_patient_uuid=patient_uuid,
+            verification_encounter_uuid=encounter_uuid,
         )
 
 
 class RailwayControl(Protocol):
     def ensure_worker_service(self, service: str) -> None: ...
     def set_variables(self, service: str, variables: Mapping[str, str]) -> None: ...
+    def remove_variables(self, service: str, names: Sequence[str]) -> None: ...
+    def import_route_attestations(
+        self, service: str, payload: Mapping[str, object]
+    ) -> None: ...
     def deploy(self, service: str) -> None: ...
     def require_service_running(self, service: str) -> None: ...
     def require_web_ready(self, service: str) -> None: ...
@@ -463,6 +653,21 @@ class ActivationOrchestrator:
             variables = self._attested_variables(attestation, client_id=client_id)
             self._set_enabled(config.worker_service, False, variables=variables)
             self._set_enabled(config.web_service, False, variables=variables)
+
+            # The new registry is authoritative. Remove the retired singleton route
+            # variables while both services are pinned closed, then deploy the disabled
+            # web revision so its migrations/import command exist before loading data.
+            for service in (config.worker_service, config.web_service):
+                self._railway.remove_variables(
+                    service, sorted(LEGACY_ROUTE_VARIABLE_NAMES)
+                )
+            self._railway.deploy(config.web_service)
+            self._railway.require_web_disabled(config.web_service)
+            if attestation.route_snapshot is None:
+                raise ActivationError("route attestation snapshot was not available")
+            self._railway.import_route_attestations(
+                config.web_service, attestation.route_snapshot.payload()
+            )
 
             # Worker must boot and remain alive before the request-serving process can
             # advertise document_runtime=ready.
@@ -542,10 +747,6 @@ class ActivationOrchestrator:
                 "SMART_CLIENT_ID": client_id,
                 "SOURCE_DOCUMENT_CATEGORY_ID": attestation.source_category_id,
                 "ARTIFACT_DOCUMENT_CATEGORY_ID": attestation.artifact_category_id,
-                "OPENEMR_LEGACY_PATIENT_UUID": attestation.patient_uuid,
-                "OPENEMR_LEGACY_PATIENT_ID": attestation.patient_id,
-                "OPENEMR_LEGACY_ENCOUNTER_UUID": attestation.encounter_uuid,
-                "OPENEMR_LEGACY_ENCOUNTER_ID": attestation.encounter_id,
                 "OPENEMR_BINARY_READBACK_SAFE": "true",
                 # Grounded extraction artifacts reach the CitationV2 composer only
                 # on the fully attested W2 serving path.
@@ -590,7 +791,7 @@ class ActivationOrchestrator:
         return client_id
 
     def _resolved_encounter_id(self, attestation: OpenEMRAttestation) -> str:
-        discovered = attestation.encounter_uuid.strip()
+        discovered = attestation.verification_encounter_uuid.strip()
         configured = self._config.encounter_id.strip()
         if configured and discovered and configured != discovered:
             raise ActivationError(
@@ -741,6 +942,64 @@ class RailwayCLI:
                 *assignments,
             ],
             label=f"Railway non-secret configuration for {service}",
+            discard=True,
+        )
+
+    def remove_variables(self, service: str, names: Sequence[str]) -> None:
+        requested = frozenset(names)
+        if requested.difference(LEGACY_ROUTE_VARIABLE_NAMES):
+            raise ActivationError(
+                "automation attempted to remove an unapproved Railway variable"
+            )
+        for name in sorted(requested):
+            self._run(
+                [
+                    "railway",
+                    "variable",
+                    "delete",
+                    name,
+                    "--project",
+                    self._config.project_id,
+                    "--environment",
+                    self._config.environment,
+                    "--service",
+                    service,
+                    "--json",
+                ],
+                label=f"retired route configuration removal for {service}",
+                discard=True,
+                allow_not_found=True,
+            )
+
+    def import_route_attestations(
+        self, service: str, payload: Mapping[str, object]
+    ) -> None:
+        if set(payload) != {
+            "schema_version",
+            "patients",
+            "encounters",
+            "patient_count",
+            "encounter_count",
+            "snapshot_hash",
+        }:
+            raise ActivationError("route attestation import payload is invalid")
+        serialized = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        )
+        self._run(
+            [
+                "railway",
+                "ssh",
+                "--project",
+                self._config.project_id,
+                "--environment",
+                self._config.environment,
+                "--service",
+                service,
+                "python -m app.writeback.route_attestations import-stdin",
+            ],
+            label="route attestation registry import",
+            input_text=f"{serialized}\n",
             discard=True,
         )
 
@@ -1073,6 +1332,8 @@ class RailwayCLI:
         label: str,
         cwd: Path | None = None,
         discard: bool = False,
+        input_text: str | None = None,
+        allow_not_found: bool = False,
     ) -> str:
         try:
             result = subprocess.run(
@@ -1082,10 +1343,18 @@ class RailwayCLI:
                 capture_output=True,
                 check=False,
                 timeout=max(self._config.deploy_timeout_seconds, 60.0),
+                input=input_text,
             )
         except (OSError, subprocess.TimeoutExpired):
             raise ActivationError(f"{label} could not be executed") from None
         if result.returncode != 0:
+            if allow_not_found:
+                rendered = f"{result.stdout}\n{result.stderr}".lower()
+                if any(
+                    marker in rendered
+                    for marker in ("not found", "does not exist", "could not find")
+                ):
+                    return ""
             # Never include CLI output: an upstream tool may unexpectedly render values.
             raise ActivationError(f"{label} failed (exit {result.returncode})")
         return "" if discard else result.stdout
@@ -1114,7 +1383,7 @@ class RailwayOpenEMRInspectorImpl:
                 "Railway has no registered SSH key for OpenEMR runtime policy setup; run "
                 "`railway ssh keys add`, then rerun this command"
             )
-        output = self._railway.ssh_mysql(self._remote_script(patient))
+        output = self._railway.ssh_mysql(self._remote_script())
         return self._parse_output(output)
 
     def _parse_output(self, output: str) -> OpenEMRAttestation:
@@ -1123,7 +1392,7 @@ class RailwayOpenEMRInspectorImpl:
         upload_values: list[tuple[str, str]] = []
         clients: list[list[str]] = []
         patients: list[tuple[str, str]] = []
-        encounters: list[tuple[str, str]] = []
+        encounters: list[tuple[str, str, str]] = []
         for line in output.splitlines():
             fields = line.split("\t")
             if not fields:
@@ -1145,8 +1414,19 @@ class RailwayOpenEMRInspectorImpl:
                 clients.append(fields[1:])
             elif fields[0] == "PATIENT" and len(fields) == 3:
                 patients.append((fields[1], fields[2]))
-            elif fields[0] == "ENCOUNTER" and len(fields) == 3:
-                encounters.append((fields[1], fields[2]))
+            elif fields[0] == "ENCOUNTER" and len(fields) == 4:
+                encounters.append((fields[1], fields[2], fields[3]))
+            elif fields[0] in {
+                "CATEGORY",
+                "LOGGING",
+                "UPLOAD",
+                "CLIENT",
+                "PATIENT",
+                "ENCOUNTER",
+            }:
+                raise ActivationError(
+                    "OpenEMR attestation returned a malformed tagged row"
+                )
         if len(logging_values) != 1:
             raise ActivationError(
                 "OpenEMR logging attestation was not uniquely available"
@@ -1159,33 +1439,17 @@ class RailwayOpenEMRInspectorImpl:
             raise ActivationError(
                 "replacement SMART client was missing or not uniquely registered"
             )
-        if len(patients) != 1:
-            raise ActivationError(
-                "canonical synthetic patient mapping was not uniquely available"
-            )
-        if len(encounters) != 1:
-            raise ActivationError(
-                "canonical synthetic patient has no uniquely selected latest encounter"
-            )
         client_id = self._validate_client(clients[0])
-        patient_uuid = self._canonical_uuid(patients[0][0], "synthetic patient")
-        if patient_uuid != self._config.patient_id:
-            raise ActivationError(
-                "discovered patient mapping does not match configured synthetic patient"
-            )
-        encounter_uuid = self._canonical_uuid(
-            encounters[0][0], "synthetic encounter"
-        )
         return OpenEMRAttestation.from_rows(
             categories,
             system_error_logging=logging_values[0],
             secure_upload=upload_values[0][0],
             json_mime_enabled=upload_values[0][1],
             client_id=client_id,
-            patient_uuid=patient_uuid,
-            patient_id=patients[0][1],
-            encounter_uuid=encounter_uuid,
-            encounter_id=encounters[0][1],
+            patient_rows=patients,
+            encounter_rows=encounters,
+            verification_patient_uuid=self._config.patient_id,
+            verification_encounter_uuid=self._config.encounter_id,
         )
 
     def _validate_client(self, values: list[str]) -> str:
@@ -1225,17 +1489,7 @@ class RailwayOpenEMRInspectorImpl:
             raise ActivationError("replacement SMART client ID is invalid")
         return client_id
 
-    @staticmethod
-    def _canonical_uuid(value: str, label: str) -> str:
-        try:
-            canonical = str(uuid.UUID(value))
-        except ValueError:
-            raise ActivationError(f"{label} ID is not a UUID") from None
-        if canonical != value:
-            raise ActivationError(f"{label} ID is not canonical")
-        return canonical
-
-    def _remote_script(self, patient_id: str) -> str:
+    def _remote_script(self) -> str:
         # The command references database credentials only by environment-variable name.
         # The selected output is restricted to public IDs, ACL state, and booleans.
         base_sql = """
@@ -1271,23 +1525,28 @@ SELECT 'CLIENT', client_id, CAST(is_enabled AS CHAR), CAST(is_confidential AS CH
 FROM oauth_clients
 WHERE BINARY client_name='{DEFAULT_SMART_CLIENT_NAME}' AND revoke_date IS NULL;
 """.strip()
-        patient_sql = f"""
+        patient_sql = """
 SELECT 'PATIENT', LOWER(CONCAT(
        SUBSTR(HEX(pd.uuid),1,8),'-',SUBSTR(HEX(pd.uuid),9,4),'-',
        SUBSTR(HEX(pd.uuid),13,4),'-',SUBSTR(HEX(pd.uuid),17,4),'-',
        SUBSTR(HEX(pd.uuid),21,12))), CAST(pd.pid AS CHAR)
 FROM patient_data AS pd
-WHERE HEX(pd.uuid)=REPLACE(UPPER('{patient_id}'),'-','');
+WHERE pd.uuid IS NOT NULL
+ORDER BY HEX(pd.uuid), pd.pid;
 """.strip()
-        encounter_sql = f"""
+        encounter_sql = """
 SELECT 'ENCOUNTER', LOWER(CONCAT(
        SUBSTR(HEX(fe.uuid),1,8),'-',SUBSTR(HEX(fe.uuid),9,4),'-',
        SUBSTR(HEX(fe.uuid),13,4),'-',SUBSTR(HEX(fe.uuid),17,4),'-',
-       SUBSTR(HEX(fe.uuid),21,12))), CAST(fe.encounter AS CHAR)
+       SUBSTR(HEX(fe.uuid),21,12))), CAST(fe.encounter AS CHAR),
+       LOWER(CONCAT(
+       SUBSTR(HEX(pd.uuid),1,8),'-',SUBSTR(HEX(pd.uuid),9,4),'-',
+       SUBSTR(HEX(pd.uuid),13,4),'-',SUBSTR(HEX(pd.uuid),17,4),'-',
+       SUBSTR(HEX(pd.uuid),21,12)))
 FROM form_encounter AS fe
 JOIN patient_data AS pd ON pd.pid=fe.pid
-WHERE HEX(pd.uuid)=REPLACE(UPPER('{patient_id}'),'-','') AND fe.uuid IS NOT NULL
-ORDER BY fe.date DESC, fe.id DESC LIMIT 1;
+WHERE fe.uuid IS NOT NULL AND pd.uuid IS NOT NULL
+ORDER BY HEX(pd.uuid), HEX(fe.uuid), fe.encounter;
 """.strip()
         schema_sql = """
 SELECT table_schema

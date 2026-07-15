@@ -62,6 +62,8 @@ def _transport(
     omit_intake_citation: bool = False,
     initial_worker_restart: bool = False,
     persistent_worker_restart: bool = False,
+    initial_writeback_failed: bool = False,
+    persistent_writeback_failed: bool = False,
 ) -> tuple[httpx.MockTransport, list[httpx.Request]]:
     requests: list[httpx.Request] = []
     upload_index = 0
@@ -96,15 +98,23 @@ def _transport(
         if request.method == "GET" and path.endswith("/status"):
             document_id = path.split("/")[2]
             status_polls[document_id] += 1
-            if initial_worker_restart and (
-                retries[document_id] == 0 or persistent_worker_restart
+            retryable_reason = (
+                "worker_restart"
+                if initial_worker_restart
+                else "writeback_failed" if initial_writeback_failed else None
+            )
+            persistent_failure = (
+                persistent_worker_restart or persistent_writeback_failed
+            )
+            if retryable_reason is not None and (
+                retries[document_id] == 0 or persistent_failure
             ):
                 return httpx.Response(
                     200,
                     json={
                         "document_id": document_id,
                         "state": "failed",
-                        "reason": "worker_restart",
+                        "reason": retryable_reason,
                         "correlation_id": "correlation-synthetic",
                         "updated_ts": "2026-07-14T12:00:00Z",
                         "fields_grounded": 0,
@@ -264,6 +274,41 @@ def test_verifier_never_loops_worker_restart_retry():
         duplicate=True,
         initial_worker_restart=True,
         persistent_worker_restart=True,
+    )
+    with httpx.Client(transport=transport) as client:
+        with pytest.raises(VerificationError, match="terminal"):
+            LiveWritePathVerifier(config, client=client, sleep=_zero_sleep).run()
+
+    assert sum(request.url.path.endswith("/retry") for request in requests) == 1
+
+
+def test_verifier_retries_existing_writeback_failure_once_via_typed_route():
+    config = VerificationConfig.from_env(_ENV)
+    transport, requests = _transport(
+        config,
+        duplicate=True,
+        initial_writeback_failed=True,
+    )
+    with httpx.Client(transport=transport) as client:
+        result = LiveWritePathVerifier(config, client=client, sleep=_zero_sleep).run()
+
+    retry_paths = [
+        request.url.path for request in requests if request.url.path.endswith("/retry")
+    ]
+    assert retry_paths == [
+        "/documents/intake-document/retry",
+        "/documents/lab-document/retry",
+    ]
+    assert result.documents_verified == 2
+
+
+def test_verifier_never_loops_writeback_failure_retry():
+    config = VerificationConfig.from_env(_ENV)
+    transport, requests = _transport(
+        config,
+        duplicate=True,
+        initial_writeback_failed=True,
+        persistent_writeback_failed=True,
     )
     with httpx.Client(transport=transport) as client:
         with pytest.raises(VerificationError, match="terminal"):

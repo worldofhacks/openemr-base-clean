@@ -95,15 +95,20 @@ Grant the launching synthetic-demo staff role:
 
 OpenEMR does not expose internal category IDs or `aco_spec` through REST/FHIR, and it
 does not expose the global `system_error_logging` value there. The script therefore uses
-Railway's authenticated SSH transport for a read-only query inside the deployed MySQL
-service. It requires exactly two root rows, distinct positive IDs, and exact ACLs, then
-sets `SOURCE_DOCUMENT_CATEGORY_ID` and `ARTIFACT_DOCUMENT_CATEGORY_ID` itself. No owner
-copies an ID, and the script never performs a database write.
+Railway's authenticated SSH transport for a narrow configuration/attestation transaction
+inside the deployed MySQL service. It requires `secure_upload=1`, idempotently inserts or
+reactivates only `application/json` in `files_white_list`, and independently confirms that
+the entry is active. It never disables secure upload or permits a MIME wildcard. This is
+required because the frozen grounded extraction artifact is an `application/json`
+document. The script also requires exactly two root category rows, distinct positive IDs,
+and exact ACLs, then sets `SOURCE_DOCUMENT_CATEGORY_ID` and
+`ARTIFACT_DOCUMENT_CATEGORY_ID` itself. No owner copies an ID, and no OpenEMR schema or
+source code is changed.
 
 OpenEMR's SMART/FHIR context identifies the patient and encounter with UUIDs, while its
 legacy document and vital routes require numeric `pid`/`eid` values. The frozen exact-16
 scope set deliberately does not add the separate lowercase standard-patient lookup
-scope. During the same read-only database attestation, the script therefore resolves
+scope. During the same database attestation, the script therefore resolves
 the canonical synthetic UUIDs to one positive numeric patient ID and one positive
 numeric encounter ID. It installs the four non-secret bindings below on web and worker.
 Runtime keeps the UUIDs for delegated authorization, ledgers, FHIR reads, and citations;
@@ -129,7 +134,8 @@ boolean results—not bytes, OAuth material, or clinical content.
 
 ### Railway SSH tooling fallback
 
-This Railway account must have a registered local SSH key for that read-only discovery.
+This Railway account must have a registered local SSH key for that narrow provisioning
+and attestation transaction.
 If none is available, the script prints exactly this command and stops with both services
 disabled:
 
@@ -138,7 +144,9 @@ railway ssh keys add
 ```
 
 Run it once, then rerun the activation command. This is only Railway transport setup; it
-does not create categories, change ACLs, read a secret, or mutate OpenEMR.
+does not create categories, change ACLs, or read a secret. The activation transaction's
+only OpenEMR mutation remains the exact `application/json` whitelist entry described
+above.
 
 ## 3. Owner-managed secrets
 
@@ -168,10 +176,12 @@ On every run, `agent/scripts/activate_w2_write_path.py` performs this idempotent
    `document-worker` service in the pinned project/environment.
 2. Sets the full non-secret baseline on web and worker with
    `W2_DOCUMENT_RUNTIME_ENABLED=false` before inspecting mutable prerequisites.
-3. Uses read-only OpenEMR state to validate the SMART registration, both category
-   paths/IDs/ACLs, `system_error_logging=WARNING`, the canonical synthetic patient, and
-   that patient's deterministic latest encounter UUID plus the exact numeric `pid/eid`
-   bindings required by legacy write routes.
+3. Requires OpenEMR secure upload to remain enabled, idempotently enables only the
+   architecture-required `application/json` whitelist entry, and attests it is active.
+   It then validates the SMART registration, both category paths/IDs/ACLs,
+   `system_error_logging=WARNING`, the canonical synthetic patient, and that patient's
+   deterministic latest encounter UUID plus the exact numeric `pid/eid` bindings required
+   by legacy write routes.
 4. Sets the discovered public SMART client ID, both category IDs, and all four
    UUID-to-numeric route attestations without owner copy/paste.
 5. Deploys the worker from a temporary context in which the committed

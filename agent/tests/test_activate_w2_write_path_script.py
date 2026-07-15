@@ -162,6 +162,8 @@ class _FakeOpenEMR:
                 },
             ],
             system_error_logging="WARNING",
+            secure_upload="1",
+            json_mime_enabled="1",
             client_id="replacement-client-public-id",
             patient_uuid=_PATIENT_UUID,
             patient_id=_PATIENT_ID,
@@ -281,6 +283,8 @@ def test_openemr_attestation_requires_exact_categories_acl_and_warning() -> None
     attestation = OpenEMRAttestation.from_rows(
         rows,
         system_error_logging="WARNING",
+        secure_upload="1",
+        json_mime_enabled="1",
         patient_uuid=_PATIENT_UUID,
         patient_id=_PATIENT_ID,
         encounter_uuid=_ENCOUNTER_UUID,
@@ -302,6 +306,21 @@ def test_openemr_attestation_requires_exact_categories_acl_and_warning() -> None
             OpenEMRAttestation.from_rows(
                 category_rows,
                 system_error_logging=logging_value,
+                secure_upload="1",
+                json_mime_enabled="1",
+                patient_uuid=_PATIENT_UUID,
+                patient_id=_PATIENT_ID,
+                encounter_uuid=_ENCOUNTER_UUID,
+                encounter_id=_ENCOUNTER_ID,
+            )
+
+    for secure_upload, json_mime_enabled in (("0", "1"), ("1", "0")):
+        with pytest.raises(ActivationError):
+            OpenEMRAttestation.from_rows(
+                rows,
+                system_error_logging="WARNING",
+                secure_upload=secure_upload,
+                json_mime_enabled=json_mime_enabled,
                 patient_uuid=_PATIENT_UUID,
                 patient_id=_PATIENT_ID,
                 encounter_uuid=_ENCOUNTER_UUID,
@@ -331,6 +350,7 @@ def test_read_only_discovery_validates_client_categories_logging_and_encounter()
             "CATEGORY\tAI-Extractions\t202\tpatients|docs",
             "CATEGORY\tAI-Source-Documents\t101\tpatients|docs",
             "LOGGING\tWARNING",
+            "UPLOAD\t1\t1",
             client_row,
             f"PATIENT\t{_PATIENT_UUID}\t{_PATIENT_ID}",
             f"ENCOUNTER\t{encounter_id}\t{_ENCOUNTER_ID}",
@@ -365,6 +385,8 @@ def test_read_only_discovery_validates_client_categories_logging_and_encounter()
     assert attestation.encounter_id == _ENCOUNTER_ID
     assert attestation.source_category_id == "101"
     assert attestation.artifact_category_id == "202"
+    assert attestation.secure_upload_enabled is True
+    assert attestation.json_mime_enabled is True
 
 
 def test_railway_ssh_preserves_the_attestation_as_one_remote_command(
@@ -508,7 +530,7 @@ def test_upload_uses_the_explicit_context_as_archive_root(
     assert cwd == activation_module.Path("/tmp/worker-context")
 
 
-def test_openemr_attestation_discovers_the_schema_instead_of_trusting_template_db() -> (
+def test_openemr_attestation_provisions_json_mime_and_discovers_the_schema() -> (
     None
 ):
     config = ActivationConfig.from_env(
@@ -520,10 +542,22 @@ def test_openemr_attestation_discovers_the_schema_instead_of_trusting_template_d
     inspector = RailwayOpenEMRInspectorImpl(config, object())  # type: ignore[arg-type]
 
     remote_script = inspector._remote_script(config.patient_id)
+    semantic_script = remote_script.replace("'\"'\"'", "'")
 
-    assert "information_schema.tables" in remote_script
-    assert "HAVING COUNT(DISTINCT table_name)=5" in remote_script
-    assert "DB=${MYSQLDATABASE" not in remote_script
+    assert "information_schema.tables" in semantic_script
+    assert "HAVING COUNT(DISTINCT table_name)=6" in semantic_script
+    assert "DB=${MYSQLDATABASE" not in semantic_script
+    assert "secure_upload" in semantic_script
+    assert "files_white_list" in semantic_script
+    assert "application/json" in semantic_script
+    assert "BINARY option_id='application/json'" in semantic_script
+    assert (
+        "ON DUPLICATE KEY UPDATE option_id='application/json', "
+        "title='application/json', activity=1"
+    ) in semantic_script
+    assert "DELETE " not in semantic_script
+    assert "UPDATE globals" not in semantic_script
+    assert "application/*" not in semantic_script
 
 
 def test_verify_script_imports_its_sibling_under_direct_script_execution(

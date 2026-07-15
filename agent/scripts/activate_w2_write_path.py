@@ -253,6 +253,8 @@ class OpenEMRAttestation:
     source_category_id: str
     artifact_category_id: str
     system_error_logging: str
+    secure_upload_enabled: bool
+    json_mime_enabled: bool
     client_id: str = ""
     patient_uuid: str = ""
     patient_id: str = ""
@@ -265,6 +267,8 @@ class OpenEMRAttestation:
         category_rows: Sequence[Mapping[str, object]],
         *,
         system_error_logging: str,
+        secure_upload: str,
+        json_mime_enabled: str,
         patient_uuid: str,
         patient_id: str,
         encounter_uuid: str,
@@ -273,6 +277,12 @@ class OpenEMRAttestation:
     ) -> "OpenEMRAttestation":
         if system_error_logging != "WARNING":
             raise ActivationError("OpenEMR system_error_logging is not exactly WARNING")
+        if secure_upload != "1":
+            raise ActivationError("OpenEMR secure_upload is not enabled")
+        if json_mime_enabled != "1":
+            raise ActivationError(
+                "OpenEMR secure-upload whitelist does not allow application/json"
+            )
         if len(category_rows) != 2:
             raise ActivationError(
                 "OpenEMR must contain exactly the two required root document categories"
@@ -326,6 +336,8 @@ class OpenEMRAttestation:
             source_category_id=str(indexed["AI-Source-Documents"]["id"]),
             artifact_category_id=str(indexed["AI-Extractions"]["id"]),
             system_error_logging=system_error_logging,
+            secure_upload_enabled=True,
+            json_mime_enabled=True,
             client_id=client_id,
             patient_uuid=patient_uuid,
             patient_id=patient_id,
@@ -852,7 +864,7 @@ class RailwayCLI:
                 # command or only the first word reaches the login shell.
                 f"sh -lc {shlex.quote(remote_script)}",
             ],
-            label="read-only OpenEMR attestation",
+            label="OpenEMR runtime policy attestation",
         )
 
     def _upload(self, service: str, directory: Path) -> None:
@@ -1021,7 +1033,7 @@ class RailwayCLI:
 
 
 class RailwayOpenEMRInspectorImpl:
-    """Read exact non-secret OpenEMR state through Railway's authenticated SSH tunnel."""
+    """Provision and attest narrow non-secret OpenEMR runtime configuration."""
 
     def __init__(self, config: ActivationConfig, railway: RailwayCLI) -> None:
         self._config = config
@@ -1040,7 +1052,7 @@ class RailwayOpenEMRInspectorImpl:
             )
         if not self._railway.ssh_keys_available():
             raise ActivationError(
-                "Railway has no registered SSH key for read-only OpenEMR discovery; run "
+                "Railway has no registered SSH key for OpenEMR runtime policy setup; run "
                 "`railway ssh keys add`, then rerun this command"
             )
         output = self._railway.ssh_mysql(self._remote_script(patient))
@@ -1049,6 +1061,7 @@ class RailwayOpenEMRInspectorImpl:
     def _parse_output(self, output: str) -> OpenEMRAttestation:
         categories: list[dict[str, str]] = []
         logging_values: list[str] = []
+        upload_values: list[tuple[str, str]] = []
         clients: list[list[str]] = []
         patients: list[tuple[str, str]] = []
         encounters: list[tuple[str, str]] = []
@@ -1067,6 +1080,8 @@ class RailwayOpenEMRInspectorImpl:
                 )
             elif fields[0] == "LOGGING" and len(fields) == 2:
                 logging_values.append(fields[1])
+            elif fields[0] == "UPLOAD" and len(fields) == 3:
+                upload_values.append((fields[1], fields[2]))
             elif fields[0] == "CLIENT" and len(fields) == 9:
                 clients.append(fields[1:])
             elif fields[0] == "PATIENT" and len(fields) == 3:
@@ -1076,6 +1091,10 @@ class RailwayOpenEMRInspectorImpl:
         if len(logging_values) != 1:
             raise ActivationError(
                 "OpenEMR logging attestation was not uniquely available"
+            )
+        if len(upload_values) != 1:
+            raise ActivationError(
+                "OpenEMR secure-upload attestation was not uniquely available"
             )
         if len(clients) != 1:
             raise ActivationError(
@@ -1101,6 +1120,8 @@ class RailwayOpenEMRInspectorImpl:
         return OpenEMRAttestation.from_rows(
             categories,
             system_error_logging=logging_values[0],
+            secure_upload=upload_values[0][0],
+            json_mime_enabled=upload_values[0][1],
             client_id=client_id,
             patient_uuid=patient_uuid,
             patient_id=patients[0][1],
@@ -1162,6 +1183,21 @@ WHERE root.id=1 AND root.name='Categories'
 ORDER BY c.name;
 SELECT 'LOGGING', gl_value
 FROM globals WHERE gl_name='system_error_logging' AND gl_index=0;
+SELECT 'UPLOAD', gl_value,
+       IF((SELECT COUNT(*) FROM list_options
+           WHERE list_id='files_white_list'
+             AND BINARY option_id='application/json'
+             AND activity=1)=1, '1', '0')
+FROM globals WHERE gl_name='secure_upload' AND gl_index=0;
+""".strip()
+        mime_policy_sql = """
+INSERT INTO list_options (list_id, option_id, title, activity)
+SELECT 'files_white_list', 'application/json', 'application/json', 1
+WHERE EXISTS (
+    SELECT 1 FROM globals
+    WHERE gl_name='secure_upload' AND gl_index=0 AND gl_value='1'
+)
+ON DUPLICATE KEY UPDATE option_id='application/json', title='application/json', activity=1;
 """.strip()
         client_sql = f"""
 SELECT 'CLIENT', client_id, CAST(is_enabled AS CHAR), CAST(is_confidential AS CHAR),
@@ -1191,10 +1227,11 @@ ORDER BY fe.date DESC, fe.id DESC LIMIT 1;
         schema_sql = """
 SELECT table_schema
 FROM information_schema.tables
-WHERE table_name IN ('categories','globals','oauth_clients','form_encounter','patient_data')
+WHERE table_name IN
+      ('categories','globals','list_options','oauth_clients','form_encounter','patient_data')
   AND table_schema NOT IN ('information_schema','mysql','performance_schema','sys')
 GROUP BY table_schema
-HAVING COUNT(DISTINCT table_name)=5
+HAVING COUNT(DISTINCT table_name)=6
 ORDER BY table_schema;
 """.strip()
         return (
@@ -1205,6 +1242,7 @@ ORDER BY table_schema;
             f'DB=$(mysql --batch --skip-column-names --raw -u "$DBUSER" -e {shlex.quote(schema_sql)}); '
             "DB_COUNT=$(printf '%s\\n' \"$DB\" | awk 'NF{n++} END{print n+0}'); "
             'test "$DB_COUNT" -eq 1; '
+            f'mysql --batch --skip-column-names --raw -u "$DBUSER" "$DB" -e {shlex.quote(mime_policy_sql)}; '
             f'mysql --batch --skip-column-names --raw -u "$DBUSER" "$DB" -e {shlex.quote(base_sql)}; '
             f'mysql --batch --skip-column-names --raw -u "$DBUSER" "$DB" -e {shlex.quote(client_sql)}; '
             f'mysql --batch --skip-column-names --raw -u "$DBUSER" "$DB" -e {shlex.quote(patient_sql)}; '

@@ -49,6 +49,7 @@ _EXPECTED_READY_CHECKS = frozenset(
 )
 _QUERY = "type 2 diabetes; HbA1c; blood pressure"
 _TERMINAL_FAILURE_STATES = frozenset({"failed", "reconciling"})
+_SAFE_RETRY_REASONS = frozenset({"worker_restart", "writeback_failed"})
 
 
 class VerificationError(RuntimeError):
@@ -224,7 +225,7 @@ class LiveWritePathVerifier:
     def _poll_complete(self, document: _UploadedDocument) -> None:
         deadline = self._monotonic() + self._config.poll_timeout_seconds
         path = f"/documents/{quote(document.document_id, safe='')}/status"
-        worker_restart_retried = False
+        terminal_retry_used = False
         while True:
             body = self._request_json(
                 "GET",
@@ -242,15 +243,16 @@ class LiveWritePathVerifier:
                 return
             if (
                 state == "failed"
-                and body.get("reason") == "worker_restart"
-                and not worker_restart_retried
+                and body.get("reason") in _SAFE_RETRY_REASONS
+                and not terminal_retry_used
             ):
                 # A fresh deployment may encounter a fixture job failed by the prior
-                # revision. Request exactly one optimistic-state-guarded retry through
-                # the public typed route. The route refuses any unknown write intent,
-                # and every subsequent write leg still reconciles before posting.
-                self._retry_worker_restart(document)
-                worker_restart_retried = True
+                # revision or a definitive pre-commit write rejection after its required
+                # MIME policy was provisioned. Request exactly one optimistic-state-guarded
+                # retry through the public typed route. The route refuses every unknown
+                # write intent, and each pending leg still reconciles before posting.
+                self._retry_failed_job(document)
+                terminal_retry_used = True
                 continue
             if state in _TERMINAL_FAILURE_STATES:
                 raise VerificationError(
@@ -266,7 +268,7 @@ class LiveWritePathVerifier:
                 )
             self._sleep(self._config.poll_interval_seconds)
 
-    def _retry_worker_restart(self, document: _UploadedDocument) -> None:
+    def _retry_failed_job(self, document: _UploadedDocument) -> None:
         path = f"/documents/{quote(document.document_id, safe='')}/retry"
         body = self._request_json(
             "POST",

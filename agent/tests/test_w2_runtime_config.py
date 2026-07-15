@@ -99,6 +99,26 @@ def test_enabled_runtime_does_not_require_one_global_patient_or_encounter() -> N
 @pytest.mark.parametrize(
     ("field", "value"),
     (
+        ("openemr_legacy_patient_uuid", "not-a-uuid"),
+        ("openemr_legacy_patient_uuid", "11111111-1111-4111-8111-11111111111A"),
+        ("openemr_legacy_patient_id", "0"),
+        ("openemr_legacy_patient_id", "0731"),
+        ("openemr_legacy_encounter_uuid", "not-a-uuid"),
+        ("openemr_legacy_encounter_id", "9.12"),
+    ),
+)
+def test_retired_singleton_route_values_cannot_influence_runtime(
+    field: str, value: str
+) -> None:
+    settings = Settings(**{**_W2, field: value})
+
+    assert settings.w2_document_runtime_enabled is True
+    assert not hasattr(settings, field)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
         ("agent_callback_url", "http://localhost:8000/callback"),
         ("agent_callback_url", "https://agent.test/not-callback"),
         ("source_document_path", "/Medical-Record"),

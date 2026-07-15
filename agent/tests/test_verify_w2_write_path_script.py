@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import subprocess
 from collections.abc import Iterator
 
@@ -404,66 +405,24 @@ def test_cli_output_never_prints_session_patient_encounter_hash_or_fixture_conte
     assert all(value not in output for value in forbidden)
 
 
-def test_cli_defaults_to_the_isolated_requests_transport(monkeypatch, capsys) -> None:
+def test_cli_defaults_to_the_isolated_curl_transport(monkeypatch, capsys) -> None:
     config = VerificationConfig.from_env(_ENV)
     transport, _requests = _transport(config)
     fallback = httpx.Client(transport=transport)
-    configured_timeouts: list[float] = []
     ready_timeouts: list[float] = []
-
-    def requests_client(timeout: float) -> httpx.Client:
-        configured_timeouts.append(timeout)
-        return fallback
 
     def ready_client(timeout: float) -> httpx.Client:
         ready_timeouts.append(timeout)
         return fallback
 
-    monkeypatch.setattr(verify_module, "_RequestsClient", requests_client)
-    monkeypatch.setattr(verify_module, "_CurlReadyClient", ready_client)
+    monkeypatch.setattr(verify_module, "_CurlClient", ready_client)
     try:
         assert verify_module.main(environ=_ENV, sleep=_zero_sleep) == 0
     finally:
         fallback.close()
 
-    assert configured_timeouts == [config.request_timeout_seconds]
     assert ready_timeouts == [config.request_timeout_seconds]
     assert "PASS" in capsys.readouterr().out
-
-
-def test_requests_transport_is_one_shot_identity_encoded_and_redirect_closed(
-    monkeypatch,
-) -> None:
-    captured: dict[str, object] = {}
-    response = object()
-
-    class _Session:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-        def request(self, method: str, url: str, **kwargs: object):
-            captured.update({"method": method, "url": url, **kwargs})
-            return response
-
-    monkeypatch.setattr(verify_module.requests, "Session", _Session)
-    client = verify_module._RequestsClient(timeout=17.0)
-
-    assert client.request(
-        "POST",
-        "https://agent.example/chat",
-        json={"synthetic": True},
-        headers={"X-Copilot-Request-Id": "synthetic-request"},
-    ) is response
-    assert captured["timeout"] == 17.0
-    assert captured["allow_redirects"] is False
-    assert captured["headers"] == {
-        "X-Copilot-Request-Id": "synthetic-request",
-        "User-Agent": "openemr-copilot-w2-verifier/1",
-        "Accept-Encoding": "identity",
-    }
 
 
 def test_curl_ready_transport_is_https_only_bounded_and_json_typed() -> None:
@@ -478,7 +437,7 @@ def test_curl_ready_transport_is_https_only_bounded_and_json_typed() -> None:
             stderr="",
         )
 
-    client = verify_module._CurlReadyClient(
+    client = verify_module._CurlClient(
         timeout=17.0,
         curl_path="/usr/bin/curl",
         run_command=run,
@@ -493,3 +452,46 @@ def test_curl_ready_transport_is_https_only_bounded_and_json_typed() -> None:
     assert "--max-time" in command and "17.0" in command
     assert kwargs["capture_output"] is True
     assert kwargs["text"] is True
+
+
+def test_curl_transport_keeps_context_in_stdin_and_deletes_multipart_tempfile() -> None:
+    marker = "opaque-session-must-not-reach-process-arguments"
+    observed: dict[str, object] = {}
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        config = str(kwargs["input"])
+        upload_match = re.search(r"file=@([^;\"]+)", config)
+        assert upload_match is not None
+        upload = verify_module.Path(upload_match.group(1))
+        observed.update(
+            command=command,
+            config=config,
+            upload=upload,
+            content=upload.read_bytes(),
+        )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout='{"document_id":"synthetic"}\n202',
+            stderr="",
+        )
+
+    client = verify_module._CurlClient(
+        timeout=17.0,
+        curl_path="/usr/bin/curl",
+        run_command=run,
+    )
+    response = client.request(
+        "POST",
+        "https://agent.example/documents",
+        data={"session_id": marker, "doc_type": "lab_pdf"},
+        files={"file": ("synthetic.pdf", b"synthetic-pdf", "application/pdf")},
+        headers={"X-Copilot-Request-Id": "synthetic-request"},
+    )
+
+    assert response.status_code == 202
+    assert response.json() == {"document_id": "synthetic"}
+    assert marker not in " ".join(observed["command"])
+    assert marker in str(observed["config"])
+    assert observed["content"] == b"synthetic-pdf"
+    assert not observed["upload"].exists()

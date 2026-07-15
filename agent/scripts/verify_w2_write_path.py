@@ -21,16 +21,16 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import httpx
-import requests
 
 REQUIRED_ENV_NAMES = (
     "W2_VERIFY_AGENT_BASE_URL",
@@ -144,28 +144,8 @@ class _FreshRequestClient:
             return client.request(method, url, **kwargs)
 
 
-class _RequestsClient:
-    """Use urllib3's isolated one-shot transport for live verification requests."""
-
-    def __init__(self, timeout: float) -> None:
-        self._timeout = timeout
-
-    def request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
-        caller_headers = dict(kwargs.pop("headers", {}))
-        headers = {
-            **caller_headers,
-            "User-Agent": "openemr-copilot-w2-verifier/1",
-            "Accept-Encoding": "identity",
-        }
-        with requests.Session() as session:
-            return session.request(
-                method,
-                url,
-                timeout=self._timeout,
-                allow_redirects=False,
-                headers=headers,
-                **kwargs,
-            )
+class _TransportError(RuntimeError):
+    """Content-free local transport failure."""
 
 
 @dataclass(frozen=True)
@@ -177,8 +157,8 @@ class _CurlResponse:
         return json.loads(self.body)
 
 
-class _CurlReadyClient:
-    """Read-only readiness transport isolated to the system TLS stack."""
+class _CurlClient:
+    """System-curl transport with all context supplied through private stdin."""
 
     def __init__(
         self,
@@ -195,14 +175,36 @@ class _CurlReadyClient:
         parsed = urlsplit(url)
         if (
             not self._curl_path
-            or method != "GET"
-            or kwargs
+            or method not in {"GET", "POST"}
             or parsed.scheme != "https"
             or not parsed.netloc
             or parsed.username is not None
             or parsed.password is not None
         ):
-            raise requests.ConnectionError("readiness transport contract rejected")
+            raise _TransportError("curl transport contract rejected")
+        params = kwargs.pop("params", None)
+        json_body = kwargs.pop("json", None)
+        data = kwargs.pop("data", None)
+        files = kwargs.pop("files", None)
+        caller_headers = dict(kwargs.pop("headers", {}))
+        if kwargs or (json_body is not None and (data is not None or files is not None)):
+            raise _TransportError("curl transport contract rejected")
+        if params is not None:
+            query = urlencode(dict(params), doseq=True)
+            url += ("&" if parsed.query else "?") + query
+
+        headers = {
+            **caller_headers,
+            "User-Agent": "openemr-copilot-w2-verifier/1",
+            "Accept-Encoding": "identity",
+        }
+        config = [
+            _curl_config("url", url),
+            _curl_config("request", method),
+        ]
+        for name, value in headers.items():
+            config.append(_curl_config("header", f"{name}: {value}"))
+
         command = [
             self._curl_path,
             "--silent",
@@ -211,30 +213,77 @@ class _CurlReadyClient:
             "=https",
             "--max-time",
             str(self._timeout),
-            "--header",
-            "User-Agent: openemr-copilot-w2-verifier/1",
-            "--header",
-            "Accept-Encoding: identity",
+            "--config",
+            "-",
             "--write-out",
             "\n%{http_code}",
-            url,
         ]
         try:
-            completed = self._run_command(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=self._timeout + 5,
-                check=False,
-                env={},
-            )
-            body, status = completed.stdout.rsplit("\n", 1)
-            status_code = int(status)
+            with tempfile.TemporaryDirectory(prefix="w2-verify-upload-") as directory:
+                if files is not None:
+                    if not isinstance(data, Mapping) or not isinstance(files, Mapping):
+                        raise ValueError("invalid multipart contract")
+                    for name, value in data.items():
+                        config.append(_curl_config("form-string", f"{name}={value}"))
+                    for index, (name, file_value) in enumerate(files.items()):
+                        if (
+                            not isinstance(file_value, tuple)
+                            or len(file_value) != 3
+                            or not isinstance(file_value[0], str)
+                            or not isinstance(file_value[1], bytes)
+                            or not isinstance(file_value[2], str)
+                        ):
+                            raise ValueError("invalid multipart file contract")
+                        filename, content, content_type = file_value
+                        upload = Path(directory) / f"upload-{index}"
+                        upload.write_bytes(content)
+                        upload.chmod(0o600)
+                        config.append(
+                            _curl_config(
+                                "form",
+                                f"{name}=@{upload};type={content_type};"
+                                f"filename={filename}",
+                            )
+                        )
+                elif json_body is not None:
+                    if not any(name.casefold() == "content-type" for name in headers):
+                        config.append(_curl_config("header", "Content-Type: application/json"))
+                    config.append(
+                        _curl_config(
+                            "data",
+                            json.dumps(json_body, separators=(",", ":")),
+                        )
+                    )
+                elif data is not None:
+                    if not isinstance(data, Mapping):
+                        raise ValueError("invalid form contract")
+                    config.append(
+                        _curl_config("data", urlencode(dict(data), doseq=True))
+                    )
+                completed = self._run_command(
+                    command,
+                    input="\n".join(config) + "\n",
+                    capture_output=True,
+                    text=True,
+                    timeout=self._timeout + 5,
+                    check=False,
+                    env={},
+                )
+                body, status = completed.stdout.rsplit("\n", 1)
+                status_code = int(status)
         except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
-            raise requests.ConnectionError("readiness transport failed") from exc
+            raise _TransportError("curl transport failed") from exc
         if completed.returncode != 0 or not 100 <= status_code <= 599:
-            raise requests.ConnectionError("readiness transport failed")
+            raise _TransportError("curl transport failed")
         return _CurlResponse(status_code, body)
+
+
+def _curl_config(name: str, value: object) -> str:
+    text = str(value)
+    if any(ord(character) < 32 or ord(character) == 127 for character in text):
+        raise ValueError("curl config contains a control character")
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'{name} = "{escaped}"'
 
 
 class LiveWritePathVerifier:
@@ -244,7 +293,7 @@ class LiveWritePathVerifier:
         self,
         config: VerificationConfig,
         *,
-        client: httpx.Client | _FreshRequestClient | _RequestsClient,
+        client: httpx.Client | _FreshRequestClient | _CurlClient,
         ready_client: object | None = None,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
@@ -487,7 +536,7 @@ class LiveWritePathVerifier:
                     method, self._config.agent_base_url + path, **kwargs
                 )
                 break
-            except (httpx.HTTPError, requests.RequestException) as exc:
+            except (httpx.HTTPError, _TransportError) as exc:
                 if attempt + 1 >= transport_attempts:
                     raise VerificationError(
                         "deployed agent request failed "
@@ -533,10 +582,12 @@ def main(
     try:
         config = VerificationConfig.from_env(environ)
         if client_factory is None:
-            client: httpx.Client | _FreshRequestClient | _RequestsClient = (
-                _RequestsClient(config.request_timeout_seconds)
-            )
-            ready_client: object = _CurlReadyClient(config.request_timeout_seconds)
+            client: (
+                httpx.Client
+                | _FreshRequestClient
+                | _CurlClient
+            ) = _CurlClient(config.request_timeout_seconds)
+            ready_client: object = client
         else:
             client = _FreshRequestClient(
                 client_factory,

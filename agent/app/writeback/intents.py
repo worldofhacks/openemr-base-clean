@@ -21,6 +21,17 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _db_timestamp(value: str | None = None) -> datetime:
+    timestamp = (
+        datetime.now(timezone.utc)
+        if value is None
+        else datetime.fromisoformat(value)
+    )
+    if timestamp.tzinfo is None:
+        raise ValueError("intent timestamps must be timezone-aware")
+    return timestamp.astimezone(timezone.utc)
+
+
 @dataclass(frozen=True)
 class IntentSpec:
     patient_id: str
@@ -152,7 +163,7 @@ class PostgresIntentRepository:
                 spec.correlation_marker,
                 spec.payload_hash,
                 WriteState.PENDING.value,
-                _now(),
+                _db_timestamp(),
             )
             intent = _intent_from_row(row)
             if (
@@ -178,7 +189,7 @@ class PostgresIntentRepository:
                 intent.state.value,
                 intent.remote_id,
                 intent.attempt_count,
-                intent.updated_ts,
+                _db_timestamp(intent.updated_ts),
             )
             if row is None:
                 raise KeyError(intent.intent_id)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 import pytest
 
@@ -41,6 +42,65 @@ def _spec(patient_id: str = "patient-synthetic-a"):
         correlation_marker="corr-marker-1",
         payload_hash="payload-sha256",
     )
+
+
+async def _return(value):
+    return value
+
+
+@pytest.mark.asyncio
+async def test_postgres_intent_creation_binds_typed_utc_timestamp() -> None:
+    from app.writeback.intents import PostgresIntentRepository
+
+    class _Stop(Exception):
+        pass
+
+    class _Connection:
+        timestamp: object = None
+
+        async def fetchrow(self, _query, *args):
+            self.timestamp = args[-1]
+            raise _Stop()
+
+        async def close(self):
+            return None
+
+    connection = _Connection()
+    repository = PostgresIntentRepository(lambda: _return(connection))
+
+    with pytest.raises(_Stop):
+        await repository.get_or_create(_spec())
+
+    assert isinstance(connection.timestamp, datetime)
+    assert connection.timestamp.tzinfo is timezone.utc
+
+
+@pytest.mark.asyncio
+async def test_postgres_intent_save_converts_schema_timestamp_for_asyncpg() -> None:
+    from app.writeback.intents import InMemoryIntentRepository, PostgresIntentRepository
+
+    class _Stop(Exception):
+        pass
+
+    class _Connection:
+        timestamp: object = None
+
+        async def fetchrow(self, _query, *args):
+            self.timestamp = args[-1]
+            raise _Stop()
+
+        async def close(self):
+            return None
+
+    intent = await InMemoryIntentRepository().get_or_create(_spec())
+    connection = _Connection()
+    repository = PostgresIntentRepository(lambda: _return(connection))
+
+    with pytest.raises(_Stop):
+        await repository.save(intent)
+
+    assert isinstance(connection.timestamp, datetime)
+    assert connection.timestamp.tzinfo is not None
 
 
 @pytest.mark.asyncio

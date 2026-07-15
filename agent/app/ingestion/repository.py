@@ -768,7 +768,8 @@ class PostgresDocumentRepository:
                 """
                 UPDATE agent_document_jobs
                    SET heartbeat_at=$3,
-                       lease_expires_at=$3 + ($4 * interval '1 second'),
+                       lease_expires_at=$3 +
+                           ($4::double precision * interval '1 second'),
                        updated_ts=$3
                  WHERE document_id=$1 AND claim_owner=$2
                    AND state IN ('extracting','grounding','writing')

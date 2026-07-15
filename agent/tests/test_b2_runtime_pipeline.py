@@ -128,6 +128,34 @@ async def test_postgres_claim_query_is_atomic_skip_locked():
 
 
 @pytest.mark.asyncio
+async def test_postgres_heartbeat_casts_lease_interval_parameter() -> None:
+    from app.ingestion.repository import DocumentLeaseLost, PostgresDocumentRepository
+
+    class _Connection:
+        query = ""
+
+        async def fetchrow(self, query, *_args):
+            self.query = query
+            return None
+
+        async def close(self):
+            return None
+
+    connection = _Connection()
+    repository = PostgresDocumentRepository(lambda: _return(connection))
+
+    with pytest.raises(DocumentLeaseLost):
+        await repository.heartbeat(
+            "document-synthetic",
+            worker_id="worker-synthetic",
+            lease_seconds=60,
+        )
+
+    normalized = " ".join(connection.query.split())
+    assert "$4::double precision * interval '1 second'" in normalized
+
+
+@pytest.mark.asyncio
 async def test_postgres_document_creation_binds_typed_utc_timestamps() -> None:
     from app.ingestion.repository import PostgresDocumentRepository
 

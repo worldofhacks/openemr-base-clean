@@ -10,6 +10,8 @@ from app.ingestion.service import (
     DocumentAccessError,
     DocumentOperations,
     EncounterMismatch,
+    ExtractionReportNotReady,
+    ExtractionReportUnavailable,
     RetryConflict,
 )
 from app.ingestion.pages import PageNotFound, RenderedPage
@@ -24,6 +26,7 @@ from app.schemas.documents import (
     UploadAccepted,
     UploadRequest,
 )
+from app.schemas.extraction_report import DocumentExtractionReport
 from app.session.store import (
     CrossPatientError,
     Session,
@@ -154,6 +157,29 @@ async def document_status(
         return await services.documents.status(session, document_id)
     except DocumentAccessError as exc:
         raise _map_operation_error(exc)
+
+
+@router.get(
+    "/documents/{document_id}/extraction-report",
+    response_model=DocumentExtractionReport,
+)
+async def document_extraction_report(
+    document_id: str,
+    request: Request,
+    session_id: Annotated[str, Query(min_length=1)],
+) -> DocumentExtractionReport:
+    """Render only persisted grounded facts; unsupported VLM proposals stay redacted."""
+
+    services: DocumentRouteServices = request.app.state.services
+    session = await _session(services, session_id)
+    try:
+        return await services.documents.extraction_report(session, document_id)
+    except DocumentAccessError as exc:
+        raise _map_operation_error(exc)
+    except ExtractionReportNotReady:
+        raise HTTPException(status_code=409, detail="extraction report is not complete")
+    except ExtractionReportUnavailable:
+        raise HTTPException(status_code=503, detail="extraction report is unavailable")
 
 
 @router.post(

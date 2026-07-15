@@ -13,9 +13,10 @@ import os
 import re
 import secrets
 import threading
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Literal
 
 from app.auth.scopes import (
     ScopeCoverageError,
@@ -51,6 +52,17 @@ from corpus.retrieval import (
     RetrievalUnavailableError,
     build_clinical_query,
 )
+
+
+LaunchDestination = Literal["week1", "week2"]
+
+
+@dataclass(frozen=True)
+class _PendingLaunch:
+    """Server-side OAuth state; the browser can never supply a redirect target."""
+
+    verifier: str
+    destination: LaunchDestination
 
 
 def _build_tracer(settings: Settings) -> RequestTracer:
@@ -151,7 +163,10 @@ class AgentServices:
         self._tokens: dict[
             str, TokenResponse
         ] = {}  # per-session delegated-token cache (§2)
-        self._pkce: dict[str, str] = {}  # oauth state → PKCE code_verifier
+        # OAuth state remains random and one-use.  The fixed UI destination is held only
+        # beside its PKCE verifier server-side; no callback ``next`` parameter is trusted.
+        # ``str`` remains accepted on read for the frozen W1 auth tests/rolling deploy.
+        self._pkce: dict[str, str | _PendingLaunch] = {}
         self.provider = AnthropicLLMProvider(
             api_key=settings.anthropic_api_key.get_secret_value(),
             model=settings.llm_model,
@@ -251,11 +266,21 @@ class AgentServices:
 
     # --- SMART launch → pinned session ---------------------------------------
 
-    def begin_launch(self, *, launch: str | None = None) -> str:
-        """Build the authorize URL for an EHR launch (or standalone) and stash the PKCE verifier."""
+    def begin_launch(
+        self,
+        *,
+        launch: str | None = None,
+        destination: LaunchDestination = "week1",
+    ) -> str:
+        """Build OAuth+PKCE and bind it to one closed, server-side UI destination."""
+
+        if destination not in {"week1", "week2"}:
+            raise ValueError("unknown SMART launch destination")
+        if destination == "week2" and not self.settings.w2_document_runtime_enabled:
+            raise RuntimeError("Week 2 document runtime is disabled")
         verifier, challenge, _method = generate_pkce()
         state = secrets.token_urlsafe(24)
-        self._pkce[state] = verifier
+        self._pkce[state] = _PendingLaunch(verifier, destination)
         scope = (
             requested_w2_scope_string()
             if self.settings.w2_document_runtime_enabled
@@ -270,11 +295,21 @@ class AgentServices:
             state=state, code_challenge=challenge, scope=scope, launch=launch
         )
 
-    async def complete_callback(self, *, code: str, state: str) -> Session:
-        """Exchange the code (PKCE) and create a session pinned to (clinician, launched patient)."""
-        verifier = self._pkce.pop(state, None)
-        if verifier is None:
+    async def complete_callback_with_destination(
+        self, *, code: str, state: str
+    ) -> tuple[Session, LaunchDestination]:
+        """Consume one OAuth state and return its fixed server-owned UI destination."""
+
+        pending = self._pkce.pop(state, None)
+        if pending is None:
             raise ValueError("unknown or replayed OAuth state")
+        if isinstance(pending, str):
+            # Rolling/W1 compatibility: the pre-split representation had only a verifier.
+            verifier = pending
+            destination: LaunchDestination = "week1"
+        else:
+            verifier = pending.verifier
+            destination = pending.destination
         token = await self.smart.exchange_code(code=code, code_verifier=verifier)
         if self.settings.w2_document_runtime_enabled:
             try:
@@ -313,6 +348,14 @@ class AgentServices:
                 session, token, access_expires_at=token_deadline
             )
         self._tokens[session.session_id] = token
+        return session, destination
+
+    async def complete_callback(self, *, code: str, state: str) -> Session:
+        """Compatibility API for non-browser callers; W1 remains the default target."""
+
+        session, _destination = await self.complete_callback_with_destination(
+            code=code, state=state
+        )
         return session
 
     def _token_deadline(self) -> datetime:

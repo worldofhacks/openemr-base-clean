@@ -21,6 +21,7 @@ from app.routes.evidence import router as evidence_router
 from app.routes.health import router as health_router
 from app.routes.sessions import router as sessions_router
 from app.routes.ui import router as ui_router
+from app.routes.week2_ui import router as week2_ui_router
 
 
 @asynccontextmanager
@@ -88,6 +89,7 @@ def create_app(
     app.include_router(documents_router)
     app.include_router(evidence_router)
     app.include_router(ui_router)
+    app.include_router(week2_ui_router)
 
     @app.get("/")
     def root() -> dict[str, str]:

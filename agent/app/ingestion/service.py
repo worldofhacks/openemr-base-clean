@@ -20,6 +20,7 @@ from app.schemas.documents import (
     UploadAccepted,
 )
 from app.ingestion.readback import DocumentReadbackVerification
+from app.schemas.extraction_report import DocumentExtractionReport
 from app.session.store import Session
 from app.schemas.writeback import WriteLeg, WriteState
 from app.writeback.intents import (
@@ -41,6 +42,14 @@ class EncounterMismatch(Exception):
 
 class RetryConflict(Exception):
     """The logical job is not failed or has an unresolved unknown intent."""
+
+
+class ExtractionReportNotReady(Exception):
+    """The logical job has not completed its verified write path yet."""
+
+
+class ExtractionReportUnavailable(Exception):
+    """A complete job's persisted artifact failed an integrity check."""
 
 
 _SOURCE_STORAGE_LEASE_SECONDS = 300
@@ -80,6 +89,10 @@ class DocumentOperations(Protocol):
     async def verify_readback(
         self, session: Session, document_id: str
     ) -> DocumentReadbackVerification: ...
+
+    async def extraction_report(
+        self, session: Session, document_id: str
+    ) -> DocumentExtractionReport: ...
 
 
 class PageRenderer(Protocol):

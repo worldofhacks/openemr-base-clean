@@ -69,6 +69,50 @@ def test_enabled_document_runtime_launches_with_exact_w2_manifest() -> None:
     assert set((services.smart.scope or "").split()) == W2_REQUESTED_SCOPES
 
 
+def test_week2_launch_destination_is_bound_only_in_server_side_oauth_state() -> None:
+    services = _services(enabled=True)
+
+    services.begin_launch(destination="week2")
+
+    assert len(services._pkce) == 1
+    pending = next(iter(services._pkce.values()))
+    assert getattr(pending, "destination", None) == "week2"
+    assert getattr(pending, "verifier", None)
+
+
+def test_week2_launch_fails_closed_when_document_runtime_is_disabled() -> None:
+    services = _services(enabled=False)
+
+    with pytest.raises(RuntimeError, match="document runtime is disabled"):
+        services.begin_launch(destination="week2")
+
+    assert services._pkce == {}
+
+
+@pytest.mark.asyncio
+async def test_callback_consumes_the_server_bound_week2_destination_once() -> None:
+    token = TokenResponse(
+        access_token="synthetic-token",
+        scope=" ".join(sorted(W2_REQUESTED_SCOPES)),
+        patient="patient-synthetic",
+        clinician_sub="Practitioner/synthetic",
+    )
+    services = _services(enabled=True, token=token)
+    services._token_deadline = lambda: datetime.now(timezone.utc) + timedelta(hours=1)
+    services.begin_launch(destination="week2")
+    state = next(iter(services._pkce))
+
+    _session, destination = await services.complete_callback_with_destination(
+        code="code-synthetic", state=state
+    )
+
+    assert destination == "week2"
+    with pytest.raises(ValueError, match="unknown or replayed OAuth state"):
+        await services.complete_callback_with_destination(
+            code="code-synthetic", state=state
+        )
+
+
 @pytest.mark.asyncio
 async def test_callback_rejects_partial_w2_grant_before_session_creation() -> None:
     token = TokenResponse(

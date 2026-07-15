@@ -27,6 +27,10 @@ from app.ingestion.readback import (
     BinaryReadbackVerification,
     DocumentReadbackVerification,
 )
+from app.ingestion.reports import (
+    ExtractionReportIntegrityError,
+    project_extraction_report,
+)
 from app.ingestion.pages import EphemeralPageRenderer
 from app.ingestion.pipeline import DocumentExtractionPipeline, PipelineFailure
 from app.ingestion.processor import DocumentProcessor
@@ -38,6 +42,8 @@ from app.ingestion.service import (
     DocumentCoordinator,
     DocumentOperations,
     DocumentSubmission,
+    ExtractionReportNotReady,
+    ExtractionReportUnavailable,
 )
 from app.llm.vlm import AnthropicVlmExtractor, VlmMessageProvider
 from app.schemas.documents import (
@@ -47,6 +53,7 @@ from app.schemas.documents import (
     RetryRequest,
 )
 from app.schemas.extraction import ExtractionArtifact
+from app.schemas.extraction_report import DocumentExtractionReport
 from app.session.store import Session
 from app.tools.fhir_client import FhirClient
 from app.writeback.documents_api import OpenEMRDocumentBackend
@@ -440,6 +447,44 @@ class _DocumentOperationsFacade:
             source=source,
             artifact=artifact_result,
         )
+
+    async def extraction_report(
+        self, session: Session, document_id: str
+    ) -> DocumentExtractionReport:
+        """Return a redacted report only after the patient-bound job is complete."""
+
+        record = await self._repository.get(document_id)
+        if record.patient_id != session.patient_id:
+            from app.ingestion.service import DocumentAccessError
+
+            raise DocumentAccessError(document_id)
+        if record.state != "complete":
+            raise ExtractionReportNotReady(document_id)
+        try:
+            refs = await self._artifacts.refs_for_document(record.document_id)
+            artifact = (
+                None if refs is None else self._artifacts.resolve(refs.artifact_ref)
+            )
+        except Exception:  # noqa: BLE001 - public route remains sanitized/fail-closed
+            raise ExtractionReportUnavailable(document_id) from None
+        if not isinstance(artifact, ExtractionArtifact):
+            raise ExtractionReportUnavailable(document_id)
+        if (
+            artifact.document_id != record.document_id
+            or artifact.content_hash != record.content_hash
+            or artifact.doc_type != record.doc_type
+        ):
+            raise ExtractionReportUnavailable(document_id)
+        try:
+            report = project_extraction_report(artifact)
+        except (ExtractionReportIntegrityError, ValueError):
+            raise ExtractionReportUnavailable(document_id) from None
+        if (
+            report.fields_grounded != record.fields_grounded
+            or report.fields_unsupported != record.fields_unsupported
+        ):
+            raise ExtractionReportUnavailable(document_id)
+        return report
 
     async def _fetch_source(self, record: DocumentRecord) -> bytes:
         gateway = await self._gateways.for_record(record)

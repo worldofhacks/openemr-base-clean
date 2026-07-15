@@ -22,7 +22,11 @@ class Settings(BaseSettings):
     # deliberate wiring step and tests stay isolated. Locally, source the gitignored
     # agent/.env into the environment before running (`set -a; . .env; set +a`); on Railway
     # the platform injects the same vars. Secrets live in .env / the platform, never source.
-    model_config = SettingsConfigDict(env_file=None, extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=None,
+        extra="ignore",
+        hide_input_in_errors=True,
+    )
 
     # --- OpenEMR (Zone A) — read-only FHIR + OAuth surfaces (D9) ---
     openemr_fhir_base_url: HttpUrl = Field(

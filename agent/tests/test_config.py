@@ -62,6 +62,20 @@ def test_config_missing_required_env_fails_fast(monkeypatch, missing: str):
         _load_from_env(monkeypatch, env)
 
 
+def test_config_validation_errors_never_render_input_values(monkeypatch):
+    env = {
+        key: value
+        for key, value in REQUIRED_ENV.items()
+        if key != "SMART_CLIENT_SECRET"
+    }
+    with pytest.raises(ValidationError) as caught:
+        _load_from_env(monkeypatch, env)
+
+    rendered = str(caught.value)
+    assert "input_value" not in rendered
+    assert "input_type" not in rendered
+
+
 def test_config_rejects_non_https_openemr_url(monkeypatch):
     # F-S.9: TLS is edge-only; the agent must pin https:// and reject downgrade.
     env = {**REQUIRED_ENV, "OPENEMR_FHIR_BASE_URL": "http://openemr.internal/apis/default/fhir"}

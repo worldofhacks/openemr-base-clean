@@ -1,0 +1,242 @@
+"""Turnkey deployed write-path verifier tests (W2-D1/D3/D6/D9/D10; §3/§5)."""
+
+from __future__ import annotations
+
+import hashlib
+from collections.abc import Iterator
+
+import httpx
+import pytest
+
+from scripts.verify_w2_write_path import (
+    REQUIRED_ENV_NAMES,
+    LiveWritePathVerifier,
+    VerificationConfig,
+    VerificationError,
+    main,
+)
+
+_ENV = {
+    "W2_VERIFY_AGENT_BASE_URL": "https://agent.example",
+    "W2_VERIFY_SESSION_ID": "session-must-never-print",
+    "W2_VERIFY_PATIENT_ID": "patient-synthetic-must-never-print",
+    "W2_VERIFY_ENCOUNTER_ID": "encounter-synthetic-must-never-print",
+    "W2_VERIFY_SYNTHETIC_ONLY_ACK": "synthetic-patient-and-documents",
+}
+
+
+def _ready(*, document_detail: str = "ready") -> dict[str, object]:
+    return {
+        "status": "ready",
+        "checks": [
+            {"name": "openemr_fhir", "kind": "hard", "ok": True, "detail": "HTTP 200"},
+            {"name": "anthropic", "kind": "hard", "ok": True, "detail": "HTTP 200"},
+            {"name": "session_store", "kind": "hard", "ok": True, "detail": "ready"},
+            {"name": "langfuse", "kind": "soft", "ok": True, "detail": "ready"},
+            {"name": "retrieval_index", "kind": "soft", "ok": True, "detail": "ok"},
+            {
+                "name": "document_runtime",
+                "kind": "hard",
+                "ok": True,
+                "detail": document_detail,
+            },
+        ],
+    }
+
+
+def _digest(hash_value: str) -> dict[str, object]:
+    return {
+        "algorithm": "sha256",
+        "expected_hash": hash_value,
+        "observed_hash": hash_value,
+        "verified": True,
+    }
+
+
+def _transport(
+    config: VerificationConfig,
+    *,
+    duplicate: bool = False,
+    document_detail: str = "ready",
+    corrupt_source: bool = False,
+    omit_intake_citation: bool = False,
+) -> tuple[httpx.MockTransport, list[httpx.Request]]:
+    requests: list[httpx.Request] = []
+    upload_index = 0
+    status_polls = {"lab-document": 0, "intake-document": 0}
+    hashes = {
+        "lab-document": hashlib.sha256(config.lab_fixture.read_bytes()).hexdigest(),
+        "intake-document": hashlib.sha256(
+            config.intake_fixture.read_bytes()
+        ).hexdigest(),
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal upload_index
+        requests.append(request)
+        path = request.url.path
+        if request.method == "GET" and path == "/ready":
+            return httpx.Response(200, json=_ready(document_detail=document_detail))
+        if request.method == "POST" and path == "/documents":
+            document_id = ("lab-document", "intake-document")[upload_index % 2]
+            upload_index += 1
+            return httpx.Response(
+                200 if duplicate else 202,
+                json={
+                    "job_id": f"job-{document_id}",
+                    "document_id": document_id,
+                    "state": "complete" if duplicate else "queued",
+                    "status_url": f"/documents/{document_id}/status",
+                    "correlation_id": "correlation-synthetic",
+                },
+            )
+        if request.method == "GET" and path.endswith("/status"):
+            document_id = path.split("/")[2]
+            status_polls[document_id] += 1
+            state = "complete" if status_polls[document_id] >= 2 else "queued"
+            return httpx.Response(
+                200,
+                json={
+                    "document_id": document_id,
+                    "state": state,
+                    "reason": None,
+                    "correlation_id": "correlation-synthetic",
+                    "updated_ts": "2026-07-14T12:00:00Z",
+                    "fields_grounded": 6,
+                    "fields_unsupported": 0,
+                    "attempt_count": 1,
+                    "next_retry_at": None,
+                },
+            )
+        if request.method == "GET" and path.endswith("/readback-verification"):
+            document_id = path.split("/")[2]
+            source = _digest(hashes[document_id])
+            if corrupt_source:
+                source["observed_hash"] = "f" * 64
+                source["verified"] = False
+            return httpx.Response(
+                200,
+                json={
+                    "document_id": document_id,
+                    "source": source,
+                    "artifact": _digest("a" * 64),
+                },
+            )
+        if request.method == "POST" and path == "/chat":
+            document_ids = ["lab-document"]
+            if not omit_intake_citation:
+                document_ids.append("intake-document")
+            return httpx.Response(
+                200,
+                json={
+                    "brief": "verified synthetic response",
+                    "source": "llm",
+                    "degraded": False,
+                    "verdicts": ["pass"],
+                    "citations": [
+                        {
+                            "source_type": "uploaded_document",
+                            "source_id": document_id,
+                            "page_or_section": "1",
+                            "field_or_chunk_id": "field.synthetic",
+                            "quote_or_value": "synthetic",
+                        }
+                        for document_id in document_ids
+                    ],
+                    "patient": None,
+                    "correlation_id": "correlation-synthetic",
+                },
+            )
+        return httpx.Response(404)
+
+    return httpx.MockTransport(handler), requests
+
+
+def _zero_sleep(_seconds: float) -> None:
+    return None
+
+
+def test_config_requires_exact_owner_context_names_and_committed_synthetic_fixtures():
+    with pytest.raises(VerificationError) as caught:
+        VerificationConfig.from_env({})
+    assert all(name in str(caught.value) for name in REQUIRED_ENV_NAMES)
+
+    config = VerificationConfig.from_env(_ENV)
+    assert config.agent_base_url == "https://agent.example"
+    assert config.lab_fixture.name == "lab-clean-glucose.pdf"
+    assert config.intake_fixture.name == "intake-full-valid.pdf"
+    assert config.lab_fixture.is_file()
+    assert config.intake_fixture.is_file()
+
+    with pytest.raises(VerificationError, match="attest"):
+        VerificationConfig.from_env(
+            {**_ENV, "W2_VERIFY_SYNTHETIC_ONLY_ACK": "not-confirmed"}
+        )
+
+
+def test_verifier_proves_ready_upload_poll_binary_attestation_and_grounded_citations():
+    config = VerificationConfig.from_env(_ENV)
+    transport, requests = _transport(config)
+    with httpx.Client(transport=transport) as client:
+        result = LiveWritePathVerifier(config, client=client, sleep=_zero_sleep).run()
+
+    assert result.documents_verified == 2
+    assert result.source_binaries_verified == 2
+    assert result.artifact_binaries_verified == 2
+    assert result.uploaded_document_citations >= 2
+    assert [request.url.path for request in requests].count("/documents") == 2
+    assert [request.url.path for request in requests].count("/ready") == 2
+    uploads = [request for request in requests if request.url.path == "/documents"]
+    assert b"lab_pdf" in uploads[0].content
+    assert b"intake_form" in uploads[1].content
+    assert _ENV["W2_VERIFY_ENCOUNTER_ID"].encode() not in uploads[0].content
+    assert _ENV["W2_VERIFY_ENCOUNTER_ID"].encode() in uploads[1].content
+
+
+def test_verifier_is_idempotent_when_uploads_resolve_to_existing_documents():
+    config = VerificationConfig.from_env(_ENV)
+    transport, _requests = _transport(config, duplicate=True)
+    with httpx.Client(transport=transport) as client:
+        first = LiveWritePathVerifier(config, client=client, sleep=_zero_sleep).run()
+        second = LiveWritePathVerifier(config, client=client, sleep=_zero_sleep).run()
+    assert first.documents_verified == second.documents_verified == 2
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "failure"),
+    [
+        ({"document_detail": "disabled"}, "active"),
+        ({"corrupt_source": True}, "Binary"),
+        ({"omit_intake_citation": True}, "citations"),
+    ],
+)
+def test_verifier_fails_closed_on_inactive_runtime_readback_mismatch_or_missing_citation(
+    kwargs: dict[str, object], failure: str
+):
+    config = VerificationConfig.from_env(_ENV)
+    transport, _requests = _transport(config, **kwargs)
+    with httpx.Client(transport=transport) as client:
+        with pytest.raises(VerificationError, match=failure):
+            LiveWritePathVerifier(config, client=client, sleep=_zero_sleep).run()
+
+
+def test_cli_output_never_prints_session_patient_encounter_hash_or_fixture_content(capsys):
+    config = VerificationConfig.from_env(_ENV)
+    transport, _requests = _transport(config)
+
+    def client_factory(**_kwargs: object) -> httpx.Client:
+        return httpx.Client(transport=transport)
+
+    assert main(environ=_ENV, client_factory=client_factory, sleep=_zero_sleep) == 0
+    output = capsys.readouterr().out
+    assert "PASS" in output
+    forbidden: Iterator[str] = iter(
+        (
+            _ENV["W2_VERIFY_SESSION_ID"],
+            _ENV["W2_VERIFY_PATIENT_ID"],
+            _ENV["W2_VERIFY_ENCOUNTER_ID"],
+            hashlib.sha256(config.lab_fixture.read_bytes()).hexdigest(),
+            "Glucose",
+        )
+    )
+    assert all(value not in output for value in forbidden)

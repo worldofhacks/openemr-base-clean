@@ -548,6 +548,11 @@ class _ConsentDriver:
     def __init__(self, result: str) -> None:
         self.result = result
         self.calls: list[tuple[str, list[str]]] = []
+        self.default_content_calls = 0
+        self.switch_to = SimpleNamespace(default_content=self._default_content)
+
+    def _default_content(self) -> None:
+        self.default_content_calls += 1
 
     def execute_script(self, script: str, scopes: list[str]) -> str:
         self.calls.append((script, scopes))
@@ -593,6 +598,7 @@ def test_smart_consent_prepares_only_the_known_mixed_version_scope_collision() -
 
     SeleniumSmartSession._prepare_exact_scope_consent(driver)
 
+    assert driver.default_content_calls == 1
     assert len(driver.calls) == 1
     script, scopes = driver.calls[0]
     assert scopes == sorted(REQUIRED_SMART_SCOPES)

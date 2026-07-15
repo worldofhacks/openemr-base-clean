@@ -1303,6 +1303,7 @@ class SeleniumSmartSession:
         control of the submission.
         """
 
+        driver.switch_to.default_content()
         result = driver.execute_script(
             r"""
             const expected = new Set(arguments[0]);

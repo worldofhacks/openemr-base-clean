@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import subprocess
 from collections.abc import Iterator
 
 import httpx
@@ -408,18 +409,25 @@ def test_cli_defaults_to_the_isolated_requests_transport(monkeypatch, capsys) ->
     transport, _requests = _transport(config)
     fallback = httpx.Client(transport=transport)
     configured_timeouts: list[float] = []
+    ready_timeouts: list[float] = []
 
     def requests_client(timeout: float) -> httpx.Client:
         configured_timeouts.append(timeout)
         return fallback
 
+    def ready_client(timeout: float) -> httpx.Client:
+        ready_timeouts.append(timeout)
+        return fallback
+
     monkeypatch.setattr(verify_module, "_RequestsClient", requests_client)
+    monkeypatch.setattr(verify_module, "_CurlReadyClient", ready_client)
     try:
         assert verify_module.main(environ=_ENV, sleep=_zero_sleep) == 0
     finally:
         fallback.close()
 
     assert configured_timeouts == [config.request_timeout_seconds]
+    assert ready_timeouts == [config.request_timeout_seconds]
     assert "PASS" in capsys.readouterr().out
 
 
@@ -456,3 +464,32 @@ def test_requests_transport_is_one_shot_identity_encoded_and_redirect_closed(
         "User-Agent": "openemr-copilot-w2-verifier/1",
         "Accept-Encoding": "identity",
     }
+
+
+def test_curl_ready_transport_is_https_only_bounded_and_json_typed() -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout='{"status":"ready"}\n200',
+            stderr="",
+        )
+
+    client = verify_module._CurlReadyClient(
+        timeout=17.0,
+        curl_path="/usr/bin/curl",
+        run_command=run,
+    )
+    response = client.request("GET", "https://agent.example/ready")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+    command, kwargs = calls[0]
+    assert command[0] == "/usr/bin/curl"
+    assert "--proto" in command and "=https" in command
+    assert "--max-time" in command and "17.0" in command
+    assert kwargs["capture_output"] is True
+    assert kwargs["text"] is True

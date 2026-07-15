@@ -16,7 +16,10 @@ W2-D1/D3/D6/D9/D10; W2_ARCHITECTURE §3/§5.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import shutil
+import subprocess
 import sys
 import time
 import uuid
@@ -165,6 +168,75 @@ class _RequestsClient:
             )
 
 
+@dataclass(frozen=True)
+class _CurlResponse:
+    status_code: int
+    body: str
+
+    def json(self) -> object:
+        return json.loads(self.body)
+
+
+class _CurlReadyClient:
+    """Read-only readiness transport isolated to the system TLS stack."""
+
+    def __init__(
+        self,
+        timeout: float,
+        *,
+        curl_path: str | None = None,
+        run_command: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    ) -> None:
+        self._timeout = timeout
+        self._curl_path = curl_path or shutil.which("curl") or ""
+        self._run_command = run_command
+
+    def request(self, method: str, url: str, **kwargs: Any) -> _CurlResponse:
+        parsed = urlsplit(url)
+        if (
+            not self._curl_path
+            or method != "GET"
+            or kwargs
+            or parsed.scheme != "https"
+            or not parsed.netloc
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise requests.ConnectionError("readiness transport contract rejected")
+        command = [
+            self._curl_path,
+            "--silent",
+            "--show-error",
+            "--proto",
+            "=https",
+            "--max-time",
+            str(self._timeout),
+            "--header",
+            "User-Agent: openemr-copilot-w2-verifier/1",
+            "--header",
+            "Accept-Encoding: identity",
+            "--write-out",
+            "\n%{http_code}",
+            url,
+        ]
+        try:
+            completed = self._run_command(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=self._timeout + 5,
+                check=False,
+                env={},
+            )
+            body, status = completed.stdout.rsplit("\n", 1)
+            status_code = int(status)
+        except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+            raise requests.ConnectionError("readiness transport failed") from exc
+        if completed.returncode != 0 or not 100 <= status_code <= 599:
+            raise requests.ConnectionError("readiness transport failed")
+        return _CurlResponse(status_code, body)
+
+
 class LiveWritePathVerifier:
     """Run the live contract without ever handling raw SMART credentials."""
 
@@ -173,11 +245,13 @@ class LiveWritePathVerifier:
         config: VerificationConfig,
         *,
         client: httpx.Client | _FreshRequestClient | _RequestsClient,
+        ready_client: object | None = None,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._config = config
         self._client = client
+        self._ready_client = ready_client or client
         self._sleep = sleep
         self._monotonic = monotonic
 
@@ -218,6 +292,7 @@ class LiveWritePathVerifier:
             "/ready",
             expected_status={200},
             transport_attempts=_READY_TRANSPORT_ATTEMPTS,
+            request_client=self._ready_client,
         )
         if body.get("status") != "ready":
             raise VerificationError("readiness is not green across all dependencies")
@@ -402,11 +477,13 @@ class LiveWritePathVerifier:
         *,
         expected_status: set[int],
         transport_attempts: int = 1,
+        request_client: object | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        client = request_client or self._client
         for attempt in range(transport_attempts):
             try:
-                response = self._client.request(
+                response = client.request(  # type: ignore[attr-defined]
                     method, self._config.agent_base_url + path, **kwargs
                 )
                 break
@@ -459,6 +536,7 @@ def main(
             client: httpx.Client | _FreshRequestClient | _RequestsClient = (
                 _RequestsClient(config.request_timeout_seconds)
             )
+            ready_client: object = _CurlReadyClient(config.request_timeout_seconds)
         else:
             client = _FreshRequestClient(
                 client_factory,
@@ -471,7 +549,13 @@ def main(
                     },
                 },
             )
-        result = LiveWritePathVerifier(config, client=client, sleep=sleep).run()
+            ready_client = client
+        result = LiveWritePathVerifier(
+            config,
+            client=client,
+            ready_client=ready_client,
+            sleep=sleep,
+        ).run()
     except VerificationError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1

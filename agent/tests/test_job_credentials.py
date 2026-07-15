@@ -59,7 +59,9 @@ def _token(*, access: str = ACCESS, refresh: str | None = REFRESH) -> TokenRespo
 
 
 @pytest.mark.asyncio
-async def test_vault_persists_only_authenticated_ciphertext_and_resolves_bound_principal() -> None:
+async def test_vault_persists_only_authenticated_ciphertext_and_resolves_bound_principal() -> (
+    None
+):
     repository = InMemoryJobCredentialRepository()
     cipher = CredentialCipher(SecretStr(Fernet.generate_key().decode()))
     vault = JobCredentialVault(
@@ -169,7 +171,9 @@ async def test_smart_refresh_uses_only_refresh_token_grant_and_masks_failures() 
     seen: list[dict[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        values = dict(item.split("=", 1) for item in request.content.decode().split("&"))
+        values = dict(
+            item.split("=", 1) for item in request.content.decode().split("&")
+        )
         seen.append(values)
         return httpx.Response(
             200,
@@ -199,14 +203,20 @@ async def test_smart_refresh_uses_only_refresh_token_grant_and_masks_failures() 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("status", "error"),
-    ((400, DelegatedRefreshExpired), (401, DelegatedRefreshExpired), (503, SmartAuthUnavailable)),
+    (
+        (400, DelegatedRefreshExpired),
+        (401, DelegatedRefreshExpired),
+        (503, SmartAuthUnavailable),
+    ),
 )
 async def test_smart_refresh_maps_expired_and_unavailable_without_response_body(
     status: int, error: type[Exception]
 ) -> None:
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
-            lambda _request: httpx.Response(status, json={"error": "sensitive-synthetic"})
+            lambda _request: httpx.Response(
+                status, json={"error": "sensitive-synthetic"}
+            )
         )
     ) as http:
         with pytest.raises(error) as caught:
@@ -216,7 +226,9 @@ async def test_smart_refresh_maps_expired_and_unavailable_without_response_body(
 
 
 @pytest.mark.asyncio
-async def test_postgres_repository_writes_ciphertext_and_enforces_revision_cas() -> None:
+async def test_postgres_repository_writes_ciphertext_and_enforces_revision_cas() -> (
+    None
+):
     connection = _CredentialConnection()
     repository = PostgresJobCredentialRepository(lambda: _return(connection))
     cipher = CredentialCipher(Fernet.generate_key().decode())
@@ -233,7 +245,10 @@ async def test_postgres_repository_writes_ciphertext_and_enforces_revision_cas()
     stored = await repository.get(credential_ref)
 
     assert stored.patient_id == "synthetic-patient"
-    assert all(ACCESS not in repr(args) and REFRESH not in repr(args) for args in connection.args)
+    assert all(
+        ACCESS not in repr(args) and REFRESH not in repr(args)
+        for args in connection.args
+    )
     assert connection.closed_count >= 2
 
 
@@ -285,7 +300,9 @@ class _CredentialConnection:
             }
             return self.row
         if "WHERE credential_ref=$1" in sql:
-            return self.row if self.row and self.row["credential_ref"] == args[0] else None
+            return (
+                self.row if self.row and self.row["credential_ref"] == args[0] else None
+            )
         raise AssertionError(sql)
 
     async def close(self) -> None:

@@ -86,7 +86,9 @@ class CredentialCipher:
         try:
             self._fernet = Fernet(value.encode("ascii"))
         except (ValueError, TypeError, UnicodeError) as exc:
-            raise ValueError("DOCUMENT_CREDENTIAL_KEY must be a valid Fernet key") from exc
+            raise ValueError(
+                "DOCUMENT_CREDENTIAL_KEY must be a valid Fernet key"
+            ) from exc
 
     def encrypt_material(
         self,
@@ -115,9 +117,9 @@ class CredentialCipher:
                 else None
             ),
         }
-        serialized = json.dumps(
-            payload, separators=(",", ":"), sort_keys=True
-        ).encode("utf-8")
+        serialized = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
+            "utf-8"
+        )
         return self._fernet.encrypt(serialized)
 
     def decrypt(self, ciphertext: bytes) -> CredentialMaterial:
@@ -127,7 +129,13 @@ class CredentialCipher:
             if not isinstance(payload, dict) or payload.pop("version", None) != 1:
                 raise ValueError("unsupported envelope")
             return CredentialMaterial.model_validate(payload)
-        except (InvalidToken, ValueError, TypeError, UnicodeError, ValidationError) as exc:
+        except (
+            InvalidToken,
+            ValueError,
+            TypeError,
+            UnicodeError,
+            ValidationError,
+        ) as exc:
             raise JobCredentialUnavailable(
                 "delegated-job credential could not be authenticated"
             ) from exc

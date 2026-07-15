@@ -85,8 +85,14 @@ def _clinician_sub_from_id_token(id_token: str | None) -> str | None:
 
 def generate_pkce() -> tuple[str, str, str]:
     """Return (code_verifier, code_challenge, method) for PKCE S256 (RFC 7636)."""
-    verifier = base64.urlsafe_b64encode(secrets.token_bytes(64)).rstrip(b"=").decode()[:96]
-    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    verifier = (
+        base64.urlsafe_b64encode(secrets.token_bytes(64)).rstrip(b"=").decode()[:96]
+    )
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+        .rstrip(b"=")
+        .decode()
+    )
     return verifier, challenge, "S256"
 
 
@@ -112,7 +118,9 @@ class TokenResponse(BaseModel):
         return self.scope.split()
 
     def auth_header(self) -> dict[str, str]:
-        return {"Authorization": f"{self.token_type} {self.access_token.get_secret_value()}"}
+        return {
+            "Authorization": f"{self.token_type} {self.access_token.get_secret_value()}"
+        }
 
 
 class SmartClient:
@@ -169,7 +177,10 @@ class SmartClient:
             "client_secret": self._client_secret,
             "code_verifier": code_verifier,
         }
-        headers = {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"}
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+        }
         resp = await self._post_token(data, headers)
         return self._parse_token_response(resp)
 
@@ -217,7 +228,9 @@ class SmartClient:
 
     async def _post_token(self, data: dict, headers: dict) -> httpx.Response:
         if self._http is not None:
-            return await self._http.post(self._token_endpoint, data=data, headers=headers)
+            return await self._http.post(
+                self._token_endpoint, data=data, headers=headers
+            )
         async with httpx.AsyncClient(timeout=10.0) as client:
             return await client.post(self._token_endpoint, data=data, headers=headers)
 
@@ -230,7 +243,9 @@ class SmartClient:
         try:
             payload = resp.json()
         except Exception as exc:  # noqa: BLE001
-            raise SmartAuthError(f"token endpoint returned non-JSON (HTTP {resp.status_code})") from exc
+            raise SmartAuthError(
+                f"token endpoint returned non-JSON (HTTP {resp.status_code})"
+            ) from exc
         if resp.status_code != 200 or "access_token" not in payload:
             # Never surface the raw error to a user; describe the failed operation (§ error handling).
             raise SmartAuthError(f"token exchange failed (HTTP {resp.status_code})")

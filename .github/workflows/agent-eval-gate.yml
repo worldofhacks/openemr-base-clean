@@ -1,10 +1,22 @@
-# Clinical Co-Pilot agent — eval deploy-gate (ARCHITECTURE.md §8, E8.4).
+# Clinical Co-Pilot agent — TWO-TIER eval deploy-gate (W2-D5 / W2-D8, §7/§8) with the
+# frozen fork-PR secret policy (docs/week2/W2_TIER2_CI_POLICY.md, clauses 1-6).
 #
-# The eval suite must be GREEN before the agent deploys (E9): `python -m evals.runner` exits
-# non-zero on any eval failure, failing this required check and blocking the deploy. The evals
-# run fully offline (mocked fixtures — no OpenEMR / Anthropic / Langfuse), so no secrets are
-# needed and the gate is deterministic. Scoped to agent/** so it never collides with the
-# upstream OpenEMR CI.
+# Tier 1 — offline, secret-free, PR-blocking on EVERY push and pull request (forks
+#   included, clause 3). Runs the deterministic suite: unit + fixture-integration (stubbed
+#   LLM/VLM/reranker) + the full 50-case golden harness scored by its RECORDED executor +
+#   the W1 §8 eval gate. No repository secret is ever in scope, so fork PR code never sees a
+#   secret (clauses 1-3). The W2-M24 workflow-policy lint (tests/test_tier2_spike.py) runs
+#   inside this pytest and re-audits THIS file for the pull_request_target + PR-head-checkout
+#   + secrets three-way conjunction.
+#
+# Tier 2 — the LIVE 50-case graded gate (real Anthropic agent turns + the pinned judge,
+#   W2-D8). Runs ONLY in trusted same-repository contexts: a maintainer workflow_dispatch
+#   reproducing an exact commit SHA (clause 4) or a push to the protected `main` branch —
+#   NEVER `pull_request_target`, so fork code and repository secrets never meet (clauses
+#   1-3). The secret is gated behind the least-privilege `eval-tier2-live` environment with a
+#   required reviewer (clause 5). If the key is unprovisioned (W2-OA2 pending) the job FAILS
+#   as a STOP-escalation to the owner — never a silent pass and never a reduced case count
+#   (clause 6). Only aggregate results are retained; no transcripts, no secret echo (clause 5).
 name: agent-eval-gate
 
 on:
@@ -16,26 +28,126 @@ on:
     paths:
       - 'agent/**'
       - '.github/workflows/agent-eval-gate.yml'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Exact commit SHA to reproduce for the Tier-2 live graded gate (maintainer clause 4)'
+        required: true
+
+# Least privilege by default; no job requests write scopes.
+permissions:
+  contents: read
 
 jobs:
-  evals:
-    name: eval deploy-gate
+  tier1-offline:
+    name: Tier-1 offline gate (PR-blocking · no secrets · forks run this only)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: agent
     steps:
+      # pull_request (NOT pull_request_target) checks out PR-head WITHOUT any repository
+      # secret in scope — fork code runs here but can never read a secret (clause 1/3).
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install agent (runtime deps)
-        run: pip install -e .
-      - name: Run eval gate (non-zero exit blocks deploy)
+      - name: Install the Tesseract OCR binary (reader/grounding fixtures)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng
+      - name: Install agent (+ dev extras)
+        run: pip install -e '.[dev]'
+      - name: Tier-1 deterministic suite (no live APIs) — unit + fixture-integration + 50-case recorded golden harness + W2-M24 workflow lint
+        env:
+          RUN_LIVE: '0'
+        run: python -m pytest tests evals ops bruno corpus -q
+      - name: Tier-1 W1 §8 eval deploy-gate (non-zero exit blocks)
         run: python -m evals.runner
-      - name: Upload eval results export
+      - name: Upload eval results (aggregate only)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: eval-results
+          name: eval-results-tier1
+          path: agent/evals/results.json
+
+  tier2-live:
+    name: Tier-2 live 50-case graded gate (same-repo only · least-privilege secret)
+    # Trusted contexts only — maintainer dispatch (clause 4) or a push to protected main in
+    # this exact repository. Fork PRs never reach this job (no pull_request_target).
+    if: >-
+      github.repository == 'worldofhacks/openemr-base-clean' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    # Least-privilege environment: the ANTHROPIC_API_KEY lives here behind a required
+    # reviewer approval (clause 5). Fork code can never select this environment.
+    environment: eval-tier2-live
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      # Trusted base checkout: a push to main checks out its own trusted github.sha; a
+      # workflow_dispatch checks out the default branch, then switches to the maintainer's
+      # reviewed SHA ONLY after validating it is a bare hex commit id (no ref injection —
+      # the requested ref is passed via env and never interpolated into a run: command).
+      - uses: actions/checkout@v4
+      - name: Check out the maintainer-reviewed commit (validated hex SHA only, clause 4)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REQUESTED_REF: ${{ github.event.inputs.ref }}
+        run: |
+          case "${REQUESTED_REF}" in
+            ''|*[!0-9a-fA-F]*)
+              echo "::error title=Invalid Tier-2 ref::ref must be a bare hex commit SHA (clause 4)"; exit 1 ;;
+          esac
+          git fetch --depth 1 origin "${REQUESTED_REF}"
+          git checkout --detach "${REQUESTED_REF}"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the Tesseract OCR binary
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng
+      - name: Install agent (+ dev extras)
+        run: pip install -e '.[dev]'
+      - name: STOP-escalation guard — the live key must be provisioned (W2-OA2), never a silent pass
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "${ANTHROPIC_API_KEY}" ]; then
+            echo "::error title=Tier-2 not provisioned::ANTHROPIC_API_KEY (owner action W2-OA2) is not set. Per W2_TIER2_CI_POLICY clause 6 this is a STOP-escalation to the owner — the live graded gate fails closed and is NEVER auto-passed or reduced below 50 cases."
+            exit 1
+          fi
+      - name: Tier-2 live graded gate — full 50-case run with LIVE Anthropic + pinned judge
+        env:
+          # Sanctioned secret store, same class as RAILWAY_TOKEN (W2-D8). Never echoed.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          W2_EVAL_MODE: 'live'
+          RUN_LIVE: '1'
+        run: |
+          python - <<'PY'
+          import asyncio, importlib, sys
+          # The live 50-case gate drives evals.harness.run_harness (real API seam) with a
+          # LIVE agent executor: real /chat turns + the pinned judge for factually_consistent.
+          # That live-executor factory is the eval-harness owner's remaining wiring; until it
+          # is importable this gate FAILS CLOSED — never a silent pass and never fewer than 50
+          # cases (W2-D8 / clause 6). Infra failure is retried then reported inconclusive.
+          try:
+              make_live_executor = importlib.import_module("evals.live_executor").make_live_executor
+          except (ModuleNotFoundError, AttributeError):
+              sys.exit(
+                  "::error title=Tier-2 live executor unwired::"
+                  "evals.live_executor.make_live_executor is not present — the live 50-case "
+                  "graded gate fails closed pending the harness owner's wiring "
+                  "(W2-D8 / clause 6). STOP-escalation, not an auto-pass."
+              )
+          from evals.harness import render_report, run_harness
+          report = asyncio.run(run_harness(executor=make_live_executor()))
+          print(render_report(report))
+          sys.exit(0 if report.passed else 1)
+          PY
+      - name: Upload AGGREGATE results only — no transcripts, no secret material (clause 5)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results-tier2-live
           path: agent/evals/results.json

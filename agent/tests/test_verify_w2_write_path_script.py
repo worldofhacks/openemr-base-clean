@@ -440,6 +440,7 @@ def test_curl_ready_transport_is_https_only_bounded_and_json_typed() -> None:
     client = verify_module._CurlClient(
         timeout=17.0,
         curl_path="/usr/bin/curl",
+        command_prefix=("/bin/launchctl", "asuser", "501"),
         run_command=run,
     )
     response = client.request("GET", "https://agent.example/ready")
@@ -447,7 +448,7 @@ def test_curl_ready_transport_is_https_only_bounded_and_json_typed() -> None:
     assert response.status_code == 200
     assert response.json() == {"status": "ready"}
     command, kwargs = calls[0]
-    assert command[0] == "/usr/bin/curl"
+    assert command[:4] == ["/bin/launchctl", "asuser", "501", "/usr/bin/curl"]
     assert "--proto" in command and "=https" in command
     assert "--max-time" in command and "17.0" in command
     assert kwargs["capture_output"] is True
@@ -479,6 +480,7 @@ def test_curl_transport_keeps_context_in_stdin_and_deletes_multipart_tempfile() 
     client = verify_module._CurlClient(
         timeout=17.0,
         curl_path="/usr/bin/curl",
+        command_prefix=(),
         run_command=run,
     )
     response = client.request(

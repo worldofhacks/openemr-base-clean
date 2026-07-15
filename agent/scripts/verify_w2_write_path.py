@@ -165,10 +165,18 @@ class _CurlClient:
         timeout: float,
         *,
         curl_path: str | None = None,
+        command_prefix: tuple[str, ...] | None = None,
         run_command: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     ) -> None:
         self._timeout = timeout
         self._curl_path = curl_path or shutil.which("curl") or ""
+        if command_prefix is None:
+            launchctl = shutil.which("launchctl") if sys.platform == "darwin" else None
+            self._command_prefix = (
+                (launchctl, "asuser", str(os.getuid())) if launchctl else ()
+            )
+        else:
+            self._command_prefix = tuple(command_prefix)
         self._run_command = run_command
 
     def request(self, method: str, url: str, **kwargs: Any) -> _CurlResponse:
@@ -206,6 +214,7 @@ class _CurlClient:
             config.append(_curl_config("header", f"{name}: {value}"))
 
         command = [
+            *self._command_prefix,
             self._curl_path,
             "--silent",
             "--show-error",

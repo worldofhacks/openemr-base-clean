@@ -625,6 +625,29 @@ def test_verify_script_never_forwards_child_failure_output(capsys) -> None:
     assert leaked not in captured.err
 
 
+def test_verify_script_surfaces_only_allowlisted_content_free_failure() -> None:
+    verification_env = {
+        "W2_VERIFY_AGENT_BASE_URL": "https://agent.example",
+        "W2_VERIFY_SESSION_ID": "opaque-session",
+        "W2_VERIFY_PATIENT_ID": _PATIENT_UUID,
+        "W2_VERIFY_ENCOUNTER_ID": _ENCOUNTER_UUID,
+        "W2_VERIFY_SYNTHETIC_ONLY_ACK": "synthetic-patient-and-documents",
+    }
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout="",
+            stderr="FAIL: document runtime is not active and ready\n",
+        )
+
+    with pytest.raises(
+        ActivationError, match="document runtime is not active and ready"
+    ):
+        VerifyScript(run_command=run).run(verification_env)
+
+
 def test_smart_browser_failure_reports_only_stage_and_exception_type() -> None:
     session = SeleniumSmartSession(ActivationConfig.from_env(_ENV))
     location = session._browser_location(

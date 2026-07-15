@@ -60,6 +60,45 @@ _VERIFY_PASS = re.compile(
     r"\((\d+) documents, (\d+) source Binaries, (\d+) artifact Binaries, "
     r"(\d+) grounded citations\)"
 )
+_VERIFY_SAFE_FAILURES = frozenset(
+    {
+        "readiness is not green across all dependencies",
+        "readiness response has an invalid checks contract",
+        "readiness response is missing required dependencies",
+        "readiness contains a dependency that is not green",
+        "document runtime is not active and ready",
+        "answer returned an invalid citations contract",
+        "answer is missing grounded uploaded-document citations",
+        "deployed agent returned invalid JSON",
+        "deployed agent returned an invalid response contract",
+    }
+)
+_VERIFY_SAFE_FAILURE_PATTERNS = (
+    re.compile(r"deployed agent request failed \([A-Za-z][A-Za-z0-9_]*\)"),
+    re.compile(r"deployed agent returned HTTP [1-5][0-9]{2}"),
+    re.compile(
+        r"(?:intake|lab) (?:upload returned an invalid typed response|"
+        r"document completed without grounded fields|"
+        r"document job reached a non-complete terminal state|"
+        r"document status response is invalid|"
+        r"document job did not complete before timeout|"
+        r"retry returned an invalid typed response|"
+        r"source FHIR Binary is not byte-exact|"
+        r"artifact FHIR Binary is not byte-exact)"
+    ),
+)
+
+
+def _safe_verify_failure(stderr: str) -> str | None:
+    line = stderr.strip()
+    if not line.startswith("FAIL: ") or "\n" in line:
+        return None
+    reason = line.removeprefix("FAIL: ")
+    if reason in _VERIFY_SAFE_FAILURES:
+        return reason
+    if any(pattern.fullmatch(reason) for pattern in _VERIFY_SAFE_FAILURE_PATTERNS):
+        return reason
+    return None
 
 REQUIRED_SMART_SCOPES = frozenset(
     {
@@ -1809,7 +1848,11 @@ class VerifyScript:
 
         match = _VERIFY_PASS.fullmatch(completed.stdout.strip())
         if completed.returncode != 0 or match is None:
-            raise ActivationError("synthetic deployed write-path verification failed")
+            safe_failure = _safe_verify_failure(completed.stderr)
+            detail = f": {safe_failure}" if safe_failure is not None else ""
+            raise ActivationError(
+                "synthetic deployed write-path verification failed" + detail
+            )
         documents, sources, artifacts, citations = map(int, match.groups())
         if (documents, sources, artifacts) != (2, 2, 2) or citations < 2:
             raise ActivationError("synthetic deployed write-path verification failed")

@@ -523,15 +523,25 @@ def test_smart_browser_failure_reports_only_stage_and_exception_type() -> None:
         "https://agent.example/callback?code=must-not-render&state=also-secret"
     )
     error = SeleniumSmartSession._browser_failure(
-        "synthetic patient selection", RuntimeError("must-not-render"), location
+        "synthetic patient selection",
+        RuntimeError("must-not-render"),
+        location,
+        "http=400,category=token-exchange-http-400",
     )
 
     rendered = str(error)
     assert "synthetic patient selection" in rendered
     assert "RuntimeError" in rendered
     assert "agent:/callback" in rendered
+    assert "token-exchange-http-400" in rendered
     assert "must-not-render" not in rendered
     assert "also-secret" not in rendered
+
+    category = SeleniumSmartSession._browser_error_category(
+        '{"detail":"could not complete the launch: token exchange failed (HTTP 400)",'
+        '"ignored":"must-not-render"}'
+    )
+    assert category == "token-exchange-http-400"
 
 
 def test_worker_ensure_and_disabled_prepare_are_idempotent_without_secret_reads() -> (

@@ -1277,7 +1277,8 @@ class SeleniumSmartSession:
             location = self._browser_location(
                 driver.current_url if driver is not None else ""
             )
-            raise self._browser_failure(stage, exc, location) from None
+            diagnostic = self._browser_diagnostic(driver)
+            raise self._browser_failure(stage, exc, location, diagnostic) from None
         finally:
             if driver is not None:
                 try:
@@ -1334,11 +1335,55 @@ class SeleniumSmartSession:
 
     @staticmethod
     def _browser_failure(
-        stage: str, exc: Exception, location: str = "unknown"
+        stage: str,
+        exc: Exception,
+        location: str = "unknown",
+        diagnostic: str = "http=unknown,category=unclassified",
     ) -> ActivationError:
         return ActivationError(
             f"SMART browser session failed during {stage} "
-            f"at {location} ({type(exc).__name__}); no credential detail retained"
+            f"at {location} ({diagnostic}; {type(exc).__name__}); "
+            "no credential detail retained"
+        )
+
+    @classmethod
+    def _browser_diagnostic(cls, driver: Any | None) -> str:
+        if driver is None:
+            return "http=unknown,category=unclassified"
+        status = "unknown"
+        try:
+            raw_status = driver.execute_script(
+                "const n=performance.getEntriesByType('navigation');"
+                "return n.length ? n[n.length-1].responseStatus : 0;"
+            )
+            parsed_status = int(raw_status)
+            if 100 <= parsed_status <= 599:
+                status = str(parsed_status)
+        except Exception:
+            pass
+        try:
+            category = cls._browser_error_category(str(driver.page_source or ""))
+        except Exception:
+            category = "unclassified"
+        return f"http={status},category={category}"
+
+    @staticmethod
+    def _browser_error_category(page_source: str) -> str:
+        lowered = page_source.lower()
+        token_failure = re.search(r"token exchange failed \(http (\d{3})\)", lowered)
+        if token_failure:
+            return f"token-exchange-http-{token_failure.group(1)}"
+        categories = (
+            ("unknown or replayed oauth state", "oauth-state-rejected"),
+            ("no launch/patient context", "patient-context-missing"),
+            ("co-pilot oauth client is not enabled", "oauth-client-rejected"),
+            ("missing code/state on callback", "callback-parameters-missing"),
+            ("authorization failed", "authorization-rejected"),
+            ("internal server error", "callback-internal-error"),
+        )
+        return next(
+            (category for marker, category in categories if marker in lowered),
+            "unclassified",
         )
 
     def _browser_location(self, actual: str) -> str:

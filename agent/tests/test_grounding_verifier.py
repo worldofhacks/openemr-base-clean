@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from app.ingestion.reader import NormBBox, PageWords, Word, WordsBoxes
 from app.schemas.citations import CitationV2
 from app.schemas.extraction import GroundedField
@@ -119,3 +121,25 @@ def test_vlm_claimed_grounding_and_fake_citation_are_discarded():
     assert outcome.field.citation is None
     assert outcome.field.bbox is None
     assert outcome.reason == "not_found"
+
+
+def test_datetime_grounding_accepts_utc_z_without_changing_non_utc_offsets():
+    from app.grounding.verifier import GroundingVerifier
+
+    utc = GroundingVerifier().ground_value(
+        value=datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc),
+        words_boxes=_words("2026-07-14T12:00:00Z"),
+        source_document_id="doc-synthetic-1",
+        field_id="vitals.bps.measurement_date",
+    )
+    eastern = GroundingVerifier().ground_value(
+        value=datetime(2026, 7, 14, 8, 0, tzinfo=timezone(timedelta(hours=-4))),
+        words_boxes=_words("2026-07-14T08:00:00-04:00"),
+        source_document_id="doc-synthetic-1",
+        field_id="vitals.bpd.measurement_date",
+    )
+
+    assert utc.field.grounded is True
+    assert utc.field.citation is not None
+    assert utc.field.citation.quote_or_value == "2026-07-14T12:00:00Z"
+    assert eastern.field.grounded is True

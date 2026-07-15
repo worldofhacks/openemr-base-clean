@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Generic, TypeVar, cast
 
 from app.ingestion.reader import NormBBox, PageWords, WordsBoxes
@@ -36,7 +37,9 @@ class GroundingSummary:
     fields_unsupported: int
 
     @classmethod
-    def from_outcomes(cls, outcomes: list[GroundingOutcome[object]]) -> "GroundingSummary":
+    def from_outcomes(
+        cls, outcomes: list[GroundingOutcome[object]]
+    ) -> "GroundingSummary":
         grounded = sum(1 for outcome in outcomes if outcome.field.grounded)
         return cls(grounded, len(outcomes) - grounded)
 
@@ -58,6 +61,23 @@ def _phrase_tokens(value: object) -> tuple[str, ...]:
         for token in _text(value).split()
         if (normalized := _normalize(token))
     )
+
+
+def _phrase_token_variants(value: object) -> tuple[tuple[str, ...], ...]:
+    """Canonicalize UTC datetimes to ``Z`` while accepting the ISO ``+00:00`` alias."""
+
+    primary = _phrase_tokens(value)
+    if not isinstance(value, datetime) or value.utcoffset() != timedelta(0):
+        return (primary,)
+    iso = value.isoformat()
+    if not iso.endswith("+00:00"):
+        return (primary,)
+    canonical = tuple(
+        normalized
+        for token in f"{iso[:-6]}Z".split()
+        if (normalized := _normalize(token))
+    )
+    return (canonical, primary) if canonical != primary else (primary,)
 
 
 def _union_bbox(words: list[object]) -> NormBBox:
@@ -109,33 +129,33 @@ class GroundingVerifier:
         if pages and all(item.unreadable for item in pages):
             return self._unsupported(value, page, "page_unreadable")
 
-        wanted = _phrase_tokens(value)
         for source_page in pages:
-            match = _match(source_page, wanted)
-            if match is None:
-                continue
-            bbox, quote = match
-            page_number = source_page.page_index + 1
-            citation = CitationV2(
-                source_type="uploaded_document",
-                source_id=source_document_id,
-                page_or_section=str(page_number),
-                field_or_chunk_id=field_id,
-                quote_or_value=quote,
-            )
-            return GroundingOutcome(
-                field=cast(
-                    GroundedField[T],
-                    GroundedField(
-                        value=value,
-                        page=page_number,
-                        bbox=bbox,
-                        grounded=True,
-                        citation=citation,
+            for wanted in _phrase_token_variants(value):
+                match = _match(source_page, wanted)
+                if match is None:
+                    continue
+                bbox, quote = match
+                page_number = source_page.page_index + 1
+                citation = CitationV2(
+                    source_type="uploaded_document",
+                    source_id=source_document_id,
+                    page_or_section=str(page_number),
+                    field_or_chunk_id=field_id,
+                    quote_or_value=quote,
+                )
+                return GroundingOutcome(
+                    field=cast(
+                        GroundedField[T],
+                        GroundedField(
+                            value=value,
+                            page=page_number,
+                            bbox=bbox,
+                            grounded=True,
+                            citation=citation,
+                        ),
                     ),
-                ),
-                reason="matched",
-            )
+                    reason="matched",
+                )
         return self._unsupported(value, page, "not_found")
 
     def reground_candidate(

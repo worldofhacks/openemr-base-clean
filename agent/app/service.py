@@ -1,15 +1,10 @@
 """Composition root — build the serving-path services from config (ARCHITECTURE.md §2, D-DI).
 
-Configuration is wired here, never in business logic. `AgentServices` holds the SMART client,
-the (clinician,patient)-pinned session store, a per-session delegated-token cache (§2), the LLM
-provider behind its seam (D4), the cost cap, and the observability tracer, and exposes the two
-operations the HTTP routes need: complete a SMART launch into a pinned session, and run the
-UC1 verify-then-flush brief for a session.
-
-Demo posture: the session store is in-process (single Railway instance); production (D-O2,
-multi-replica) swaps in the Postgres store — the pin/expiry/fail-closed semantics are identical,
-only the backend differs. The delegated token is cached in-process per session; production would
-persist it encrypted alongside the pinned session.
+Configuration is wired here, never in business logic. ``AgentServices`` holds the SMART
+client, durable clinician/patient session pin, foreground delegated-token cache, LLM and
+observability seams, and the enabled W2 document runtime. Background document work uses a
+separate encrypted Postgres credential reference and a dedicated worker process (§3); the
+Uvicorn process writes the source/enqueues but never claims clinical jobs.
 """
 
 from __future__ import annotations
@@ -19,7 +14,7 @@ import re
 import secrets
 import threading
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.auth.scopes import (
@@ -31,6 +26,9 @@ from app.auth.smart_client import SmartClient, TokenResponse, generate_pkce
 from app.config import Settings
 from app.evidence.packet import build_evidence_packet
 from app.ingestion.migrations import apply_document_migrations
+from app.ingestion.processor import DocumentProcessor
+from app.ingestion.runtime import DocumentRuntime, build_document_runtime
+from app.health import DependencyResult
 from app.llm.cost import DailyCostCap
 from app.llm.provider import AnthropicLLMProvider
 from app.middleware.correlation import correlation_id_var
@@ -67,6 +65,29 @@ def _build_tracer(settings: Settings) -> RequestTracer:
             NullTraceSink()
         )  # observability optional (§6 soft dep) — serving is unaffected
     return RequestTracer(sink)
+
+
+def _build_job_credential_vault(*, settings: Settings, connect, smart: SmartClient):
+    """Build the separately encrypted delegated-job credential authority (§3)."""
+
+    from app.auth.job_credentials import (
+        CredentialCipher,
+        JobCredentialVault,
+        PostgresJobCredentialRepository,
+    )
+
+    key = settings.document_credential_key
+    if key is None:  # Settings rejects this first; retain a local fail-closed guard.
+        raise ValueError("document credential key is required")
+
+    async def refresh(refresh_token):
+        return await smart.refresh_token(refresh_token=refresh_token)
+
+    return JobCredentialVault(
+        repository=PostgresJobCredentialRepository(connect),
+        cipher=CredentialCipher(key),
+        refresh_access_token=refresh,
+    )
 
 
 def _patient_header(packet) -> dict[str, str] | None:
@@ -121,10 +142,11 @@ class AgentServices:
             settings.session_store_dsn.get_secret_value()
         )
         self._document_schema_ready = not settings.w2_document_runtime_enabled
-        # The delegated token + PKCE verifier stay in-process (per-instance): the token is a
-        # bearer credential (encrypting it into the pin row is the documented next step, §5
-        # known-limitations). A restart therefore keeps the durable pin but requires a re-launch
-        # to re-mint the token — the canonical expiry/re-launch path (§3a), never a silent serve.
+        self.document_runtime: DocumentRuntime | None = None
+        self._document_worker_task = None
+        # Foreground graph/FHIR turns retain their session-scoped token in memory. Enabled
+        # document jobs separately use the encrypted credential vault composed below, so their
+        # worker lifetime does not depend on this cache or the UI idle timer (§3).
         self._tokens: dict[
             str, TokenResponse
         ] = {}  # per-session delegated-token cache (§2)
@@ -146,6 +168,24 @@ class AgentServices:
         # only on the first feature-flagged turn/search request. App boot remains model-free.
         self._evidence_retriever: HybridRetriever | None = None
         self._evidence_retriever_lock = threading.Lock()
+        if settings.w2_document_runtime_enabled:
+            credential_vault = _build_job_credential_vault(
+                settings=settings,
+                connect=self._document_connect,
+                smart=self.smart,
+            )
+            runtime = build_document_runtime(
+                settings=settings,
+                provider=self.provider,
+                connect=self._document_connect,
+                credential_vault=credential_vault,
+            )
+            self.document_runtime = runtime
+            self.document_repository = runtime.repository
+            self.artifact_store = runtime.artifact_store
+            self.extraction_pipeline = runtime.pipeline
+            self.document_processor = runtime.processor
+            self.documents = runtime.documents
 
     async def startup(self) -> None:
         """Ensure the session-store schema at boot (idempotent). Best-effort: a DB-down boot must
@@ -163,6 +203,50 @@ class AgentServices:
                 self._document_schema_ready = False
             else:
                 self._document_schema_ready = True
+
+    async def shutdown(self) -> None:
+        """Web owns no clinical worker task; kept for explicit lifespan symmetry."""
+
+        # §3: the Uvicorn process enqueues but never claims. A non-None task would mean
+        # an unsafe future composition accidentally started a clinical worker in web.
+        if self._document_worker_task is not None:
+            raise RuntimeError(
+                "document worker must run in the dedicated worker process"
+            )
+
+    async def probe_document_runtime(self, _settings: Settings) -> DependencyResult:
+        """Hard readiness: schema + credential crypto/store + fresh worker heartbeat."""
+
+        if not self.settings.w2_document_runtime_enabled:
+            return DependencyResult("document_runtime", "hard", True, "disabled")
+        if not self._document_schema_ready:
+            return DependencyResult(
+                "document_runtime", "hard", False, "schema_unavailable"
+            )
+        runtime = self.document_runtime
+        if runtime is None:
+            return DependencyResult(
+                "document_runtime", "hard", False, "composition_unavailable"
+            )
+        try:
+            crypto_ready = await runtime.credential_vault.probe()
+        except Exception:  # noqa: BLE001 - readiness emits no secret-bearing diagnostic
+            return DependencyResult(
+                "document_runtime", "hard", False, "credential_store_unavailable"
+            )
+        if crypto_ready is False:
+            return DependencyResult(
+                "document_runtime", "hard", False, "credential_crypto_unavailable"
+            )
+        try:
+            ready, detail = await runtime.heartbeat_store.readiness(
+                max_age_seconds=float(
+                    max(2 * self.settings.document_worker_lease_seconds, 1)
+                )
+            )
+        except Exception:  # noqa: BLE001 - diagnostic is deliberately content-free
+            ready, detail = False, "worker_heartbeat_unavailable"
+        return DependencyResult("document_runtime", "hard", ready, detail)
 
     # --- SMART launch → pinned session ---------------------------------------
 
@@ -201,17 +285,26 @@ class AgentServices:
         # Provider attribution (D9/D5): pin the session to the REAL launching clinician decoded
         # from the token's id_token (fhirUser preferred, else sub), falling back to the demo
         # placeholder only when the token carried no decodable id_token.
+        token_deadline = self._token_deadline()
+        if token.expires_in is not None and token.expires_in > 0:
+            token_deadline = min(
+                token_deadline,
+                datetime.now(timezone.utc) + timedelta(seconds=token.expires_in),
+            )
         session = await self.sessions.create(
             clinician_sub=token.clinician_sub or "openemr-clinician",
             patient_id=patient_id,
-            token_expires_at=self._token_deadline(),
+            token_expires_at=token_deadline,
         )
+        runtime = getattr(self, "document_runtime", None)
+        if runtime is not None:
+            await runtime.credential_vault.store(
+                session, token, access_expires_at=token_deadline
+            )
         self._tokens[session.session_id] = token
         return session
 
     def _token_deadline(self) -> datetime:
-        from datetime import timedelta
-
         return datetime.now(timezone.utc) + timedelta(
             seconds=self.settings.token_lifetime_seconds
         )
@@ -255,8 +348,8 @@ class AgentServices:
         The user message reaches retrieval only if the deterministic builder can reduce it
         to condition/test terms. A conversational or identifier-shaped message simply gives
         the worker no evidence request; it is never forwarded to Cohere or another vendor.
-        B2 extraction is intentionally left on the graph's compatibility worker in this
-        integration unit and is mounted by its separately owned unit.
+        Completed document refs hydrate from Postgres and bind the real persisted extraction
+        pipeline; no LangGraph checkpointer or in-memory VLM result becomes an authority.
         """
 
         token = self._tokens.get(session.session_id)
@@ -401,3 +494,24 @@ class AgentServices:
         # Attach the patient header (presentation-only, T-E9 UI) from the already-fetched Patient
         # record — the UI draws a chart header from it; verification/serving are untouched.
         return replace(result, patient=_patient_header(packet))
+
+
+async def build_document_processor() -> DocumentProcessor:
+    """Dedicated-worker CLI factory: ``app.service:build_document_processor``.
+
+    This is intentionally separate from FastAPI lifespan. The web process only writes
+    the source/enqueues; this factory applies the shared schema and returns the sole
+    claimed-job processor for ``python -m app.ingestion.processor --factory ...``.
+    """
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not settings.w2_document_runtime_enabled:
+        raise RuntimeError("document runtime is disabled")
+    services = AgentServices(settings)
+    await services.startup()
+    if not services._document_schema_ready or services.document_runtime is None:
+        raise RuntimeError("document runtime schema or composition is unavailable")
+    await services.document_runtime.credential_vault.probe()
+    return services.document_runtime.processor

@@ -60,6 +60,7 @@ _NOTE = re.compile(
     r"\Acopilot-intent:(?P<marker>[^;]+);payload:(?P<hash>[0-9a-fA-F]{12,64})\Z"
 )
 _BINARY_ID = re.compile(r"\A[A-Za-z0-9.-]+\Z")
+_STANDARD_PATIENT_ID = re.compile(r"\A[1-9][0-9]*\Z")
 
 
 @dataclass(frozen=True)
@@ -146,6 +147,7 @@ class OpenEMRLiveGateway:
             timeout=timeout,
         )
         self._document_names: dict[tuple[str, str], str] = {}
+        self._document_patient_id: str | None = None
 
     async def resolve_document_categories(self, path: str) -> list[CategoryRecord]:
         attested = self._attestations.get(path)
@@ -156,10 +158,17 @@ class OpenEMRLiveGateway:
     ) -> list[DocumentRecord]:
         self._authorize_patient(patient_id)
         self._require_attestation(category_path, writable=False)
+        document_patient_id = await self._resolve_document_patient_id()
         body = await self._get_json(
-            f"{self._base}/api/patient/{quote(patient_id, safe='')}/document",
+            f"{self._base}/api/patient/{quote(document_patient_id, safe='')}/document",
             params={"path": category_path},
+            missing_ok=True,
         )
+        # OpenEMR's legacy document controller maps a valid empty result to 404.
+        # The patient UUID→pid binding and category attestation have already been
+        # verified above, so this endpoint-specific 404 is safe to interpret as empty.
+        if body is None:
+            return []
         documents: list[DocumentRecord] = []
         for item in _records(body):
             remote_id = item.get("id")
@@ -212,8 +221,10 @@ class OpenEMRLiveGateway:
     ) -> str | None:
         self._authorize_patient(patient_id)
         self._require_attestation(category_path, writable=True)
+        document_patient_id = await self._resolve_document_patient_id()
         return await self._writer.create_document(
             patient_id=patient_id,
+            document_patient_id=document_patient_id,
             category_path=category_path,
             filename=filename,
             content_type=content_type,
@@ -313,6 +324,32 @@ class OpenEMRLiveGateway:
             raise OpenEMRWriteError(
                 "delegated principal is bound to a different patient"
             )
+
+    async def _resolve_document_patient_id(self) -> str:
+        """Resolve the token-bound SMART/FHIR UUID to the legacy document pid."""
+
+        if self._document_patient_id is not None:
+            return self._document_patient_id
+        patient_id = self._principal.patient_id
+        body = await self._get_json(
+            f"{self._base}/api/patient/{quote(patient_id, safe='')}"
+        )
+        if not isinstance(body, Mapping) or not isinstance(body.get("data"), Mapping):
+            raise LiveGatewayError("OpenEMR patient mapping has an invalid shape")
+        record = cast(Mapping[str, object], body["data"])
+        mapped_uuid = record.get("uuid")
+        mapped_pid = record.get("pid")
+        if not isinstance(mapped_uuid, str) or not hmac.compare_digest(
+            mapped_uuid, patient_id
+        ):
+            raise LiveGatewayError("OpenEMR patient mapping did not match delegation")
+        if isinstance(mapped_pid, bool) or not isinstance(mapped_pid, (str, int)):
+            raise LiveGatewayError("OpenEMR patient mapping has an invalid pid")
+        pid = str(mapped_pid)
+        if _STANDARD_PATIENT_ID.fullmatch(pid) is None:
+            raise LiveGatewayError("OpenEMR patient mapping has an invalid pid")
+        self._document_patient_id = pid
+        return pid
 
     def _require_attestation(
         self, category_path: str, *, writable: bool

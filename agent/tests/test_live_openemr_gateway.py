@@ -15,6 +15,7 @@ from app.writeback.rest_client import DelegatedPrincipal, OpenEMRWriteError
 
 BASE_URL = "https://openemr.synthetic.example/apis/default"
 PATIENT_ID = "patient-synthetic"
+STANDARD_PATIENT_ID = "731"
 ENCOUNTER_ID = "encounter-synthetic"
 TOKEN = "synthetic-token-never-log"
 
@@ -48,10 +49,22 @@ async def test_attested_category_and_document_create_use_fixed_standard_route():
 
     async def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
+        if request.method == "GET":
+            assert request.url.path == f"/apis/default/api/patient/{PATIENT_ID}"
+            return httpx.Response(
+                200,
+                json={
+                    "validationErrors": [],
+                    "internalErrors": [],
+                    "data": {"uuid": PATIENT_ID, "pid": STANDARD_PATIENT_ID},
+                    "links": [],
+                },
+            )
         body = await request.aread()
         assert request.method == "POST"
         assert (
-            request.url.path == "/apis/default/api/patient/patient-synthetic/document"
+            request.url.path
+            == f"/apis/default/api/patient/{STANDARD_PATIENT_ID}/document"
         )
         assert dict(request.url.params) == {"path": "/AI-Source-Documents"}
         assert b'name="document"' in body
@@ -94,8 +107,104 @@ async def test_attested_category_and_document_create_use_fixed_standard_route():
                 content=b"%PDF-not-created",
             )
 
-    assert len(requests) == 1
-    assert requests[0].headers["authorization"] == f"Bearer {TOKEN}"
+    assert len(requests) == 2
+    assert all(
+        request.headers["authorization"] == f"Bearer {TOKEN}"
+        for request in requests
+    )
+
+
+@pytest.mark.asyncio
+async def test_document_reconcile_maps_bound_uuid_to_pid_and_accepts_empty_404():
+    from app.writeback.live_gateway import (
+        BinaryReadGuard,
+        CategoryAttestation,
+        OpenEMRLiveGateway,
+    )
+
+    calls: list[tuple[str, str, dict[str, str]]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path, dict(request.url.params)))
+        assert request.headers["authorization"] == f"Bearer {TOKEN}"
+        if request.url.path.endswith(f"/api/patient/{PATIENT_ID}"):
+            return httpx.Response(
+                200,
+                json={"data": {"uuid": PATIENT_ID, "pid": STANDARD_PATIENT_ID}},
+            )
+        if request.url.path.endswith(
+            f"/api/patient/{STANDARD_PATIENT_ID}/document"
+        ):
+            # OpenEMR's standard document controller returns 404 for a valid,
+            # attested category that currently contains zero documents.
+            return httpx.Response(404)
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = OpenEMRLiveGateway(
+            base_url=BASE_URL,
+            principal=_principal(),
+            category_attestations=(
+                CategoryAttestation("/AI-Source-Documents", "17", True),
+            ),
+            binary_guard=BinaryReadGuard("WARNING"),
+            http_client=client,
+        )
+        assert (
+            await gateway.list_documents(
+                patient_id=PATIENT_ID,
+                category_path="/AI-Source-Documents",
+            )
+            == []
+        )
+
+    assert calls == [
+        ("GET", f"/apis/default/api/patient/{PATIENT_ID}", {}),
+        (
+            "GET",
+            f"/apis/default/api/patient/{STANDARD_PATIENT_ID}/document",
+            {"path": "/AI-Source-Documents"},
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_document_pid_resolution_rejects_cross_patient_response():
+    from app.writeback.live_gateway import (
+        BinaryReadGuard,
+        CategoryAttestation,
+        LiveGatewayError,
+        OpenEMRLiveGateway,
+    )
+
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        assert request.url.path.endswith(f"/api/patient/{PATIENT_ID}")
+        return httpx.Response(
+            200,
+            json={"data": {"uuid": "patient-other", "pid": STANDARD_PATIENT_ID}},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = OpenEMRLiveGateway(
+            base_url=BASE_URL,
+            principal=_principal(),
+            category_attestations=(
+                CategoryAttestation("/AI-Source-Documents", "17", True),
+            ),
+            binary_guard=BinaryReadGuard("WARNING"),
+            http_client=client,
+        )
+        with pytest.raises(LiveGatewayError, match="patient mapping"):
+            await gateway.list_documents(
+                patient_id=PATIENT_ID,
+                category_path="/AI-Source-Documents",
+            )
+
+    assert calls == 1
 
 
 @pytest.mark.parametrize("setting", [None, "", "DEBUG", "debug"])
@@ -147,7 +256,14 @@ async def test_document_readback_resolves_documentreference_then_binary():
     async def handler(request: httpx.Request) -> httpx.Response:
         calls.append((request.method, request.url.path, dict(request.url.params)))
         assert request.headers["authorization"] == f"Bearer {TOKEN}"
-        if request.url.path.endswith(f"/api/patient/{PATIENT_ID}/document"):
+        if request.url.path.endswith(f"/api/patient/{PATIENT_ID}"):
+            return httpx.Response(
+                200,
+                json={"data": {"uuid": PATIENT_ID, "pid": STANDARD_PATIENT_ID}},
+            )
+        if request.url.path.endswith(
+            f"/api/patient/{STANDARD_PATIENT_ID}/document"
+        ):
             return httpx.Response(200, json=[{"id": "42", "filename": marker}])
         if request.url.path.endswith("/fhir/DocumentReference"):
             return httpx.Response(
@@ -192,9 +308,10 @@ async def test_document_readback_resolves_documentreference_then_binary():
         )
 
     assert calls == [
+        ("GET", f"/apis/default/api/patient/{PATIENT_ID}", {}),
         (
             "GET",
-            f"/apis/default/api/patient/{PATIENT_ID}/document",
+            f"/apis/default/api/patient/{STANDARD_PATIENT_ID}/document",
             {"path": "/AI-Source-Documents"},
         ),
         (

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Mapping
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import httpx
 from pydantic import SecretStr
@@ -79,15 +79,18 @@ class OpenEMRRestClient:
         self,
         *,
         patient_id: str,
+        document_patient_id: str,
         category_path: str,
         filename: str,
         content_type: str,
         content: bytes,
     ) -> str | None:
         self._authorize_patient(patient_id)
+        if not document_patient_id.isascii() or not document_patient_id.isdecimal():
+            raise OpenEMRWriteError("legacy document patient id is invalid")
         response = await self._request(
             "POST",
-            f"{self._base}/api/patient/{patient_id}/document",
+            f"{self._base}/api/patient/{quote(document_patient_id, safe='')}/document",
             headers=self._headers(),
             params={"path": category_path},
             files={"document": (filename, content, content_type)},

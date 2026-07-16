@@ -1,8 +1,8 @@
 # Retrieval lane
 
 This is the data/runtime handoff for `POST /evidence/search` (W2-D4, W2-R2/R3,
-W2_ARCHITECTURE §2/§4/§5). The endpoint contract is available as the mergeable fragment
-[`openapi/evidence.yaml`](openapi/evidence.yaml), and
+W2_ARCHITECTURE §2/§4/§5). The endpoint contract is part of the authoritative Week 2 spec
+[`ops/openapi.yaml`](ops/openapi.yaml), and
 [`bruno/evidence-search.bru`](bruno/evidence-search.bru) is the secret-free sample request.
 
 ## VA/DoD corpus and provenance

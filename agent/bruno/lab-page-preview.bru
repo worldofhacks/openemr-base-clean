@@ -1,0 +1,24 @@
+meta {
+  name: Patient-pinned page preview
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{agent_base_url}}/documents/{{lab_document_id}}/pages/1?session_id={{session_id}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("preview is PNG and private", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getHeader("content-type")).to.contain("image/png");
+    expect(res.getHeader("cache-control")).to.equal("private, no-store");
+  });
+}
+
+settings {
+  encodeUrl: true
+  timeout: 180000
+}

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import os
 import secrets
-import time
 from urllib.parse import parse_qs, urlsplit
 
 import httpx

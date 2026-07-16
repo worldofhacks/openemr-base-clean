@@ -1,0 +1,31 @@
+meta {
+  name: Lab extraction report
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{agent_base_url}}/documents/{{lab_document_id}}/extraction-report?session_id={{session_id}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("completed extraction exposes only grounded or redacted fields", function () {
+    expect(res.getStatus()).to.equal(200);
+    const body = res.getBody();
+    expect(body.state).to.equal("complete");
+    body.fields.forEach(function (field) {
+      expect(field.verdict).to.be.oneOf(["grounded", "unsupported"]);
+      if (field.verdict === "unsupported") {
+        expect(field.display_value).to.equal(null);
+        expect(field.citation).to.equal(null);
+      }
+    });
+  });
+}
+
+settings {
+  encodeUrl: true
+  timeout: 180000
+}

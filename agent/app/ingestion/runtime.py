@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime
 import hashlib
 import hmac
-from typing import Protocol, cast
+import time
+from typing import Any, Protocol, cast
 
 from app.auth.job_credentials import (
     JobCredentialAuthExpired,
@@ -32,20 +33,27 @@ from app.ingestion.reports import (
     project_extraction_report,
 )
 from app.ingestion.pages import EphemeralPageRenderer
+from app.ingestion.lab_trends import LabTrendIntegrityError, project_lab_trends
 from app.ingestion.pipeline import DocumentExtractionPipeline, PipelineFailure
 from app.ingestion.processor import DocumentProcessor
 from app.ingestion.repository import (
+    DocumentReadinessBinding,
     DocumentRecord,
     PostgresDocumentRepository,
 )
 from app.ingestion.service import (
+    DocumentAdmissionSnapshot,
     DocumentCoordinator,
     DocumentOperations,
     DocumentSubmission,
     ExtractionReportNotReady,
     ExtractionReportUnavailable,
+    LabTrendsUnavailable,
 )
+from app.ingestion.telemetry import DocumentTelemetry
 from app.llm.vlm import AnthropicVlmExtractor, VlmMessageProvider
+from app.llm.provider import LLMResponse
+from app.observability.events import EventEmitter
 from app.schemas.documents import (
     DocumentStatus,
     FailureReason,
@@ -54,6 +62,8 @@ from app.schemas.documents import (
 )
 from app.schemas.extraction import ExtractionArtifact
 from app.schemas.extraction_report import DocumentExtractionReport
+from app.schemas.lab_trends import LabTrendResponse
+from app.schemas.writeback import WriteLeg
 from app.session.store import Session
 from app.tools.fhir_client import FhirClient
 from app.writeback.documents_api import OpenEMRDocumentBackend
@@ -120,6 +130,12 @@ class RouteAttestationResolver(Protocol):
     async def healthcheck(self) -> bool: ...
 
 
+def document_worker_identity(settings: Settings) -> str:
+    """Bind a worker claimant and heartbeat to the exact deployed source SHA."""
+
+    return f"{settings.document_worker_id}@{settings.deployment_sha}"
+
+
 class PostgresDocumentWorkerHeartbeatStore:
     """Dedicated worker liveness over the shared W2 runtime migration."""
 
@@ -144,7 +160,11 @@ class PostgresDocumentWorkerHeartbeatStore:
         finally:
             await _close(connection)
 
-    async def readiness(self, *, max_age_seconds: float) -> tuple[bool, str]:
+    async def readiness(
+        self, *, worker_id: str, max_age_seconds: float
+    ) -> tuple[bool, str]:
+        if not worker_id:
+            raise ValueError("worker id must not be empty")
         if max_age_seconds <= 0:
             raise ValueError("heartbeat max age must be positive")
         connection = await self._connect()
@@ -162,8 +182,10 @@ class PostgresDocumentWorkerHeartbeatStore:
                             AND (claim_owner IS NULL OR lease_expires_at IS NULL)
                        ) AS invalid_lease
                   FROM agent_document_worker_heartbeats
+                 WHERE worker_id=$2
                 """,
                 max_age_seconds,
+                worker_id,
             )
         finally:
             await _close(connection)
@@ -216,6 +238,17 @@ class _GatewayFactory:
             record.credential_ref, expected_patient_id=record.patient_id
         )
         routes = await self._resolved_routes(record.patient_id, record.encounter_id)
+        return self._new(principal, routes)
+
+    async def for_readiness_binding(
+        self, binding: DocumentReadinessBinding
+    ) -> OpenEMRLiveGateway:
+        """Build a patient-pinned read gateway without selecting encounter authority."""
+
+        principal = await self._credentials.principal_for(
+            binding.credential_ref, expected_patient_id=binding.patient_id
+        )
+        routes = await self._resolved_routes(binding.patient_id, None)
         return self._new(principal, routes)
 
     async def for_session(
@@ -284,14 +317,16 @@ class _DynamicDocumentPipeline:
         artifact_store: PostgresArtifactStore,
         credentials: CredentialVault,
         route_resolver: RouteAttestationResolver,
-        vlm: AnthropicVlmExtractor,
+        provider: VlmMessageProvider,
+        events: EventEmitter | None = None,
     ) -> None:
         self._settings = settings
         self._repository = repository
         self._intents = intent_repository
         self._artifacts = artifact_store
         self._gateways = _GatewayFactory(settings, credentials, route_resolver)
-        self._vlm = vlm
+        self._provider = provider
+        self._events = events
 
     async def extract_document(
         self,
@@ -302,60 +337,106 @@ class _DynamicDocumentPipeline:
         on_stage=None,
     ):
         record = await self._repository.get(document_ref)
-        try:
-            gateway = await self._gateways.for_record(record)
-        except JobCredentialAuthExpired as exc:
-            raise PipelineFailure(FailureReason.AUTH_EXPIRED) from exc
-        except JobCredentialBindingError as exc:
-            raise PipelineFailure(FailureReason.PATIENT_MISMATCH) from exc
-        except (PatientRouteMismatch, EncounterRouteMismatch) as exc:
-            raise PipelineFailure(exc.reason) from exc
-        except JobCredentialUnavailable:
-            # Storage/crypto availability may recover; the processor's bounded generic
-            # failure path releases the lease and retries. It is never mislabeled as a
-            # revoked delegation and never falls through to an OpenEMR call.
-            raise
-        artifact_backend = OpenEMRDocumentBackend(
-            gateway, category_path=self._settings.artifact_document_path
+        telemetry = DocumentTelemetry(
+            getattr(self, "_events", None),
+            correlation_id=getattr(record, "correlation_id", correlation_id),
+            job_id=getattr(record, "job_id", document_ref),
         )
-        artifact_writer = ExactlyOnceWriter(
-            self._intents,
-            ExtractionArtifactTransport(
-                artifact_backend,
-                category=CategoryExpectation(
-                    path=self._settings.artifact_document_path,
-                    category_id=_required(
-                        self._settings.artifact_document_category_id,
-                        "artifact category id",
+        success = False
+        try:
+            try:
+                gateway = await self._gateways.for_record(record)
+            except JobCredentialAuthExpired as exc:
+                raise PipelineFailure(FailureReason.AUTH_EXPIRED) from exc
+            except JobCredentialBindingError as exc:
+                raise PipelineFailure(FailureReason.PATIENT_MISMATCH) from exc
+            except (PatientRouteMismatch, EncounterRouteMismatch) as exc:
+                raise PipelineFailure(exc.reason) from exc
+            except JobCredentialUnavailable:
+                # Storage/crypto availability may recover; the processor's bounded generic
+                # failure path releases the lease and retries. It is never mislabeled as a
+                # revoked delegation and never falls through to an OpenEMR call.
+                raise
+            artifact_backend = OpenEMRDocumentBackend(
+                gateway, category_path=self._settings.artifact_document_path
+            )
+            artifact_writer = ExactlyOnceWriter(
+                self._intents,
+                ExtractionArtifactTransport(
+                    artifact_backend,
+                    category=CategoryExpectation(
+                        path=self._settings.artifact_document_path,
+                        category_id=_required(
+                            self._settings.artifact_document_category_id,
+                            "artifact category id",
+                        ),
                     ),
                 ),
-            ),
-        )
-        vital_writer = None
-        if record.encounter_id is not None:
-            vital_writer = ExactlyOnceWriter(
-                self._intents,
-                VitalIntentTransport(
-                    OpenEMRVitalBackend(gateway, encounter_id=record.encounter_id)
-                ),
             )
-        pipeline = DocumentExtractionPipeline(
-            repository=self._repository,
-            source_loader=OpenEMRSourceLoader(
-                gateway, category_path=self._settings.source_document_path
-            ),
-            vlm_extractor=self._vlm,
-            artifact_writer=artifact_writer,
-            vital_writer=vital_writer,
-            artifact_store=self._artifacts,
-            agent_version=self._settings.agent_version,
+            vital_writer = None
+            # Only an intake form can enter the frozen vitals mapper.  Medication-list
+            # documents are source + grounded artifact only even if a stale caller supplied
+            # encounter context; no clinical-resource writer is constructed for them.
+            if record.doc_type == "intake_form" and record.encounter_id is not None:
+                vital_writer = ExactlyOnceWriter(
+                    self._intents,
+                    VitalIntentTransport(
+                        OpenEMRVitalBackend(gateway, encounter_id=record.encounter_id)
+                    ),
+                )
+            pipeline = DocumentExtractionPipeline(
+                repository=self._repository,
+                source_loader=OpenEMRSourceLoader(
+                    gateway, category_path=self._settings.source_document_path
+                ),
+                vlm_extractor=AnthropicVlmExtractor(
+                    _ObservedVlmProvider(self._provider, telemetry)
+                ),
+                artifact_writer=artifact_writer,
+                vital_writer=vital_writer,
+                artifact_store=self._artifacts,
+                agent_version=self._settings.agent_version,
+            )
+            result = await pipeline.extract_document(
+                document_ref,
+                patient_ref=patient_ref,
+                correlation_id=telemetry.correlation_id,
+                on_stage=on_stage,
+                telemetry=telemetry,
+            )
+            success = True
+            return result
+        finally:
+            # The concrete pipeline normally finishes this summary; the outer guard also
+            # covers credential/route failures before that pipeline can be constructed.
+            telemetry.finish(success=success)
+
+
+class _ObservedVlmProvider:
+    """Capture aggregate VLM usage while forwarding no prompt or response content."""
+
+    def __init__(
+        self, provider: VlmMessageProvider, telemetry: DocumentTelemetry
+    ) -> None:
+        self._provider = provider
+        self._telemetry = telemetry
+
+    async def complete(
+        self,
+        *,
+        system: list[dict],
+        messages: list[dict],
+        tools: list[dict],
+        tool_choice: dict[str, Any] | None = None,
+    ) -> LLMResponse:
+        response = await self._provider.complete(
+            system=system,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
         )
-        return await pipeline.extract_document(
-            document_ref,
-            patient_ref=patient_ref,
-            correlation_id=correlation_id,
-            on_stage=on_stage,
-        )
+        self._telemetry.record_usage(response.usage, response.model)
+        return response
 
 
 class _DocumentOperationsFacade:
@@ -370,15 +451,25 @@ class _DocumentOperationsFacade:
         artifact_store: PostgresArtifactStore,
         credentials: CredentialVault,
         route_resolver: RouteAttestationResolver,
+        events: EventEmitter | None = None,
     ) -> None:
         self._settings = settings
         self._repository = repository
         self._intents = intent_repository
         self._artifacts = artifact_store
+        self._events = events
         self._gateways = _GatewayFactory(settings, credentials, route_resolver)
         self._renderer = EphemeralPageRenderer(
             repository, fetch_source=self._fetch_source
         )
+
+    async def admission_snapshot(
+        self, session: Session, content_hash: str
+    ) -> DocumentAdmissionSnapshot:
+        """Consult only local durable authority before any delegated remote setup."""
+
+        coordinator = self._read_coordinator()
+        return await coordinator.admission_snapshot(session, content_hash)
 
     async def submit(
         self,
@@ -422,6 +513,7 @@ class _DocumentOperationsFacade:
             encounter_belongs_to_patient=encounter_owned,
             credential_ref_for_session=credential_for,
             page_renderer=self._renderer,
+            events=getattr(self, "_events", None),
         )
         return await coordinator.submit(
             session,
@@ -468,12 +560,23 @@ class _DocumentOperationsFacade:
 
             raise DocumentAccessError(document_id)
         gateway = await self._gateways.for_record(record)
+        telemetry = DocumentTelemetry(
+            getattr(self, "_events", None),
+            correlation_id=record.correlation_id,
+            job_id=record.job_id,
+        )
+        source_started = time.perf_counter()
         source = await _verify_binary_digest(
             gateway,
             patient_id=record.patient_id,
             category_path=self._settings.source_document_path,
             marker=f"document:{record.document_id}:source:v1",
             expected_hash=record.content_hash,
+        )
+        telemetry.record_readback(
+            WriteLeg.SOURCE_DOCUMENT,
+            verified=source.verified,
+            latency_ms=(time.perf_counter() - source_started) * 1000,
         )
 
         artifact_result: BinaryReadbackVerification | None = None
@@ -483,6 +586,7 @@ class _DocumentOperationsFacade:
             if not isinstance(artifact, ExtractionArtifact):
                 raise ValueError("persisted extraction artifact is unavailable")
             artifact_bytes = artifact.model_dump_json(warnings=False).encode("utf-8")
+            artifact_started = time.perf_counter()
             artifact_result = await _verify_binary_digest(
                 gateway,
                 patient_id=record.patient_id,
@@ -492,6 +596,11 @@ class _DocumentOperationsFacade:
                     f"v{artifact.artifact_version}"
                 ),
                 expected_hash=hashlib.sha256(artifact_bytes).hexdigest(),
+            )
+            telemetry.record_readback(
+                WriteLeg.EXTRACTION_ARTIFACT,
+                verified=artifact_result.verified,
+                latency_ms=(time.perf_counter() - artifact_started) * 1000,
             )
         return DocumentReadbackVerification(
             document_id=record.document_id,
@@ -537,6 +646,18 @@ class _DocumentOperationsFacade:
             raise ExtractionReportUnavailable(document_id)
         return report
 
+    async def lab_trends(self, session: Session) -> LabTrendResponse:
+        """Return a read-only projection scoped solely by the opaque session pin."""
+
+        try:
+            return await project_lab_trends(
+                repository=self._repository,
+                artifact_store=self._artifacts,
+                patient_id=session.patient_id,
+            )
+        except LabTrendIntegrityError:
+            raise LabTrendsUnavailable from None
+
     async def _fetch_source(self, record: DocumentRecord) -> bytes:
         gateway = await self._gateways.for_record(record)
         return await OpenEMRSourceLoader(
@@ -555,12 +676,43 @@ class _DocumentOperationsFacade:
             encounter_belongs_to_patient=unused,
             credential_ref_for_session=unused,
             page_renderer=self._renderer,
+            events=getattr(self, "_events", None),
         )
 
 
 class _RejectingWriter:
     async def execute(self, *_args, **_kwargs):
         raise RuntimeError("no delegated principal is bound")
+
+
+class _AuthorizedDocumentCategoryProbe:
+    """Issue fixed-path, delegated list reads without retaining response contents."""
+
+    def __init__(
+        self,
+        *,
+        repository: PostgresDocumentRepository,
+        gateways: _GatewayFactory,
+        category_paths: tuple[str, ...],
+    ) -> None:
+        self._repository = repository
+        self._gateways = gateways
+        self._category_paths = category_paths
+
+    async def probe(self) -> str:
+        binding = await self._repository.readiness_binding()
+        if binding is None:
+            # A new installation cannot perform a delegated patient read before its
+            # first SMART-pinned upload. Readiness must not invent ambient authority.
+            return "pending_first_pinned_job"
+        gateway = await self._gateways.for_readiness_binding(binding)
+        for category_path in self._category_paths:
+            # Parsing proves the authorized endpoint is usable; no count, filename, ID,
+            # body, or exception text crosses the readiness boundary.
+            await gateway.list_documents(
+                patient_id=binding.patient_id, category_path=category_path
+            )
+        return "authorized_read_ok"
 
 
 @dataclass(frozen=True)
@@ -572,7 +724,9 @@ class DocumentRuntime:
     documents: DocumentOperations
     credential_vault: CredentialVault
     heartbeat_store: PostgresDocumentWorkerHeartbeatStore
+    worker_identity: str
     route_resolver: PostgresRouteAttestationRepository
+    category_read_probe: _AuthorizedDocumentCategoryProbe
 
 
 def build_document_runtime(
@@ -581,12 +735,12 @@ def build_document_runtime(
     provider: VlmMessageProvider,
     connect: Connect,
     credential_vault: CredentialVault,
+    events: EventEmitter | None = None,
 ) -> DocumentRuntime:
     repository = PostgresDocumentRepository(connect)
     intents = PostgresIntentRepository(connect)
     artifacts = PostgresArtifactStore(connect)
     routes = PostgresRouteAttestationRepository(connect)
-    vlm = AnthropicVlmExtractor(provider)
     pipeline = _DynamicDocumentPipeline(
         settings=settings,
         repository=repository,
@@ -594,17 +748,20 @@ def build_document_runtime(
         artifact_store=artifacts,
         credentials=credential_vault,
         route_resolver=routes,
-        vlm=vlm,
+        provider=provider,
+        events=events,
     )
     heartbeats = PostgresDocumentWorkerHeartbeatStore(connect)
+    worker_identity = document_worker_identity(settings)
     processor = DocumentProcessor(
         repository=repository,
         pipeline=cast(DocumentExtractionPipeline, pipeline),
-        worker_id=settings.document_worker_id,
+        worker_id=worker_identity,
         lease_seconds=settings.document_worker_lease_seconds,
         max_attempts=settings.document_worker_max_attempts,
         base_backoff_seconds=settings.document_worker_base_backoff_seconds,
         worker_heartbeat=heartbeats.heartbeat,
+        events=events,
     )
     documents = _DocumentOperationsFacade(
         settings=settings,
@@ -613,6 +770,15 @@ def build_document_runtime(
         artifact_store=artifacts,
         credentials=credential_vault,
         route_resolver=routes,
+        events=events,
+    )
+    category_read_probe = _AuthorizedDocumentCategoryProbe(
+        repository=repository,
+        gateways=_GatewayFactory(settings, credential_vault, routes),
+        category_paths=(
+            settings.source_document_path,
+            settings.artifact_document_path,
+        ),
     )
     return DocumentRuntime(
         repository=repository,
@@ -622,7 +788,9 @@ def build_document_runtime(
         documents=documents,
         credential_vault=credential_vault,
         heartbeat_store=heartbeats,
+        worker_identity=worker_identity,
         route_resolver=routes,
+        category_read_probe=category_read_probe,
     )
 
 

@@ -10,6 +10,7 @@ wrapped in Pydantic SecretStr so they never leak through repr()/logs.
 from __future__ import annotations
 
 from functools import lru_cache
+import re
 from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet
@@ -27,6 +28,9 @@ class Settings(BaseSettings):
         extra="ignore",
         hide_input_in_errors=True,
     )
+
+    # Exact source identity injected into both Railway services by the deploy gate.
+    deployment_sha: str = Field(default="unknown", min_length=1)
 
     # --- OpenEMR (Zone A) — read-only FHIR + OAuth surfaces (D9) ---
     openemr_fhir_base_url: HttpUrl = Field(
@@ -73,14 +77,6 @@ class Settings(BaseSettings):
     langfuse_host: HttpUrl | None = Field(default=None)
     langfuse_public_key: SecretStr | None = Field(default=None)
     langfuse_secret_key: SecretStr | None = Field(default=None)
-    langfuse_log_content: bool = Field(
-        default=False,
-        description=(
-            "When true, send raw prompt/answer content to Langfuse. Default OFF = D5 "
-            "minimum-necessary. Enable ONLY on synthetic-data deployments; prod has no BAA "
-            "on the US region."
-        ),
-    )
 
     # --- Turn/session budgets (§3a, D10) ---
     fhir_per_call_timeout_seconds: float = Field(default=8.0, gt=0)
@@ -126,6 +122,13 @@ class Settings(BaseSettings):
                 "OpenEMR URLs must be https:// (F-S.9: no plaintext downgrade)"
             )
         return v
+
+    @field_validator("deployment_sha")
+    @classmethod
+    def _require_exact_deployment_sha(cls, value: str) -> str:
+        if value == "unknown" or re.fullmatch(r"[0-9a-f]{40}", value):
+            return value
+        raise ValueError("DEPLOYMENT_SHA must be an exact 40-character lowercase SHA")
 
     @field_validator("document_credential_key")
     @classmethod

@@ -12,8 +12,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-import pytest
-
 from app.evidence.packet import build_evidence_packet
 from app.llm.cost import DailyCostCap
 from app.llm.provider import (

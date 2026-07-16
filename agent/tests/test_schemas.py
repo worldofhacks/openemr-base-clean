@@ -293,12 +293,13 @@ def test_handoff_record_and_decision_are_the_same_objects_across_state_and_hando
     assert state.SupervisorDecision is handoff.SupervisorDecision
 
 
-def test_supervisor_decision_is_the_closed_five_member_set():
+def test_supervisor_decision_is_the_closed_critic_aware_member_set():
     # spec(W2-M6:supervisor-decision-closed) — §2 closed decision vocabulary
     from app.schemas.handoff import SupervisorDecision
 
     assert _enum_values(SupervisorDecision) == {
-        "route_extract", "route_retrieve", "compose_answer", "refuse", "done"
+        "route_extract", "route_retrieve", "compose_answer", "review_critic",
+        "critic_approve", "critic_reject", "refuse", "done",
     }
 
 
@@ -348,12 +349,26 @@ def test_citation_v2_source_type_is_the_closed_three_member_set():
     # spec(W2-M6:citation-source-type-closed) — §2 / W2-D6 source separation
     # guards: a free-text source_type letting patient facts and guideline evidence blur —
     # the UI can no longer render them visually distinct (PRD requirement).
-    from app.schemas.citations import CitationV2
-
-    for source_type in ("patient_record", "uploaded_document", "guideline"):
-        _citation(source_type=source_type)
+    _citation(source_type="patient_record", page_or_section=None)
+    _citation(source_type="uploaded_document", page_or_section="1")
+    _citation(source_type="guideline", page_or_section="Recommendations")
     with pytest.raises(ValidationError):
         _citation(source_type="wikipedia")
+
+
+@pytest.mark.parametrize("page_or_section", ["1", "section", " "])
+def test_patient_record_citation_requires_null_location(page_or_section: str):
+    with pytest.raises(ValidationError, match="page_or_section=null"):
+        _citation(source_type="patient_record", page_or_section=page_or_section)
+
+
+@pytest.mark.parametrize("source_type", ["uploaded_document", "guideline"])
+@pytest.mark.parametrize("page_or_section", [None, "", "   "])
+def test_document_and_guideline_citations_require_location(
+    source_type: str, page_or_section: str | None
+):
+    with pytest.raises(ValidationError, match="require a page or section"):
+        _citation(source_type=source_type, page_or_section=page_or_section)
 
 
 def test_incomplete_citation_is_rejected():
@@ -653,6 +668,8 @@ def test_evidence_search_request_query_non_empty_and_k_bounded():
     # Empty query rejects.
     with pytest.raises(ValidationError):
         EvidenceSearchRequest(query="", k=5)
+    with pytest.raises(ValidationError):
+        EvidenceSearchRequest(query="x" * 181, k=5)
 
     # k below/above the bounds rejects.
     with pytest.raises(ValidationError):

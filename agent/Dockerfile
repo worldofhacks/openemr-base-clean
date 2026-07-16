@@ -33,4 +33,4 @@ ENV PORT=8000
 EXPOSE 8000
 
 # One worker: the demo uses the in-process session store + token cache (single instance).
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-access-log"]

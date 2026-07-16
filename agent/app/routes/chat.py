@@ -15,13 +15,12 @@ envelope. Flag OFF keeps the W1 direct path bit-identical and never invokes the 
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Iterator
 from typing import Protocol
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.middleware.correlation import correlation_id_var
 
@@ -32,6 +31,7 @@ from app.middleware.correlation import correlation_id_var
 from app.orchestrator import graph as orchestrator_graph
 from app.orchestrator.composer import VerifiedComposition
 from app.orchestrator.loop import BriefResult
+from app.routes.openapi_contract import documented_errors, documented_response
 from app.schemas.citations import CitationSourceType, CitationV2
 from app.session.store import (
     CrossPatientError,
@@ -43,12 +43,80 @@ from app.session.store import (
 
 router = APIRouter()
 
+MAX_CHAT_MESSAGE_CHARS = 4_000
+MAX_CHAT_MESSAGE_BYTES = 12_000
+
+_SSE_EVENT_SCHEMAS: dict[str, object] = {
+    "claim_block": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["claim_block", "citations", "verdict"],
+        "properties": {
+            "claim_block": {"type": "string"},
+            "citations": {
+                "type": "array",
+                "items": {"$ref": "#/components/schemas/CitationV2"},
+            },
+            "verdict": {"type": "string"},
+            "source_class": {
+                "anyOf": [
+                    {"$ref": "#/components/schemas/CitationSourceType"},
+                    {"type": "null"},
+                ]
+            },
+            "overlay": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["source_id", "page", "bbox"],
+                        "properties": {
+                            "source_id": {"type": "string", "minLength": 1},
+                            "page": {"type": "integer", "minimum": 1},
+                            "bbox": {"$ref": "#/components/schemas/NormBBox"},
+                        },
+                    },
+                    {"type": "null"},
+                ]
+            },
+        },
+    },
+    "done": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["correlation_id", "source", "degraded"],
+        "properties": {
+            "correlation_id": {"type": "string", "minLength": 1},
+            "source": {
+                "type": "string",
+                "enum": [
+                    "llm",
+                    "deterministic_fallback",
+                    "deterministic_refusal",
+                ],
+            },
+            "degraded": {"type": "boolean"},
+        },
+    },
+}
+
 
 class ChatRequest(BaseModel):
     session_id: str = Field(..., min_length=1)
-    message: str = Field(default="Give me the pre-visit brief.", min_length=1)
+    message: str = Field(
+        default="Give me the pre-visit brief.",
+        min_length=1,
+        max_length=MAX_CHAT_MESSAGE_CHARS,
+    )
     # Optional defence-in-depth: if the caller names a patient it must match the session pin.
     patient_id: str | None = None
+
+    @field_validator("message")
+    @classmethod
+    def message_fits_utf8_budget(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > MAX_CHAT_MESSAGE_BYTES:
+            raise ValueError("message exceeds the UTF-8 request budget")
+        return value
 
 
 class ChatResponse(BaseModel):
@@ -56,28 +124,34 @@ class ChatResponse(BaseModel):
     source: str  # "llm" | "deterministic_fallback" | "deterministic_refusal"
     degraded: bool
     verdicts: list[str]  # per-claim verification verdicts (§5)
-    # W1 evidence ids remain accepted while graph-composed W2 blocks carry canonical
-    # CitationV2 objects in the same unchanged envelope key (\u00a72a migration rule).
-    citations: list[str | CitationV2]
+    citations: list[CitationV2]
     patient: dict[str, str] | None = (
         None  # chart-header demographics (presentation-only, T-E9 UI)
     )
     correlation_id: str
 
 
-# The deterministic fallback render carries inline [ResourceType:id:hash8] tokens; extract them
-# so the UI can show citation chips on that path too (the verified path plumbs them explicitly).
-_INLINE_CITATION = re.compile(r"\[([A-Za-z]+:[^\]\[]+:[0-9a-f]{8})\]")
+def _citations_for(result: BriefResult) -> list[CitationV2]:
+    """The HTTP boundary is CitationV2-only; legacy strings are never serialized."""
+
+    return [citation for citation in result.citations if isinstance(citation, CitationV2)]
 
 
-def _citations_for(result: BriefResult) -> list[str]:
-    if result.citations:
-        return list(result.citations)
-    seen: list[str] = []
-    for eid in _INLINE_CITATION.findall(result.text):
-        if eid not in seen:
-            seen.append(eid)
-    return seen
+def _dedupe_citations(citations: list[CitationV2]) -> list[CitationV2]:
+    seen: set[tuple[object, ...]] = set()
+    result: list[CitationV2] = []
+    for citation in citations:
+        key = (
+            citation.source_type,
+            citation.source_id,
+            citation.page_or_section,
+            citation.field_or_chunk_id,
+            citation.quote_or_value,
+        )
+        if key not in seen:
+            seen.add(key)
+            result.append(citation)
+    return result
 
 
 class ChatService(Protocol):
@@ -152,12 +226,15 @@ def _sse_stream(
         "claim_block",
         {
             "claim_block": result.text,
-            "citations": _citations_for(result),
+            "citations": [
+                citation.model_dump(mode="json")
+                for citation in _citations_for(result)
+            ],
             "verdict": _block_verdict(result),
         },
     )
     for claim in composition.claims:
-        event = {
+        event: dict[str, object] = {
             "claim_block": claim.text,
             "citations": [claim.citation.model_dump(mode="json")],
             "verdict": "pass",
@@ -203,7 +280,22 @@ async def _run_graph(
     )
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post(
+    "/chat",
+    response_model=ChatResponse,
+    responses={
+        200: documented_response(
+            "Verified JSON or SSE answer; no clinical bytes flush before verification.",
+            content={
+                "text/event-stream": {
+                    "schema": {"type": "string"},
+                    "x-event-schemas": _SSE_EVENT_SCHEMAS,
+                }
+            },
+        ),
+        **documented_errors(401, 403, 404, 413, 422, 503),
+    },
+)
 async def chat(req: ChatRequest, request: Request) -> ChatResponse | StreamingResponse:
     services: ChatService = request.app.state.services
     try:
@@ -257,7 +349,9 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse | StreamingRe
         source=result.source,
         degraded=result.degraded,
         verdicts=list(result.verdicts),
-        citations=[*_citations_for(result), *_composition_citations(composition)],
+        citations=_dedupe_citations(
+            [*_citations_for(result), *_composition_citations(composition)]
+        ),
         patient=result.patient,
         correlation_id=correlation_id_var.get(),
     )

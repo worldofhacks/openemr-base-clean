@@ -35,6 +35,24 @@ def test_inbound_correlation_id_is_propagated_not_regenerated(complete_env):
     assert resp.headers[HEADER] == "caller-supplied-123"
 
 
+def test_unsafe_or_oversized_inbound_correlation_id_is_replaced(complete_env):
+    from app.main import create_app
+
+    unsafe_values = (
+        "secret bearer token",
+        "x" * 129,
+        "identifier@example.test",
+    )
+    with TestClient(create_app(readiness_checks=[])) as client:
+        responses = [client.get("/", headers={HEADER: value}) for value in unsafe_values]
+
+    for supplied, response in zip(unsafe_values, responses, strict=True):
+        generated = response.headers[HEADER]
+        assert generated != supplied
+        assert len(generated) == 32
+        assert generated.isascii()
+
+
 def test_request_emits_json_log_with_correlation_id(complete_env):
     from app.logging import configure_logging
     from app.main import create_app
@@ -43,7 +61,7 @@ def test_request_emits_json_log_with_correlation_id(complete_env):
     configure_logging(stream=stream, level=logging.INFO)
 
     with TestClient(create_app(readiness_checks=[])) as client:
-        resp = client.get("/", headers={HEADER: "log-corr-999"})
+        client.get("/", headers={HEADER: "log-corr-999"})
 
     lines = [ln for ln in stream.getvalue().splitlines() if ln.strip()]
     records = [json.loads(ln) for ln in lines]
@@ -53,6 +71,26 @@ def test_request_emits_json_log_with_correlation_id(complete_env):
     for r in req_logs:
         assert isinstance(r["message"], str)
         assert "level" in r and "correlation_id" in r
+
+
+def test_request_log_uses_closed_route_label_not_dynamic_path(complete_env):
+    from app.logging import configure_logging
+    from app.main import create_app
+
+    stream = io.StringIO()
+    configure_logging(stream=stream, level=logging.INFO)
+    with TestClient(create_app(readiness_checks=[])) as client:
+        client.get("/documents/identifier-must-not-log/unknown")
+
+    rendered = stream.getvalue()
+    assert "identifier-must-not-log" not in rendered
+    records = [json.loads(line) for line in rendered.splitlines() if line]
+    request_records = [
+        record for record in records if record["logger"] == "agent.request"
+    ]
+    assert request_records
+    assert {record["route"] for record in request_records} == {"documents"}
+    assert all("path" not in record for record in request_records)
 
 
 def test_logging_does_not_emit_phi_in_message(complete_env):
@@ -67,6 +105,27 @@ def test_logging_does_not_emit_phi_in_message(complete_env):
     record = json.loads(stream.getvalue().splitlines()[-1])
     assert record["message"] == "fhir_read_complete"
     assert "Condition" not in record["message"]  # structured, not interpolated
+
+
+def test_logging_suppresses_third_party_urls_and_exception_text(complete_env):
+    from app.logging import configure_logging, get_logger
+
+    stream = io.StringIO()
+    configure_logging(stream=stream, level=logging.INFO)
+    logging.getLogger("httpx").info(
+        "HTTP Request GET /resource?patient=identifier-must-not-log"
+    )
+    try:
+        raise ValueError("identifier-must-not-log")
+    except ValueError:
+        get_logger("agent.safe").exception("dependency_failed")
+
+    rendered = stream.getvalue()
+    assert "identifier-must-not-log" not in rendered
+    record = json.loads(rendered.splitlines()[-1])
+    assert record["message"] == "dependency_failed"
+    assert record["exception_type"] == "ValueError"
+    assert "exception" not in record
 
 
 def test_outbound_headers_carry_correlation_id(complete_env):

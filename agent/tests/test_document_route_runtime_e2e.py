@@ -404,8 +404,14 @@ class _RuntimeServices:
         async def run_brief_pinned() -> BriefResult:
             return await self.run_brief(session, message, request_url=request_url)
 
+        async def run_brief_with_context(_answer_context) -> BriefResult:
+            # This deterministic fake selects no guideline chunk. Production uses
+            # the typed answer tool; unselected retrieved snippets must not render.
+            return await self.run_brief(session, message, request_url=request_url)
+
         result = await run_graph_turn(
             run_brief=run_brief_pinned,
+            run_brief_with_context=run_brief_with_context,
             correlation_id=correlation_id,
             worker_input=WorkerInput(
                 correlation_id=correlation_id,
@@ -486,7 +492,7 @@ def test_mounted_document_runtime_uploads_processes_and_serves_cited_answer(
     assert body["correlation_id"] == "corr-route-chat"
     assert "Uploaded document:" in body["brief"]
     assert "results.0.value: 92" in body["brief"]
-    assert "Guideline evidence:" in body["brief"]
+    assert "Guideline evidence:" not in body["brief"]
 
     citations = [item for item in body["citations"] if isinstance(item, dict)]
     document_citation = next(
@@ -502,12 +508,7 @@ def test_mounted_document_runtime_uploads_processes_and_serves_cited_answer(
         for item in citations
         if item["source_type"] == CitationSourceType.GUIDELINE.value
     ]
-    assert guideline_citations
-    assert all(item["page_or_section"] for item in guideline_citations)
-    assert any(
-        item["source_id"].startswith("vadod-diabetes-2023@")
-        for item in guideline_citations
-    )
+    assert guideline_citations == []
 
     graph_result = services.last_graph_result
     assert graph_result is not None
@@ -515,6 +516,8 @@ def test_mounted_document_runtime_uploads_processes_and_serves_cited_answer(
         "route_extract",
         "route_retrieve",
         "compose_answer",
+        "review_critic",
+        "critic_approve",
         "done",
     ]
     document_claim = next(
@@ -528,7 +531,7 @@ def test_mounted_document_runtime_uploads_processes_and_serves_cited_answer(
     assert document_claim.overlay.page == 1
     assert document_claim.overlay.bbox.x0 < document_claim.overlay.bbox.x1
     assert document_claim.overlay.bbox.y0 < document_claim.overlay.bbox.y1
-    assert graph_result.composition.for_source(CitationSourceType.GUIDELINE)
+    assert not graph_result.composition.for_source(CitationSourceType.GUIDELINE)
 
     # The graph consumed the durable artifact and exact-once writes; it did not re-extract.
     assert services.vlm.calls == 1

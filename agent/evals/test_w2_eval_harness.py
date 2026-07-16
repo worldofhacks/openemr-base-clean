@@ -25,13 +25,16 @@ from evals.scorers import (
     schema_valid,
 )
 from evals.w2_models import (
+    BaselineCategory,
     CaseObservation,
     CaseRubricResult,
+    EvalBaseline,
     EvalCategoryV2,
     GeneratedSurfaces,
     GoldenCase,
     RefusalObservation,
     Rubric,
+    RunStatus,
 )
 
 
@@ -253,6 +256,42 @@ def test_factual_threshold_is_inclusive_at_90_percent():
     assert ">=90% threshold" in failing.trigger
 
 
+def _baseline(score: float) -> EvalBaseline:
+    return EvalBaseline(
+        case_count=50,
+        manifest_sha256="a" * 64,
+        source_sha="reviewed-sha",
+        generated_from_result_sha256="f" * 64,
+        categories=[
+            BaselineCategory(
+                rubric=Rubric.FACTUALLY_CONSISTENT,
+                numerator=100,
+                denominator=100,
+                score=score,
+            )
+        ],
+    )
+
+
+def test_factual_exactly_five_percentage_point_drop_is_allowed():
+    rows = [_rubric_result(Rubric.FACTUALLY_CONSISTENT, True) for _ in range(95)]
+    rows.extend(_rubric_result(Rubric.FACTUALLY_CONSISTENT, False) for _ in range(5))
+    summary = aggregate_scores(rows, baseline=_baseline(1.0))[Rubric.FACTUALLY_CONSISTENT]
+    assert summary.current_score == 0.95
+    assert summary.percentage_point_delta == -5.0
+    assert summary.passed is True
+
+
+def test_factual_drop_strictly_greater_than_five_points_fails():
+    rows = [_rubric_result(Rubric.FACTUALLY_CONSISTENT, True) for _ in range(94)]
+    rows.extend(_rubric_result(Rubric.FACTUALLY_CONSISTENT, False) for _ in range(6))
+    summary = aggregate_scores(rows, baseline=_baseline(1.0))[Rubric.FACTUALLY_CONSISTENT]
+    assert summary.current_score == 0.94
+    assert summary.percentage_point_delta == -6.0
+    assert summary.passed is False
+    assert ">5 percentage-point" in summary.trigger
+
+
 def test_executor_is_required_and_has_no_golden_observation_default():
     # guards: W2-D8 — the harness cannot pass by replaying expected_fields as output.
     parameter = inspect.signature(run_harness).parameters["executor"]
@@ -309,6 +348,36 @@ async def test_executor_error_is_a_failure_never_an_auto_pass(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_explicit_infrastructure_exhaustion_is_inconclusive(tmp_path: Path):
+    from evals.harness import EvalInconclusiveError
+
+    case = _case()
+    manifest = tmp_path / "cases.json"
+    manifest.write_text(json.dumps([case.model_dump(mode="json")]))
+
+    def executor(_case: GoldenCase) -> CaseObservation:
+        raise EvalInconclusiveError("provider exhausted")
+
+    report = await run_harness(executor=executor, manifest_path=manifest)
+    assert report.status is RunStatus.INCONCLUSIVE
+    assert report.passed is False
+    assert all(score.passed is None for score in report.cases[0].scores)
+
+
+@pytest.mark.asyncio
+async def test_graded_runner_enforces_minimum_without_hardcoded_ids(tmp_path: Path):
+    case = _case()
+    manifest = tmp_path / "cases.json"
+    manifest.write_text(json.dumps([case.model_dump(mode="json")]))
+    with pytest.raises(ValueError, match="at least 50"):
+        await run_harness(
+            executor=lambda loaded: _observation(loaded),
+            manifest_path=manifest,
+            required_min_cases=50,
+        )
+
+
+@pytest.mark.asyncio
 async def test_report_emits_required_threshold_arithmetic(tmp_path: Path):
     # guards: W2-D5 — denominator and triggering rule remain auditable in every run.
     case = _case()
@@ -325,3 +394,4 @@ async def test_report_emits_required_threshold_arithmetic(tmp_path: Path):
         assert summary.trigger
         assert f"{summary.numerator}/{summary.denominator}" in rendered
         assert summary.rubric.value in rendered
+    EvalBaseline,

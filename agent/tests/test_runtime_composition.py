@@ -75,7 +75,9 @@ def test_real_enabled_agent_services_builds_durable_components_without_io() -> N
     from app.ingestion.repository import PostgresDocumentRepository
     from app.service import AgentServices
 
-    services = AgentServices(Settings(**_settings_values()))
+    values = _settings_values()
+    values["deployment_sha"] = "a" * 40
+    services = AgentServices(Settings(**values))
 
     assert isinstance(services.document_repository, PostgresDocumentRepository)
     assert isinstance(services.artifact_store, PostgresArtifactStore)
@@ -85,6 +87,10 @@ def test_real_enabled_agent_services_builds_durable_components_without_io() -> N
         JobCredentialVault,  # type: ignore[union-attr]
     )
     assert services.documents is services.document_runtime.documents  # type: ignore[union-attr]
+    assert services.document_runtime.worker_identity == (  # type: ignore[union-attr]
+        "document-worker@" + "a" * 40
+    )
+    assert services.document_processor._worker_id == "document-worker@" + "a" * 40
     assert services._document_worker_task is None
 
 
@@ -252,7 +258,8 @@ async def test_document_runtime_probe_requires_fresh_dedicated_worker_heartbeat(
             return None
 
     class Heartbeats:
-        async def readiness(self, *, max_age_seconds: float):
+        async def readiness(self, *, worker_id: str, max_age_seconds: float):
+            assert worker_id == "document-worker@" + "a" * 40
             assert max_age_seconds == 120
             return False, "worker_heartbeat_missing"
 
@@ -266,6 +273,7 @@ async def test_document_runtime_probe_requires_fresh_dedicated_worker_heartbeat(
         {
             "credential_vault": Vault(),
             "heartbeat_store": Heartbeats(),
+            "worker_identity": "document-worker@" + "a" * 40,
             "route_resolver": Routes(),
         },
     )()
@@ -273,7 +281,10 @@ async def test_document_runtime_probe_requires_fresh_dedicated_worker_heartbeat(
     services.settings = type(
         "Settings",
         (),
-        {"w2_document_runtime_enabled": True, "document_worker_lease_seconds": 60},
+        {
+            "w2_document_runtime_enabled": True,
+            "document_worker_lease_seconds": 60,
+        },
     )()
     services._document_schema_ready = True
     services.document_runtime = runtime
@@ -320,12 +331,14 @@ async def test_worker_heartbeat_store_reports_fresh_and_rejects_invalid_lease() 
                 "invalid_lease": False,
             }
             self.executed: list[tuple[str, tuple[object, ...]]] = []
+            self.fetched: list[tuple[str, tuple[object, ...]]] = []
             self.closed = 0
 
         async def execute(self, sql, *args):
             self.executed.append((sql, args))
 
-        async def fetchrow(self, _sql, *_args):
+        async def fetchrow(self, sql, *args):
+            self.fetched.append((sql, args))
             return self.row
 
         async def close(self):
@@ -335,14 +348,20 @@ async def test_worker_heartbeat_store_reports_fresh_and_rejects_invalid_lease() 
     store = PostgresDocumentWorkerHeartbeatStore(lambda: _return(connection))
 
     await store.heartbeat("worker-synthetic")
-    assert await store.readiness(max_age_seconds=60) == (True, "ready")
+    assert await store.readiness(
+        worker_id="worker-synthetic@" + "a" * 40, max_age_seconds=60
+    ) == (True, "ready")
     connection.row["invalid_lease"] = True
-    assert await store.readiness(max_age_seconds=60) == (
+    assert await store.readiness(
+        worker_id="worker-synthetic@" + "a" * 40, max_age_seconds=60
+    ) == (
         False,
         "worker_lease_invariant_failed",
     )
     assert "agent_document_worker_heartbeats" in connection.executed[0][0]
     assert connection.executed[0][1] == ("worker-synthetic",)
+    assert "WHERE worker_id=$2" in connection.fetched[0][0]
+    assert connection.fetched[0][1] == (60, "worker-synthetic@" + "a" * 40)
     assert connection.closed == 3
 
 

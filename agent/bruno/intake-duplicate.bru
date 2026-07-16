@@ -1,0 +1,29 @@
+meta {
+  name: Intake duplicate idempotency check
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{agent_base_url}}/documents
+  body: multipartForm
+  auth: none
+}
+
+body:multipart-form {
+  session_id: {{session_id}}
+  doc_type: intake_form
+  file: @file(../evals/fixtures/golden/intake-full-valid.pdf)
+}
+
+tests {
+  test("the same patient-scoped bytes are a permanent no-op", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody().document_id).to.equal(bru.getVar("intake_document_id"));
+  });
+}
+
+settings {
+  encodeUrl: true
+  timeout: 180000
+}

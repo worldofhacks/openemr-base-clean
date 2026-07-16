@@ -56,6 +56,21 @@ def _strings(value: Any) -> Iterable[str]:
             yield from _strings(nested)
 
 
+def _clinical_strings(value: Any) -> Iterable[str]:
+    """Walk clinical leaves while excluding approved opaque source-anchor metadata."""
+
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, nested in value.items():
+            if key == "source_document_id":
+                continue
+            yield from _clinical_strings(nested)
+    elif isinstance(value, (list, tuple)):
+        for nested in value:
+            yield from _clinical_strings(nested)
+
+
 _DATE_SIG = re.compile(r"^\d{4}-\d{1,2}-\d{1,2}$|^\d{1,2}/\d{1,2}/\d{2,4}$")
 _NUMERIC_SIG = re.compile(r"^-?\d[\d,]*\.?\d*$")
 
@@ -92,7 +107,7 @@ def _case_signatures(case: GoldenCase) -> tuple[set[str], set[str]]:
 
     phrases = {f"ZZPHI-{case.case_id}".casefold()}
     tokens: set[str] = set()
-    for value in _strings(case.expected_fields):
+    for value in _clinical_strings(case.expected_fields):
         normalized = " ".join(value.split()).casefold()
         if not normalized:
             continue

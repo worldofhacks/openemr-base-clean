@@ -31,7 +31,7 @@ from app.routes.ui import router as ui_router  # noqa: E402
 pytestmark = [pytest.mark.ui, pytest.mark.filterwarnings("ignore::DeprecationWarning")]
 
 # A canned verified brief with a mix of sections, a confirm-with-patient allergy line, dropped
-# verdicts (drives the "Review before entering" panel), and citation ids.
+# verdicts (drives the "Review before entering" panel), and CitationV2 objects.
 MOCK_CHAT = {
     "brief": (
         "Verified summary (each line re-rendered from cited evidence):\n"
@@ -44,8 +44,29 @@ MOCK_CHAT = {
     "source": "llm",
     "degraded": False,
     "verdicts": ["pass", "pass", "pass", "flagged", "blocked", "blocked", "blocked"],
-    "citations": ["Condition:uuid-1:9c8486b4", "MedicationRequest:uuid-2:6ddf2ac1",
-                  "Observation:uuid-3:2a8f5c72"],
+    "citations": [
+        {
+            "source_type": "patient_record",
+            "source_id": "Condition/uuid-1",
+            "page_or_section": None,
+            "field_or_chunk_id": "Condition:uuid-1:9c8486b4",
+            "quote_or_value": "Prediabetes (finding)",
+        },
+        {
+            "source_type": "patient_record",
+            "source_id": "MedicationRequest/uuid-2",
+            "page_or_section": None,
+            "field_or_chunk_id": "MedicationRequest:uuid-2:6ddf2ac1",
+            "quote_or_value": "Sertraline 100 MG Oral Tablet",
+        },
+        {
+            "source_type": "patient_record",
+            "source_id": "Observation/uuid-3",
+            "page_or_section": None,
+            "field_or_chunk_id": "Observation:uuid-3:2a8f5c72",
+            "quote_or_value": "89 mg/dL",
+        },
+    ],
     "patient": {"name": "José3 Oquendo599", "gender": "male", "birth_date": "1959-12-20"},
     "correlation_id": "test-corr-1",
 }

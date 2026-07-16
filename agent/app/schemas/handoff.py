@@ -27,11 +27,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class SupervisorDecision(enum.Enum):
-    """Closed §2 decision vocabulary — exactly the locked five-member set."""
+    """Closed routing vocabulary, including deterministic critic outcomes."""
 
     ROUTE_EXTRACT = "route_extract"
     ROUTE_RETRIEVE = "route_retrieve"
     COMPOSE_ANSWER = "compose_answer"
+    REVIEW_CRITIC = "review_critic"
+    CRITIC_APPROVE = "critic_approve"
+    CRITIC_REJECT = "critic_reject"
     REFUSE = "refuse"
     DONE = "done"
 
@@ -46,6 +49,10 @@ class ReasonCode(enum.Enum):
     RETRIEVAL_REQUESTED = "retrieval_requested"
     # compose_answer
     WORKERS_COMPLETE = "workers_complete"
+    # deterministic critic
+    CRITIC_REVIEW_REQUESTED = "critic_review_requested"
+    CRITIC_APPROVED = "critic_approved"
+    CRITIC_REJECTED = "critic_rejected"
     # refuse — step-budget exhaustion is the only refusal this skeleton produces (§2)
     STEP_BUDGET_EXCEEDED = "step_budget_exceeded"
     # done
@@ -58,6 +65,9 @@ _ALLOWED_REASONS: dict[SupervisorDecision, frozenset[ReasonCode]] = {
     SupervisorDecision.ROUTE_EXTRACT: frozenset({ReasonCode.EXTRACTION_REQUESTED}),
     SupervisorDecision.ROUTE_RETRIEVE: frozenset({ReasonCode.RETRIEVAL_REQUESTED}),
     SupervisorDecision.COMPOSE_ANSWER: frozenset({ReasonCode.WORKERS_COMPLETE}),
+    SupervisorDecision.REVIEW_CRITIC: frozenset({ReasonCode.CRITIC_REVIEW_REQUESTED}),
+    SupervisorDecision.CRITIC_APPROVE: frozenset({ReasonCode.CRITIC_APPROVED}),
+    SupervisorDecision.CRITIC_REJECT: frozenset({ReasonCode.CRITIC_REJECTED}),
     SupervisorDecision.REFUSE: frozenset({ReasonCode.STEP_BUDGET_EXCEEDED}),
     SupervisorDecision.DONE: frozenset({ReasonCode.TURN_COMPLETE}),
 }

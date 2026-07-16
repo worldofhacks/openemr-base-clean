@@ -25,8 +25,6 @@ Group 2–3 tests are expected to PASS against both old and new impl (must-still
 
 from __future__ import annotations
 
-import pytest
-
 from app.evidence.packet import build_evidence_packet
 from app.tools.contracts import (
     ConditionRecord,

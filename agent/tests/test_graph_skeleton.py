@@ -87,7 +87,16 @@ TURN_TIMEOUT_S = 15.0  # every graph turn must finish in bounded wall-clock, nev
 W1_ENVELOPE_KEYS = {
     "brief", "source", "degraded", "verdicts", "citations", "patient", "correlation_id",
 }
-CLOSED_DECISIONS = {"route_extract", "route_retrieve", "compose_answer", "refuse", "done"}
+CLOSED_DECISIONS = {
+    "route_extract",
+    "route_retrieve",
+    "compose_answer",
+    "review_critic",
+    "critic_approve",
+    "critic_reject",
+    "refuse",
+    "done",
+}
 
 
 # --- shared synthetic serving tail (same seams as test_chat_route.py) -----------------
@@ -533,7 +542,9 @@ def test_flag_off_chat_response_is_bit_identical_w1_and_graph_never_invoked(
     assert body["source"] == expected.source == "llm"
     assert body["degraded"] is expected.degraded
     assert body["verdicts"] == list(expected.verdicts)
-    assert body["citations"] == list(expected.citations)
+    assert body["citations"] == [
+        citation.model_dump(mode="json") for citation in expected.citations
+    ]
     assert body["patient"] is None
     assert body["correlation_id"] == "w2m3-corr-off"
     assert "500 mg" in body["brief"] and "5000" not in body["brief"]

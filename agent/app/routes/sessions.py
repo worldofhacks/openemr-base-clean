@@ -17,6 +17,8 @@ from pydantic import BaseModel
 
 from app.auth.scopes import ScopeCoverageError
 from app.auth.smart_client import CoPilotNotEnabledError, SmartAuthError
+from app.routes.openapi_contract import documented_errors, documented_response
+from app.service import LaunchRateLimited
 
 router = APIRouter()
 
@@ -26,14 +28,43 @@ class SessionCreated(BaseModel):
     patient_id: str
 
 
-@router.get("/launch")
-async def launch(request: Request, launch: str | None = None, iss: str | None = None) -> RedirectResponse:
+@router.get(
+    "/launch",
+    status_code=302,
+    response_class=RedirectResponse,
+    responses={
+        302: documented_response(
+            "Redirect to the trusted SMART authorization origin.", location=True
+        ),
+        **documented_errors(422, 429),
+    },
+)
+async def launch(
+    request: Request, launch: str | None = None, iss: str | None = None
+) -> RedirectResponse:
     services = request.app.state.services
-    authorize_url = services.begin_launch(launch=launch, destination="week1")
+    try:
+        authorize_url = services.begin_launch(launch=launch, destination="week1")
+    except LaunchRateLimited:
+        raise HTTPException(
+            status_code=429,
+            detail="SMART launch rate limit exceeded",
+            headers={"Retry-After": "60"},
+        ) from None
     return RedirectResponse(url=authorize_url, status_code=302)
 
 
-@router.get("/week2/launch")
+@router.get(
+    "/week2/launch",
+    status_code=302,
+    response_class=RedirectResponse,
+    responses={
+        302: documented_response(
+            "Redirect to the trusted SMART authorization origin.", location=True
+        ),
+        **documented_errors(422, 429, 503),
+    },
+)
 async def week2_launch(
     request: Request, launch: str | None = None, iss: str | None = None
 ) -> RedirectResponse:
@@ -42,6 +73,12 @@ async def week2_launch(
     services = request.app.state.services
     try:
         authorize_url = services.begin_launch(launch=launch, destination="week2")
+    except LaunchRateLimited:
+        raise HTTPException(
+            status_code=429,
+            detail="SMART launch rate limit exceeded",
+            headers={"Retry-After": "60"},
+        ) from None
     except RuntimeError:
         raise HTTPException(
             status_code=503, detail="Week 2 document runtime is not enabled"
@@ -49,11 +86,25 @@ async def week2_launch(
     return RedirectResponse(url=authorize_url, status_code=302)
 
 
-@router.get("/callback")
-async def callback(request: Request, code: str | None = None, state: str | None = None,
-                   error: str | None = None) -> RedirectResponse:
+@router.get(
+    "/callback",
+    status_code=302,
+    response_class=RedirectResponse,
+    responses={
+        302: documented_response(
+            "Redirect to the server-owned UI for the completed launch.", location=True
+        ),
+        **documented_errors(400, 403, 422),
+    },
+)
+async def callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+) -> RedirectResponse:
     if error:
-        raise HTTPException(status_code=400, detail=f"authorization failed: {error}")
+        raise HTTPException(status_code=400, detail="authorization failed")
     if not code or not state:
         raise HTTPException(status_code=400, detail="missing code/state on callback")
     services = request.app.state.services
@@ -77,8 +128,8 @@ async def callback(request: Request, code: str | None = None, state: str | None 
                 "correct the client permissions and launch again"
             ),
         ) from None
-    except (SmartAuthError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=f"could not complete the launch: {exc}")
+    except (SmartAuthError, ValueError):
+        raise HTTPException(status_code=400, detail="could not complete the launch") from None
     # Only a closed server-side mapping controls the destination. The token stays server-side;
     # only the opaque session id rides the redirect.
     targets = {"week1": "/app", "week2": "/week2"}

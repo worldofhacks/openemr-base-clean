@@ -135,8 +135,8 @@ async def test_no_tracer_is_a_noop():
     assert "Type 2 diabetes" in res.text  # grounded, request completed without a tracer
 
 
-async def test_trace_captures_exact_model_io_and_verified_served_output():
-    """D16/§7: raw content reaches only the trace value object; the sink mask owns disclosure."""
+async def test_trace_never_retains_model_io_claims_or_served_output():
+    """Raw model, claim, and served content never enters the trace value object."""
     packet = _packet()
     evidence_id = packet.records[0].evidence_id
     raw_claims = {"claims": [{
@@ -158,11 +158,14 @@ async def test_trace_captures_exact_model_io_and_verified_served_output():
     assert result.source == "llm"
     trace = sink.traces[0]
     generation = next(step for step in trace.steps if step.name == "llm.complete")
-    assert generation.detail["prompt"] == provider.calls[0]  # exact provider.complete payload
-    assert "Which problems are recorded?" in repr(generation.detail["prompt"])
-    assert generation.detail["raw_submit_claims"] == raw_claims
-    assert generation.detail["raw_completion"][0]["name"] == "submit_claims"
+    assert generation.detail == {
+        "input_tokens": 14,
+        "output_tokens": 8,
+        "cache_read_tokens": 0,
+        "stop_reason": "tool_use",
+    }
+    assert "Which problems are recorded?" not in repr(trace)
+    assert raw_claims["claims"][0]["display"] not in repr(trace)
     verify = next(step for step in trace.steps if step.name == "verify")
-    assert verify.detail["claim"]["display"] == "Type 2 diabetes"
-    assert trace.served_output == result.text
-    assert "Type 2 diabetes" in trace.served_output
+    assert verify.detail == {"verdict": "pass", "claim_type": "ConditionClaim"}
+    assert trace.served_output is None

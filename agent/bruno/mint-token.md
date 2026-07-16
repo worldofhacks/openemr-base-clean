@@ -68,7 +68,7 @@ Then run the collection:
 
 ```bash
 cd bruno
-npx --yes @usebruno/cli@3.5.1 run --env Runtime --bail
+npx --yes @usebruno/cli@3.5.2 run --env Runtime --bail
 ```
 
 ## Expected lifecycle and failures

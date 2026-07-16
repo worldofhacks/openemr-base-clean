@@ -6,8 +6,10 @@ import asyncio
 import hashlib
 import inspect
 import json
+import time
+from contextlib import asynccontextmanager
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Protocol, cast
+from typing import AsyncIterator, Protocol, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -16,6 +18,8 @@ from app.ingestion.artifacts import ArtifactStore
 from app.ingestion.image_reader import read_image_words_and_boxes
 from app.ingestion.reader import WordsBoxes, read_pdf_bytes_words_and_boxes
 from app.ingestion.repository import DocumentRecord, DocumentRepository, DocumentType
+from app.ingestion.telemetry import DocumentTelemetry, StageSpan
+from app.observability.events import IngestionStageCode
 from app.orchestrator.workers.intake_extractor import PersistedExtraction
 from app.schemas.documents import FailureReason
 from app.schemas.extraction import (
@@ -23,13 +27,14 @@ from app.schemas.extraction import (
     GroundedField,
     IntakeFormExtraction,
     LabPdfExtraction,
+    MedicationListExtraction,
 )
 from app.schemas.writeback import WriteLeg, WriteState
 from app.writeback.intents import ExactlyOnceWriter, IntentSpec
 from app.writeback.ranges import build_vital_writes
 from app.writeback.transports import DocumentWritePayload, VitalWritePayload
 
-Extraction = LabPdfExtraction | IntakeFormExtraction
+Extraction = LabPdfExtraction | IntakeFormExtraction | MedicationListExtraction
 StageCallback = Callable[[str], Awaitable[None] | None]
 WordsReader = Callable[[DocumentRecord, bytes], WordsBoxes]
 
@@ -92,34 +97,50 @@ class DocumentExtractionPipeline:
         patient_ref: str,
         correlation_id: str,
         on_stage: StageCallback | None = None,
+        telemetry: DocumentTelemetry | None = None,
     ) -> PersistedExtraction:
-        record = await self._repository.get(document_ref)
-        if _patient_id(patient_ref) != record.patient_id:
-            raise PipelineFailure(FailureReason.PATIENT_MISMATCH)
+        success = False
+        try:
+            record = await self._repository.get(document_ref)
+            if _patient_id(patient_ref) != record.patient_id:
+                raise PipelineFailure(FailureReason.PATIENT_MISMATCH)
 
-        refs = await self._artifact_store.refs_for_document(record.document_id)
-        artifact: ExtractionArtifact
-        if refs is None:
-            artifact = await self._extract(
-                record, correlation_id=correlation_id, on_stage=on_stage
+            refs = await self._artifact_store.refs_for_document(record.document_id)
+            artifact: ExtractionArtifact
+            if refs is None:
+                artifact = await self._extract(
+                    record,
+                    correlation_id=correlation_id,
+                    on_stage=on_stage,
+                    telemetry=telemetry,
+                )
+                refs = await self._artifact_store.persist(artifact)
+            else:
+                resolved = self._artifact_store.resolve(refs.artifact_ref)
+                if not isinstance(resolved, ExtractionArtifact):
+                    raise PipelineFailure(FailureReason.SCHEMA_VIOLATION)
+                artifact = resolved
+                summary = artifact.grounding_summary
+                if telemetry is not None:
+                    telemetry.record_grounding(
+                        fields_grounded=int(summary.get("fields_grounded", 0)),
+                        fields_unsupported=int(summary.get("fields_unsupported", 0)),
+                    )
+
+            await _stage(on_stage, "writing")
+            await self._write_artifact(record, artifact, telemetry=telemetry)
+            await self._write_vitals(record, artifact, telemetry=telemetry)
+            summary = artifact.grounding_summary
+            success = True
+            return PersistedExtraction(
+                artifact_ref=refs.artifact_ref,
+                citation_refs=refs.citation_refs,
+                fields_grounded=int(summary.get("fields_grounded", 0)),
+                fields_unsupported=int(summary.get("fields_unsupported", 0)),
             )
-            refs = await self._artifact_store.persist(artifact)
-        else:
-            resolved = self._artifact_store.resolve(refs.artifact_ref)
-            if not isinstance(resolved, ExtractionArtifact):
-                raise PipelineFailure(FailureReason.SCHEMA_VIOLATION)
-            artifact = resolved
-
-        await _stage(on_stage, "writing")
-        await self._write_artifact(record, artifact)
-        await self._write_vitals(record, artifact)
-        summary = artifact.grounding_summary
-        return PersistedExtraction(
-            artifact_ref=refs.artifact_ref,
-            citation_refs=refs.citation_refs,
-            fields_grounded=int(summary.get("fields_grounded", 0)),
-            fields_unsupported=int(summary.get("fields_unsupported", 0)),
-        )
+        finally:
+            if telemetry is not None:
+                telemetry.finish(success=success)
 
     async def _extract(
         self,
@@ -127,25 +148,29 @@ class DocumentExtractionPipeline:
         *,
         correlation_id: str,
         on_stage: StageCallback | None,
+        telemetry: DocumentTelemetry | None,
     ) -> ExtractionArtifact:
         try:
-            source = await self._source_loader.fetch(record)
+            async with _observed_stage(telemetry, "source_readback"):
+                source = await self._source_loader.fetch(record)
         except Exception as exc:
             raise PipelineFailure(FailureReason.STORAGE_WRITE_FAILED) from exc
         if not hashlib.sha256(source).hexdigest() == record.content_hash:
             raise PipelineFailure(FailureReason.BINARY_READBACK_UNSAFE)
 
         try:
-            words_boxes = self._words_reader(record, source)
+            async with _observed_stage(telemetry, "ocr"):
+                words_boxes = self._words_reader(record, source)
         except Exception as exc:
             raise PipelineFailure(FailureReason.OCR_FAILED) from exc
         try:
-            proposed = await self._vlm.extract(
-                doc_type=record.doc_type,
-                source=source,
-                words_boxes=words_boxes,
-                source_document_id=record.document_id,
-            )
+            async with _observed_stage(telemetry, "vlm"):
+                proposed = await self._vlm.extract(
+                    doc_type=record.doc_type,
+                    source=source,
+                    words_boxes=words_boxes,
+                    source_document_id=record.document_id,
+                )
         except (TimeoutError, asyncio.TimeoutError) as exc:
             raise PipelineFailure(FailureReason.VLM_TIMEOUT) from exc
         except PipelineFailure:
@@ -154,22 +179,29 @@ class DocumentExtractionPipeline:
             raise PipelineFailure(FailureReason.VLM_UNAVAILABLE) from exc
 
         try:
-            extraction = _strict_extraction(record, proposed)
+            async with _observed_stage(telemetry, "schema_parse"):
+                extraction = _strict_extraction(record, proposed)
         except ValidationError as exc:
             raise PipelineFailure(FailureReason.SCHEMA_VIOLATION) from exc
         except (TypeError, ValueError) as exc:
             raise PipelineFailure(FailureReason.DOC_TYPE_MISMATCH) from exc
 
         await _stage(on_stage, "grounding")
-        grounded, outcomes = _reground(
-            extraction,
-            words_boxes=words_boxes,
-            document_id=record.document_id,
-            verifier=self._verifier,
-        )
+        async with _observed_stage(telemetry, "grounding"):
+            grounded, outcomes = _reground(
+                extraction,
+                words_boxes=words_boxes,
+                document_id=record.document_id,
+                verifier=self._verifier,
+            )
         summary = GroundingSummary.from_outcomes(outcomes)
+        if telemetry is not None:
+            telemetry.record_grounding(
+                fields_grounded=summary.fields_grounded,
+                fields_unsupported=summary.fields_unsupported,
+            )
         return ExtractionArtifact(
-            artifact_version=1,
+            artifact_version=(2 if record.doc_type == "medication_list" else 1),
             document_id=record.document_id,
             content_hash=record.content_hash,
             correlation_id=record.correlation_id or correlation_id,
@@ -185,7 +217,11 @@ class DocumentExtractionPipeline:
         )
 
     async def _write_artifact(
-        self, record: DocumentRecord, artifact: ExtractionArtifact
+        self,
+        record: DocumentRecord,
+        artifact: ExtractionArtifact,
+        *,
+        telemetry: DocumentTelemetry | None,
     ) -> None:
         content = artifact.model_dump_json(warnings=False).encode("utf-8")
         marker = f"document:{record.document_id}:artifact:v{artifact.artifact_version}"
@@ -199,20 +235,29 @@ class DocumentExtractionPipeline:
             payload_hash=hashlib.sha256(content).hexdigest(),
         )
         try:
-            result = await self._artifact_writer.execute(
-                spec,
-                payload=DocumentWritePayload(
-                    filename=f"{marker}-extraction.json",
-                    content_type="application/json",
-                    content=content,
-                ),
-            )
+            async with _observed_stage(telemetry, "artifact_write") as span:
+                result = await self._artifact_writer.execute(
+                    spec,
+                    payload=DocumentWritePayload(
+                        filename=f"{marker}-extraction.json",
+                        content_type="application/json",
+                        content=content,
+                    ),
+                )
         except Exception as exc:
             raise PipelineFailure(FailureReason.WRITEBACK_FAILED) from exc
+        if telemetry is not None:
+            telemetry.record_write_result(
+                WriteLeg.EXTRACTION_ARTIFACT, result, latency_ms=span.latency_ms
+            )
         _require_verified(result.state, result.verified, result.failure_reason)
 
     async def _write_vitals(
-        self, record: DocumentRecord, artifact: ExtractionArtifact
+        self,
+        record: DocumentRecord,
+        artifact: ExtractionArtifact,
+        *,
+        telemetry: DocumentTelemetry | None,
     ) -> None:
         extraction = artifact.extraction
         if not isinstance(extraction, IntakeFormExtraction):
@@ -246,12 +291,17 @@ class DocumentExtractionPipeline:
             )
             try:
                 assert self._vital_writer is not None
-                result = await self._vital_writer.execute(
-                    spec,
-                    payload=VitalWritePayload(record.encounter_id, values),
-                )
+                async with _observed_stage(telemetry, "vital_write") as span:
+                    result = await self._vital_writer.execute(
+                        spec,
+                        payload=VitalWritePayload(record.encounter_id, values),
+                    )
             except Exception as exc:
                 raise PipelineFailure(FailureReason.WRITEBACK_FAILED) from exc
+            if telemetry is not None:
+                telemetry.record_write_result(
+                    WriteLeg.VITAL, result, latency_ms=span.latency_ms
+                )
             _require_verified(result.state, result.verified, result.failure_reason)
 
 
@@ -269,10 +319,17 @@ def _patient_id(patient_ref: str) -> str:
 def _strict_extraction(
     record: DocumentRecord, proposed: Extraction | Mapping[str, object]
 ) -> Extraction:
-    expected: type[LabPdfExtraction] | type[IntakeFormExtraction]
-    expected = (
-        LabPdfExtraction if record.doc_type == "lab_pdf" else IntakeFormExtraction
+    expected: (
+        type[LabPdfExtraction]
+        | type[IntakeFormExtraction]
+        | type[MedicationListExtraction]
     )
+    if record.doc_type == "lab_pdf":
+        expected = LabPdfExtraction
+    elif record.doc_type == "intake_form":
+        expected = IntakeFormExtraction
+    else:
+        expected = MedicationListExtraction
     if isinstance(proposed, BaseModel):
         data = proposed.model_dump(round_trip=True)
     elif isinstance(proposed, Mapping):
@@ -323,6 +380,24 @@ async def _stage(callback: StageCallback | None, state: str) -> None:
     result = callback(state)
     if inspect.isawaitable(result):
         await result
+
+
+@asynccontextmanager
+async def _observed_stage(
+    telemetry: DocumentTelemetry | None, stage: IngestionStageCode
+) -> AsyncIterator[StageSpan]:
+    """Use the same timing seam with or without an installed event sink."""
+
+    if telemetry is not None:
+        async with telemetry.stage(stage) as span:
+            yield span
+        return
+    span = StageSpan(stage)
+    started = time.perf_counter()
+    try:
+        yield span
+    finally:
+        span.latency_ms = max((time.perf_counter() - started) * 1000, 0.0)
 
 
 def _require_verified(

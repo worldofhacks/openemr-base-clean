@@ -55,7 +55,7 @@ class DocumentExtractionReport(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     document_id: str = Field(min_length=1)
-    doc_type: Literal["lab_pdf", "intake_form"]
+    doc_type: Literal["lab_pdf", "intake_form", "medication_list"]
     state: Literal["complete"]
     fields_grounded: int = Field(ge=0)
     fields_unsupported: int = Field(ge=0)

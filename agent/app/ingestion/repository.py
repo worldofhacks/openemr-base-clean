@@ -13,12 +13,13 @@ from typing import Awaitable, Callable, Literal, Mapping, Protocol, cast
 
 from app.schemas.documents import DocumentStatus, FailureReason
 
-DocumentType = Literal["lab_pdf", "intake_form"]
+DocumentType = Literal["lab_pdf", "intake_form", "medication_list"]
 
 
 Clock = Callable[[], datetime]
 ACTIVE_STATES = frozenset({"extracting", "grounding", "writing"})
 SOURCE_STATES = frozenset({"storing", "reconciling"})
+OUTSTANDING_STATES = SOURCE_STATES | ACTIVE_STATES | frozenset({"queued"})
 
 
 def _utcnow() -> datetime:
@@ -81,6 +82,19 @@ class DocumentRecord:
         )
 
 
+@dataclass(frozen=True)
+class DocumentReadinessBinding:
+    """Minimum persisted authority needed for a content-free readiness read.
+
+    Deliberately excludes document names, hashes, correlation IDs, and clinical
+    artifacts.  The delegated credential vault independently verifies the patient
+    binding before any OpenEMR request is made.
+    """
+
+    patient_id: str
+    credential_ref: str
+
+
 class DocumentNotFound(KeyError):
     pass
 
@@ -99,6 +113,12 @@ class DocumentLeaseLost(RuntimeError):
 
 class DocumentRepository(Protocol):
     async def get_or_create(self, new: NewDocument) -> tuple[DocumentRecord, bool]: ...
+
+    async def find_by_patient_hash(
+        self, patient_id: str, content_hash: str
+    ) -> DocumentRecord | None: ...
+
+    async def count_outstanding(self) -> int: ...
 
     async def get(self, document_id: str) -> DocumentRecord: ...
 
@@ -214,6 +234,15 @@ class InMemoryDocumentRepository:
         self._by_key[(new.patient_id, new.content_hash)] = row.document_id
         return row, True
 
+    async def find_by_patient_hash(
+        self, patient_id: str, content_hash: str
+    ) -> DocumentRecord | None:
+        document_id = self._by_key.get((patient_id, content_hash))
+        return None if document_id is None else self._by_id[document_id]
+
+    async def count_outstanding(self) -> int:
+        return sum(record.state in OUTSTANDING_STATES for record in self._by_id.values())
+
     async def get(self, document_id: str) -> DocumentRecord:
         try:
             return self._by_id[document_id]
@@ -326,6 +355,17 @@ class InMemoryDocumentRepository:
                 and (state is None or row.state == state)
             ),
             key=lambda row: (row.created_ts, row.document_id),
+        )
+
+    async def readiness_binding(self) -> DocumentReadinessBinding | None:
+        if not self._by_id:
+            return None
+        record = max(
+            self._by_id.values(), key=lambda row: (row.created_ts, row.document_id)
+        )
+        return DocumentReadinessBinding(
+            patient_id=record.patient_id,
+            credential_ref=record.credential_ref,
         )
 
     async def claim_next(
@@ -540,6 +580,32 @@ class PostgresDocumentRepository:
         finally:
             await _close(conn)
 
+    async def find_by_patient_hash(
+        self, patient_id: str, content_hash: str
+    ) -> DocumentRecord | None:
+        conn = await self._connect()
+        try:
+            row = await self._fetch_by_key(conn, patient_id, content_hash)
+            return None if row is None else _record(row)
+        finally:
+            await _close(conn)
+
+    async def count_outstanding(self) -> int:
+        conn = await self._connect()
+        try:
+            value = await conn.fetchval(  # type: ignore[attr-defined]
+                """
+                SELECT COUNT(*)
+                  FROM agent_document_jobs
+                 WHERE state IN (
+                    'storing','reconciling','queued','extracting','grounding','writing'
+                 )
+                """
+            )
+            return int(value)
+        finally:
+            await _close(conn)
+
     async def get(self, document_id: str) -> DocumentRecord:
         conn = await self._connect()
         try:
@@ -706,6 +772,36 @@ class PostgresDocumentRepository:
                 state,
             )
             return [_record(row) for row in rows]
+        finally:
+            await _close(conn)
+
+    async def readiness_binding(self) -> DocumentReadinessBinding | None:
+        """Return the newest still-stored patient/credential binding only.
+
+        Joining the separately encrypted credential store avoids selecting an orphaned
+        dedup row.  The query intentionally projects no document metadata or content.
+        """
+
+        conn = await self._connect()
+        try:
+            row = await conn.fetchrow(  # type: ignore[attr-defined]
+                """
+                SELECT d.patient_id, d.credential_ref
+                  FROM agent_document_dedup d
+                  JOIN agent_job_credentials c
+                    ON c.credential_ref=d.credential_ref
+                   AND c.patient_id=d.patient_id
+                 ORDER BY c.updated_ts DESC, d.created_ts DESC, d.document_id DESC
+                 LIMIT 1
+                """
+            )
+            if row is None:
+                return None
+            values = dict(cast(Mapping[str, object], row))
+            return DocumentReadinessBinding(
+                patient_id=str(values["patient_id"]),
+                credential_ref=str(values["credential_ref"]),
+            )
         finally:
             await _close(conn)
 
@@ -937,7 +1033,7 @@ def _record(row: object) -> DocumentRecord:
     values = dict(cast(Mapping[str, object], row))
     reason = values.get("reason")
     doc_type_value = str(values["doc_type"])
-    if doc_type_value not in {"lab_pdf", "intake_form"}:
+    if doc_type_value not in {"lab_pdf", "intake_form", "medication_list"}:
         raise ValueError(f"invalid persisted doc_type: {doc_type_value!r}")
     return DocumentRecord(
         document_id=str(values["document_id"]),

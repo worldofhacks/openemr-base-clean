@@ -15,11 +15,12 @@ hard/soft classification without real network. The defaults below do the real wo
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Literal
-from urllib.parse import urlsplit
 
 import httpx
 
@@ -38,6 +39,25 @@ class DependencyResult:
 
 
 Probe = Callable[[Settings], Awaitable[DependencyResult]]
+
+_PROBE_KINDS: dict[str, Kind] = {
+    "openemr_fhir": "hard",
+    "anthropic": "hard",
+    "session_store": "hard",
+    "langfuse": "soft",
+    "retrieval_index": "soft",
+    "active_reranker": "soft",
+    "document_runtime": "hard",
+    "document_category_read": "hard",
+}
+
+
+def _probe_name(probe: Probe) -> str:
+    return getattr(probe, "__name__", "dependency").removeprefix("probe_")
+
+
+def _probe_kind(probe: Probe) -> Kind:
+    return _PROBE_KINDS.get(_probe_name(probe), "hard")
 
 
 # --- default real probes ---------------------------------------------------
@@ -73,21 +93,29 @@ async def probe_anthropic(settings: Settings) -> DependencyResult:
 
 
 async def probe_session_store(settings: Settings) -> DependencyResult:
-    """TCP reachability to the Postgres host:port (E2.2 upgrades this to SELECT 1
-    once the store lands — no DB driver dependency at E1)."""
+    """Execute the same minimal query the durable stores depend on.
+
+    A TCP handshake is not sufficient readiness evidence: a listener can be up while
+    authentication, database selection, or query execution is broken.
+    """
     dsn = settings.session_store_dsn.get_secret_value()
-    parts = urlsplit(dsn)
-    host, port = parts.hostname, parts.port or 5432
-    if not host:
-        return DependencyResult("session_store", "hard", False, "no host in DSN")
+    connection = None
     try:
-        fut = asyncio.open_connection(host, port)
-        reader, writer = await asyncio.wait_for(fut, timeout=5.0)
-        writer.close()
-        await writer.wait_closed()
-        return DependencyResult("session_store", "hard", True, f"tcp {host}:{port}")
+        import asyncpg
+
+        connection = await asyncpg.connect(dsn, timeout=5.0)
+        value = await asyncio.wait_for(connection.fetchval("SELECT 1"), timeout=5.0)
+        return DependencyResult(
+            "session_store", "hard", value == 1, "ok" if value == 1 else "query_failed"
+        )
     except Exception as exc:  # noqa: BLE001
         return DependencyResult("session_store", "hard", False, type(exc).__name__)
+    finally:
+        if connection is not None:
+            try:
+                await connection.close(timeout=2.0)
+            except Exception:  # noqa: BLE001 - readiness cleanup is best effort
+                pass
 
 
 async def probe_langfuse(settings: Settings) -> DependencyResult:
@@ -106,26 +134,61 @@ async def probe_langfuse(settings: Settings) -> DependencyResult:
 
 
 async def probe_retrieval_index(settings: Settings) -> DependencyResult:
-    """Hash-check the committed corpus without initializing either ONNX model.
+    """Hash-check the corpus and execute a deterministic static synthetic search.
 
-    Retrieval is a soft dependency: an integrity failure is visible on ``/ready`` but
-    does not pull the W1 chart path from rotation (W2-D4, §6).
+    The static search deliberately does not initialize an ONNX model.  It proves the
+    committed chunk store is readable and contains a known non-clinical guideline term;
+    the selected reranker is exercised by its own soft probe below.
     """
 
     del settings  # the corpus location is an integration/deploy setting, not a secret
     default_corpus = Path(__file__).resolve().parents[1] / "corpus"
     corpus_dir = Path(os.getenv("EVIDENCE_CORPUS_DIR", str(default_corpus)))
+    def check() -> tuple[bool, str]:
+        integrity = check_index_manifest(corpus_dir)
+        if not integrity.ok:
+            return False, "integrity_check_failed"
+        chunks_path = corpus_dir / "chunks.jsonl"
+        hits = 0
+        for line in chunks_path.read_text(encoding="utf-8").splitlines():
+            if not line:
+                continue
+            row = json.loads(line)
+            quote = row.get("quote") if isinstance(row, dict) else None
+            if isinstance(quote, str) and "hypertension" in quote.casefold():
+                hits += 1
+        return (hits > 0, "ok" if hits > 0 else "synthetic_search_miss")
+
     try:
-        integrity = await asyncio.to_thread(check_index_manifest, corpus_dir)
+        ok, detail = await asyncio.to_thread(check)
     except Exception:  # noqa: BLE001 - readiness must never raise
         return DependencyResult(
             "retrieval_index", "soft", False, "integrity_check_failed"
         )
+    return DependencyResult("retrieval_index", "soft", ok, detail)
+
+
+async def probe_active_reranker(settings: Settings) -> DependencyResult:
+    """Run the configured retrieval/reranking path on a synthetic clinical-term pair."""
+
+    del settings
+    default_corpus = Path(__file__).resolve().parents[1] / "corpus"
+    corpus_dir = Path(os.getenv("EVIDENCE_CORPUS_DIR", str(default_corpus)))
+
+    def check() -> bool:
+        from corpus.retrieval import HybridRetriever
+
+        outcome = HybridRetriever(corpus_dir).search("hypertension", k=2)
+        return bool(outcome.items)
+
+    try:
+        ok = await asyncio.to_thread(check)
+    except Exception:  # noqa: BLE001 - a soft dependency never raises from readiness
+        return DependencyResult(
+            "active_reranker", "soft", False, "synthetic_pair_failed"
+        )
     return DependencyResult(
-        "retrieval_index",
-        "soft",
-        integrity.ok,
-        "ok" if integrity.ok else "integrity_check_failed",
+        "active_reranker", "soft", ok, "ok" if ok else "synthetic_pair_miss"
     )
 
 
@@ -136,6 +199,7 @@ def default_readiness_checks() -> list[Probe]:
         probe_session_store,
         probe_langfuse,
         probe_retrieval_index,
+        probe_active_reranker,
     ]
 
 
@@ -172,3 +236,61 @@ async def run_readiness(settings: Settings, checks: list[Probe]) -> ReadinessRep
     else:
         status = "ready"
     return ReadinessReport(status=status, results=list(results))  # type: ignore[arg-type]
+
+
+class CachedReadinessRunner:
+    """Timeout-bound, stampede-safe readiness aggregation with a short TTL cache."""
+
+    def __init__(
+        self,
+        *,
+        ttl_seconds: float = 10.0,
+        probe_timeout_seconds: float = 8.0,
+    ) -> None:
+        if ttl_seconds <= 0 or probe_timeout_seconds <= 0:
+            raise ValueError("readiness cache and timeout bounds must be positive")
+        self._ttl = ttl_seconds
+        self._timeout = probe_timeout_seconds
+        self._cached: ReadinessReport | None = None
+        self._cached_at = 0.0
+        self._lock = asyncio.Lock()
+
+    async def run(self, settings: Settings, checks: list[Probe]) -> ReadinessReport:
+        now = time.monotonic()
+        if self._cached is not None and now - self._cached_at < self._ttl:
+            return self._cached
+        async with self._lock:
+            now = time.monotonic()
+            if self._cached is not None and now - self._cached_at < self._ttl:
+                return self._cached
+
+            async def bounded(probe: Probe) -> DependencyResult:
+                try:
+                    return await asyncio.wait_for(
+                        probe(settings), timeout=self._timeout
+                    )
+                except TimeoutError:
+                    return DependencyResult(
+                        _probe_name(probe), _probe_kind(probe), False, "timeout"
+                    )
+                except Exception as exc:  # noqa: BLE001 - readiness is a boundary
+                    return DependencyResult(
+                        _probe_name(probe),
+                        _probe_kind(probe),
+                        False,
+                        type(exc).__name__,
+                    )
+
+            results = await asyncio.gather(*(bounded(probe) for probe in checks))
+            hard_down = any((not item.ok) and item.kind == "hard" for item in results)
+            soft_down = any((not item.ok) and item.kind == "soft" for item in results)
+            status: Literal["ready", "degraded", "not_ready"]
+            if hard_down:
+                status = "not_ready"
+            elif soft_down:
+                status = "degraded"
+            else:
+                status = "ready"
+            self._cached = ReadinessReport(status=status, results=list(results))
+            self._cached_at = time.monotonic()
+            return self._cached

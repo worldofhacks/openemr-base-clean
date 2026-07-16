@@ -29,20 +29,27 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import TypeVar
 
 from langgraph.graph import END, START, StateGraph
 
 from app.llm.provider import Usage
+from app.llm.cost import estimate_cost
+from app.observability.events import (
+    EventComponent,
+    EventEmitter,
+    EventSeverity,
+    EventType,
+)
 from app.observability.langfuse import LangfuseSink, RequestTracer
 from app.observability.trace import (
     AccountabilityContext,
     hash_identifier,
     sanitize_request_url,
 )
-from app.orchestrator import composer
+from app.orchestrator import composer, critic
 from app.orchestrator.refs import RefResolver, TurnRefRegistry
 # _DEFAULT_REFUSAL_TEXT is the W1-canonical refusal message (loop.py owns it; importing
 # the constant keeps the graph's budget refusal byte-identical to W1's, never a fork).
@@ -56,6 +63,8 @@ from app.orchestrator.state import (
 from app.orchestrator.workers import stub_extractor, stub_retriever
 from app.orchestrator.workers.contracts import WorkerCallable
 from app.schemas.citations import CitationV2, EvidenceSnippet
+from app.schemas.answers import GroundedAnswerContext
+from app.schemas.extraction import ExtractionArtifact
 from app.schemas.workers import WorkerInput, WorkerOutput
 
 FLAG_ENV = "W2_GRAPH_ENABLED"
@@ -65,11 +74,14 @@ FLAG_ENV = "W2_GRAPH_ENABLED"
 STEP_BUDGET = 8
 
 _COMPOSER_NAME = "composer"
+_CRITIC_NAME = "critic"
 _SUPERVISOR_NAME = "supervisor"
 _EXTRACT_NODE = "intake_extractor"
 _RETRIEVE_NODE = "evidence_retriever"
+_CRITIC_NODE = "critic"
 
 RunBrief = Callable[[], Awaitable[BriefResult]]
+RunBriefWithContext = Callable[[GroundedAnswerContext], Awaitable[BriefResult]]
 SupervisorPolicy = Callable[..., SupervisorDecision]
 T = TypeVar("T")
 
@@ -103,6 +115,7 @@ class GraphTurnResult:
     brief: BriefResult
     handoffs: tuple[HandoffRecord, ...]
     composition: composer.VerifiedComposition = composer.VerifiedComposition()
+    critic_approved: bool = True
 
 
 def _now_iso() -> str:
@@ -125,6 +138,33 @@ def _refusal_brief() -> BriefResult:
         iterations=0,
         tool_calls=[],
         verdicts=[f"refused:{ReasonCode.STEP_BUDGET_EXCEEDED.value}"],
+    )
+
+
+def _critic_refusal_brief(original: BriefResult | None = None) -> BriefResult:
+    refusal = BriefResult(
+        text=_DEFAULT_REFUSAL_TEXT,
+        source="deterministic_refusal",
+        degraded=False,
+        usage=Usage(),
+        iterations=0,
+        tool_calls=[],
+        verdicts=[f"refused:{ReasonCode.CRITIC_REJECTED.value}"],
+    )
+    if original is None:
+        return refusal
+    # Discard every pending clinical byte/citation while retaining operational usage,
+    # timing, tool-call, and presentation metadata for the terminal trace/event.
+    return replace(
+        original,
+        text=refusal.text,
+        source=refusal.source,
+        degraded=refusal.degraded,
+        fallback_reason=None,
+        fallback_kind=None,
+        verdicts=refusal.verdicts,
+        citations=[],
+        verified_claims=(),
     )
 
 
@@ -158,13 +198,22 @@ def select_next_decision(state: GraphState) -> SupervisorDecision:
         return SupervisorDecision.ROUTE_RETRIEVE
     if state.get("brief") is None:
         return SupervisorDecision.COMPOSE_ANSWER
-    return SupervisorDecision.DONE
+    if not state.get("critic_reviewed"):
+        return SupervisorDecision.REVIEW_CRITIC
+    if state.get("critic_finalized"):
+        return SupervisorDecision.DONE
+    if state.get("critic_approved"):
+        return SupervisorDecision.CRITIC_APPROVE
+    return SupervisorDecision.CRITIC_REJECT
 
 
 _REASON_FOR_DECISION: dict[SupervisorDecision, ReasonCode] = {
     SupervisorDecision.ROUTE_EXTRACT: ReasonCode.EXTRACTION_REQUESTED,
     SupervisorDecision.ROUTE_RETRIEVE: ReasonCode.RETRIEVAL_REQUESTED,
     SupervisorDecision.COMPOSE_ANSWER: ReasonCode.WORKERS_COMPLETE,
+    SupervisorDecision.REVIEW_CRITIC: ReasonCode.CRITIC_REVIEW_REQUESTED,
+    SupervisorDecision.CRITIC_APPROVE: ReasonCode.CRITIC_APPROVED,
+    SupervisorDecision.CRITIC_REJECT: ReasonCode.CRITIC_REJECTED,
     SupervisorDecision.REFUSE: ReasonCode.STEP_BUDGET_EXCEEDED,
     SupervisorDecision.DONE: ReasonCode.TURN_COMPLETE,
 }
@@ -173,6 +222,7 @@ _REASON_FOR_DECISION: dict[SupervisorDecision, ReasonCode] = {
 async def run_graph_turn(
     *,
     run_brief: RunBrief,
+    run_brief_with_context: RunBriefWithContext | None = None,
     correlation_id: str,
     tracer: RequestTracer | None = None,
     accountability: AccountabilityContext | None = None,
@@ -181,6 +231,7 @@ async def run_graph_turn(
     extraction_worker: WorkerCallable | None = None,
     retrieval_worker: WorkerCallable | None = None,
     ref_registry: RefResolver | None = None,
+    events: EventEmitter | None = None,
 ) -> GraphTurnResult:
     """THE single graph entrypoint (chat.py's flag-ON path goes through it; the AC-4
     flag-OFF tripwire monkeypatches it). Builds the per-turn graph, runs it to a
@@ -199,16 +250,35 @@ async def run_graph_turn(
         raise ValueError("worker_input correlation_id must match the graph turn")
     extract_runner = extraction_worker or stub_extractor.run_intake_extractor_stub
     retrieve_runner = retrieval_worker or stub_retriever.run_evidence_retriever_stub
-    composition_result = composer.VerifiedComposition()
     # Per-hop span timings for the post-hoc trace replay (name, start_ns, end_ns, hop).
     hop_spans: list[tuple[str, int, int, HandoffRecord]] = []
     turn_started_ns = time.time_ns()
+    retrieval_hit_count = 0
+    grounding_rate = 0.0
+
+    def _emit_handoff(record: HandoffRecord, latency_ms: float) -> None:
+        if events is None:
+            return
+        events.emit(
+            EventType.HANDOFF_COMPLETED,
+            {
+                "turn": record.turn,
+                "decision": record.supervisor_decision.value,
+                "reason_code": record.reason_code.value,
+                "worker": record.worker,
+                "latency_ms": max(latency_ms, 0.0),
+            },
+            component=EventComponent.ORCHESTRATOR,
+            correlation_id=correlation_id,
+        )
 
     def _terminal(state: GraphState, decision: SupervisorDecision,
                   reason: ReasonCode) -> dict:
         turn = state["turn"]
         brief = state.get("brief")
-        if decision is SupervisorDecision.REFUSE or brief is None:
+        if decision is SupervisorDecision.CRITIC_REJECT:
+            brief = _critic_refusal_brief(brief)
+        elif decision is SupervisorDecision.REFUSE or brief is None:
             # Budget exhaustion (or any terminal state without a composed answer)
             # surfaces as the W1-canonical deterministic refusal — never an error/hang.
             brief = _refusal_brief()
@@ -223,8 +293,46 @@ async def run_graph_turn(
             input_ref=input_ref,
             output_ref=output_ref,
         )
+        _emit_handoff(record, 0.0)
         return {"handoffs": [record], "turn": turn + 1,
                 "next_decision": decision, "brief": brief}
+
+    def _record_critic_outcome(
+        state: GraphState,
+        decision: SupervisorDecision,
+        reason: ReasonCode,
+    ) -> dict:
+        """Record the closed critic outcome, then continue to the terminal done hop."""
+
+        turn = state["turn"]
+        brief = state.get("brief")
+        pending = state.get("pending_composition")
+        if decision is SupervisorDecision.CRITIC_REJECT:
+            brief = _critic_refusal_brief(brief)
+            pending = composer.VerifiedComposition()
+        input_ref = refs.put(state["worker_input"], kind="supervisor-input")
+        output_ref = refs.put(
+            {"decision": decision.value, "reason": reason.value},
+            kind="supervisor-output",
+        )
+        record = _record(
+            correlation_id,
+            turn,
+            decision,
+            reason,
+            worker=_SUPERVISOR_NAME,
+            input_ref=input_ref,
+            output_ref=output_ref,
+        )
+        _emit_handoff(record, 0.0)
+        return {
+            "handoffs": [record],
+            "turn": turn + 1,
+            "next_decision": decision,
+            "brief": brief,
+            "pending_composition": pending,
+            "critic_finalized": True,
+        }
 
     async def supervisor_node(state: GraphState) -> dict:
         turn = state["turn"]
@@ -238,6 +346,14 @@ async def run_graph_turn(
                              ReasonCode.STEP_BUDGET_EXCEEDED)
         if decision is SupervisorDecision.DONE:
             return _terminal(state, SupervisorDecision.DONE, ReasonCode.TURN_COMPLETE)
+        if decision is SupervisorDecision.CRITIC_APPROVE:
+            return _record_critic_outcome(
+                state, SupervisorDecision.CRITIC_APPROVE, ReasonCode.CRITIC_APPROVED
+            )
+        if decision is SupervisorDecision.CRITIC_REJECT:
+            return _record_critic_outcome(
+                state, SupervisorDecision.CRITIC_REJECT, ReasonCode.CRITIC_REJECTED
+            )
         return {"next_decision": decision}
 
     async def _worker_hop(
@@ -279,6 +395,9 @@ async def run_graph_turn(
                 hop_spans.append(
                     (f"graph.worker.{output.worker}", started_ns, time.time_ns(), record)
                 )
+                _emit_handoff(
+                    record, (time.time_ns() - started_ns) / 1_000_000
+                )
                 return {
                     "handoffs": records,
                     "turn": turn + 1,
@@ -305,6 +424,9 @@ async def run_graph_turn(
                 records.append(record)
                 hop_spans.append(
                     (f"graph.worker.{worker_name}", started_ns, time.time_ns(), record)
+                )
+                _emit_handoff(
+                    record, (time.time_ns() - started_ns) / 1_000_000
                 )
                 turn += 1
         return {
@@ -334,7 +456,7 @@ async def run_graph_turn(
         )
 
     async def compose_node(state: GraphState) -> dict:
-        nonlocal composition_result
+        nonlocal retrieval_hit_count, grounding_rate
         turn = state["turn"]
         input_ref = refs.put(state["worker_input"], kind="composer-input")
         started_ns = time.time_ns()
@@ -342,21 +464,90 @@ async def run_graph_turn(
         evidence_snippets = _resolve_refs(
             refs, state["evidence_snippets"], EvidenceSnippet
         )
+        retrieval_hit_count = min(len(evidence_snippets), 5)
+        artifacts = _resolve_refs(refs, state["verified_facts"], ExtractionArtifact)
+        grounded = sum(
+            int(item.grounding_summary.get("fields_grounded", 0))
+            for item in artifacts
+        )
+        unsupported = sum(
+            int(item.grounding_summary.get("fields_unsupported", 0))
+            for item in artifacts
+        )
+        grounding_rate = (
+            grounded / (grounded + unsupported)
+            if grounded + unsupported
+            else 0.0
+        )
         citations = _resolve_refs(refs, state["citations"], CitationV2)
         composed = await composer.compose_answer(
             verified_facts=verified_facts,
             evidence_snippets=evidence_snippets,
             citations=citations,
             run_brief=run_brief,
+            run_brief_with_context=run_brief_with_context,
         )
-        composition_result = composed.composition
         brief = composed.brief
         output_ref = refs.put(composed, kind="composer-output")
         record = _record(correlation_id, turn, SupervisorDecision.COMPOSE_ANSWER,
                          ReasonCode.WORKERS_COMPLETE, worker=_COMPOSER_NAME,
                          input_ref=input_ref, output_ref=output_ref)
         hop_spans.append((f"graph.{_COMPOSER_NAME}", started_ns, time.time_ns(), record))
-        return {"handoffs": [record], "turn": turn + 1, "brief": brief}
+        _emit_handoff(record, (time.time_ns() - started_ns) / 1_000_000)
+        return {
+            "handoffs": [record],
+            "turn": turn + 1,
+            "brief": brief,
+            "pending_composition": composed.composition,
+        }
+
+    async def critic_node(state: GraphState) -> dict:
+        turn = state["turn"]
+        started_ns = time.time_ns()
+        pending = state.get("pending_composition")
+        input_ref = refs.put(
+            {"pending": pending is not None}, kind="critic-input"
+        )
+        approved = False
+        reason = critic.CriticReason.CRITIC_EXCEPTION
+        try:
+            if not isinstance(pending, composer.VerifiedComposition):
+                raise TypeError("critic received no verified composition")
+            allowed = _resolve_refs(refs, state["citations"], CitationV2)
+            decision = critic.review_composition(
+                brief=state["brief"] or _critic_refusal_brief(),
+                composition=pending,
+                allowed_citations=allowed,
+            )
+            approved = decision.approved
+            reason = decision.reason
+        except Exception:  # noqa: BLE001 - the critic is a fail-closed boundary
+            approved = False
+            reason = critic.CriticReason.CRITIC_EXCEPTION
+        output_ref = refs.put(
+            {"approved": approved, "reason": reason.value}, kind="critic-output"
+        )
+        record = _record(
+            correlation_id,
+            turn,
+            SupervisorDecision.REVIEW_CRITIC,
+            ReasonCode.CRITIC_REVIEW_REQUESTED,
+            worker=_CRITIC_NAME,
+            input_ref=input_ref,
+            output_ref=output_ref,
+        )
+        hop_spans.append(("graph.critic", started_ns, time.time_ns(), record))
+        _emit_handoff(record, (time.time_ns() - started_ns) / 1_000_000)
+        return {
+            "handoffs": [record],
+            "turn": turn + 1,
+            "critic_reviewed": True,
+            "critic_approved": approved,
+            "critic_reason": reason.value,
+            "pending_composition": (
+                pending if approved else composer.VerifiedComposition()
+            ),
+        }
 
     def route(state: GraphState) -> str:
         decision = state["next_decision"]
@@ -366,6 +557,13 @@ async def run_graph_turn(
             return _RETRIEVE_NODE
         if decision is SupervisorDecision.COMPOSE_ANSWER:
             return _COMPOSER_NAME
+        if decision is SupervisorDecision.REVIEW_CRITIC:
+            return _CRITIC_NODE
+        if decision in {
+            SupervisorDecision.CRITIC_APPROVE,
+            SupervisorDecision.CRITIC_REJECT,
+        }:
+            return _SUPERVISOR_NAME
         return END  # refuse/done — the supervisor already emitted the terminal record
 
     builder = StateGraph(GraphState)
@@ -373,6 +571,7 @@ async def run_graph_turn(
     builder.add_node(_EXTRACT_NODE, extract_node)
     builder.add_node(_RETRIEVE_NODE, retrieve_node)
     builder.add_node(_COMPOSER_NAME, compose_node)
+    builder.add_node(_CRITIC_NODE, critic_node)
     builder.add_edge(START, _SUPERVISOR_NAME)
     builder.add_conditional_edges(
         _SUPERVISOR_NAME, route,
@@ -380,12 +579,15 @@ async def run_graph_turn(
             _EXTRACT_NODE: _EXTRACT_NODE,
             _RETRIEVE_NODE: _RETRIEVE_NODE,
             _COMPOSER_NAME: _COMPOSER_NAME,
+            _CRITIC_NODE: _CRITIC_NODE,
+            _SUPERVISOR_NAME: _SUPERVISOR_NAME,
             END: END,
         },
     )
     builder.add_edge(_EXTRACT_NODE, _SUPERVISOR_NAME)
     builder.add_edge(_RETRIEVE_NODE, _SUPERVISOR_NAME)
     builder.add_edge(_COMPOSER_NAME, _SUPERVISOR_NAME)
+    builder.add_edge(_CRITIC_NODE, _SUPERVISOR_NAME)
     graph = builder.compile()  # no checkpointer — per-turn state only (§2)
 
     initial: GraphState = {
@@ -403,6 +605,11 @@ async def run_graph_turn(
         "evidence_snippets": (),
         "citations": (),
         "brief": None,
+        "pending_composition": None,
+        "critic_reviewed": False,
+        "critic_approved": False,
+        "critic_finalized": False,
+        "critic_reason": None,
     }
     # Our own §2 budget always terminates first; LangGraph's recursion limit is set
     # above it purely so the framework bound can never mask the semantic one.
@@ -410,15 +617,56 @@ async def run_graph_turn(
         initial, config={"recursion_limit": 2 * STEP_BUDGET + 4})
 
     brief = final_state.get("brief") or _refusal_brief()
+    pending = final_state.get("pending_composition")
+    approved = bool(final_state.get("critic_approved"))
     result = GraphTurnResult(
         brief=brief,
         handoffs=tuple(final_state["handoffs"]),
-        composition=composition_result,
+        composition=(
+            pending
+            if approved and isinstance(pending, composer.VerifiedComposition)
+            else composer.VerifiedComposition()
+        ),
+        critic_approved=approved,
     )
 
     if tracer is not None and accountability is not None:
         _emit_graph_trace(tracer, accountability, correlation_id, result, hop_spans,
                           turn_started_ns, time.time_ns())
+    if events is not None:
+        try:
+            cost = estimate_cost(result.brief.usage, getattr(result.brief, "model", "claude-sonnet-4-6"))
+        except Exception:
+            try:
+                cost = estimate_cost(result.brief.usage, "claude-sonnet-4-6")
+            except Exception:
+                cost = 0.0
+        summary_steps: list[tuple[str, float]] = []
+        for name, start, end, _hop_record in hop_spans:
+            if name == f"graph.{_COMPOSER_NAME}":
+                summary_steps.extend(result.brief.observability_steps)
+            summary_steps.append((name, (end - start) / 1_000_000))
+        bounded_steps = summary_steps[:64]
+        events.emit(
+            EventType.ENCOUNTER_SUMMARY,
+            {
+                "ordered_steps": [name for name, _latency in bounded_steps],
+                "step_latencies_ms": [latency for _name, latency in bounded_steps],
+                "input_tokens": result.brief.usage.input_tokens,
+                "output_tokens": result.brief.usage.output_tokens,
+                "cost_usd": max(cost, 0.0),
+                "retrieval_hit_count": retrieval_hit_count,
+                "extraction_grounding_rate": max(0.0, min(1.0, grounding_rate)),
+                "verification_outcomes": list(result.brief.verdicts[:64]),
+            },
+            component=EventComponent.ORCHESTRATOR,
+            severity=(
+                EventSeverity.INFO
+                if result.critic_approved and not result.brief.degraded
+                else EventSeverity.WARNING
+            ),
+            correlation_id=correlation_id,
+        )
     return result
 
 

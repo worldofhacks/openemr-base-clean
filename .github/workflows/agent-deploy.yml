@@ -1,45 +1,83 @@
-# Clinical Co-Pilot agent — deploy to Railway ONLY behind the eval-gate (E8.4/E9).
-#
-# The `deploy` job `needs: evals`, so a red eval suite blocks the deploy — "deploy only on
-# green." Requires a RAILWAY_TOKEN repository secret (a Railway project/account token) and an
-# `agent` service in the linked Railway project. Runs on pushes to main that touch agent/**.
 name: agent-deploy
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'agent/**'
-      - '.github/workflows/agent-deploy.yml'
+  workflow_run:
+    workflows: [agent-eval-gate]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: w2-production-deploy
+  cancel-in-progress: false
 
 jobs:
-  evals:
-    name: eval gate
+  deploy-exact-evaluated-sha:
+    name: deploy-exact-evaluated-sha
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: agent
+    timeout-minutes: 30
+    environment: production
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          python-version: '3.12'
-      - run: pip install -e .
-      - name: Eval gate (non-zero exit blocks the deploy)
-        run: python -m evals.runner
-
-  deploy:
-    name: deploy (gated on evals)
-    needs: evals            # deploy runs ONLY if the eval gate passed
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Railway CLI
-        run: npm i -g @railway/cli
-      - name: Deploy agent service
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Verify evaluated source identity
+        env:
+          EVALUATED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: test "$(git rev-parse HEAD)" = "$EVALUATED_SHA"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+      - name: Install locked Railway CLI without deployment credentials
+        run: |
+          npm ci --ignore-scripts --prefix .github/railway-cli
+          npm audit --audit-level=high --prefix .github/railway-cli
+          .github/railway-cli/node_modules/.bin/railway --version
+      - name: Configure exact source identity for both services
         working-directory: agent
         env:
-          # Add a RAILWAY_TOKEN repo secret to enable deploys; without it railway up exits
-          # non-zero and the job fails (intended — no silent no-op deploy).
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway up --service agent --ci --detach
+          EVALUATED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          test -n "$RAILWAY_TOKEN"
+          railway="../.github/railway-cli/node_modules/.bin/railway"
+          "$railway" variables --service agent --set "DEPLOYMENT_SHA=$EVALUATED_SHA" --skip-deploys
+          "$railway" variables --service document-worker --set "DEPLOYMENT_SHA=$EVALUATED_SHA" --skip-deploys
+      - name: Deploy worker from an exact-SHA worker context
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          EVALUATED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          test -n "$RAILWAY_TOKEN"
+          worker_context="$RUNNER_TEMP/document-worker-context"
+          mkdir -p "$worker_context"
+          git archive "$EVALUATED_SHA" agent | tar -x -C "$worker_context" --strip-components=1
+          cp "$worker_context/railway.worker.json" "$worker_context/railway.json"
+          test "$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["deploy"]["startCommand"])' "$worker_context/railway.json")" = "python -m app.ingestion.worker"
+          railway="$GITHUB_WORKSPACE/.github/railway-cli/node_modules/.bin/railway"
+          cd "$worker_context"
+          "$railway" up --service document-worker --ci
+      - name: Deploy web from the evaluated SHA
+        working-directory: agent
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          test -n "$RAILWAY_TOKEN"
+          railway="../.github/railway-cli/node_modules/.bin/railway"
+          "$railway" up --service agent --ci --detach
+      - name: Verify deployed SHA, health, readiness, and synthetic smoke
+        env:
+          EVALUATED_SHA: ${{ github.event.workflow_run.head_sha }}
+          AGENT_BASE_URL: ${{ vars.AGENT_BASE_URL }}
+        run: |
+          test -n "$AGENT_BASE_URL"
+          python agent/scripts/verify_deployed_sha.py \
+            --base-url "$AGENT_BASE_URL" \
+            --sha "$EVALUATED_SHA" \
+            --timeout-seconds 600

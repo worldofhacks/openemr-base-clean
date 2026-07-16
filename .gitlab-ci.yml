@@ -1,0 +1,46 @@
+stages:
+  - eval
+  - bridge
+
+default:
+  image: python:3.12-slim
+  interruptible: true
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng
+    - python -m pip install --disable-pip-version-check -e './agent[dev]'
+
+eval-tier1:
+  stage: eval
+  variables:
+    RUN_LIVE: '0'
+    W2_EVAL_NETWORK: disabled
+    RERANKER: local
+    COHERE_API_KEY: ''
+  script:
+    - cd agent
+    - python -m evals.w2_runner run --tier recorded
+    - python -m evals.artifact_scan evals/results-tier1.json evals/recordings
+  artifacts:
+    when: on_success
+    expire_in: 14 days
+    paths:
+      - agent/evals/results-tier1.json
+
+github-exact-sha-bridge:
+  stage: bridge
+  needs: [eval-tier1]
+  # This job is stdlib-only. Keep the masked GitHub status token out of package
+  # manager subprocesses inherited from the default evaluation bootstrap.
+  before_script: []
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PROJECT_PATH == "alexander.miller/openemr-base-clean"'
+  script:
+    - >-
+      python .github/scripts/verify_github_gate.py
+      --repository worldofhacks/openemr-base-clean
+      --sha "$CI_COMMIT_SHA"
+      --workflow-name agent-eval-gate
+      --check-name eval-tier2-live
+      --artifact-name eval-results-tier2-live
+      --artifact-digest "$GITHUB_TIER2_ARTIFACT_DIGEST"

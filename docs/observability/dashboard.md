@@ -101,12 +101,12 @@ Use the dashboard above for aggregate F2 health. For one request, open **Tracing
 
 - the root `previsit-brief` observation for request outcome, duration, source/fallback metadata,
   and the PHI-minimized D5/F-C.1 accountability context;
-- the six `fhir.*` observations for read name, outcome, duration, and — only with the approved
-  content switch — the normalized typed tool result;
-- the `llm` generation for model, usage, native cost, and, with that switch, the exact model
-  prompt/completion;
-- the `verify` observations for each `pass`, `flagged`, `blocked`, or `refused` verdict and, with
-  that switch, the submitted claim; the trace/root output carries the verified served answer.
+- the six `fhir.*` observations for read name, outcome, duration, and record count; normalized
+  typed tool results are always redacted;
+- the `llm` generation for model, aggregate usage, native cost, and latency; prompt/completion
+  payloads are always redacted;
+- the `verify` observations for each `pass`, `flagged`, `blocked`, or `refused` verdict and claim
+  type; submitted claims and the trace/root served answer are always redacted.
 
 On that live trace, open the **Scores** panel for the stable request-level fields
 `claims_submitted`, `claims_verified`, `claims_dropped`, `verification_drop_rate`, `source`, and
@@ -115,20 +115,19 @@ On that live trace, open the **Scores** panel for the stable request-level field
 case yields verifier accounting, the applicable live score names above. The checked-in JSON and
 offline process exit remain authoritative; the Langfuse run is the review/drill-down surface.
 
-If trace content is blank while the spans and metrics are present, first check the owner-approved
-Synthea-demo `LANGFUSE_LOG_CONTENT` switch; that is an intentional privacy state, not a broken trace. Never paste keys,
-tokens, raw authorization headers, or trace content into dashboard documentation or screenshots.
-The D16 content policy remains **pending owner finalize sign-off**; D5/F-C.1 accountability and
-§7 aggregate telemetry do not depend on that approval.
+Blank/redacted trace content alongside populated spans and aggregate metrics is the required
+privacy state, not a broken trace. There is no content-export switch. Never paste keys, tokens,
+raw authorization headers, prompts, transcripts, claims, or trace content into dashboard
+documentation or screenshots.
 
 CLI/API validation on 2026-07-12 (synthetic data only) produced two concrete drill-down points:
 
 - **Dataset:** `clinical-copilot-offline-evals` → run ID
   `4b7d5fdf-dfd4-4981-bc32-2e84cceeca21` (`eval-gate-d16-premerge`), 10/10 linked item traces
   with `offline_gate_passed` and verifier-accounting scores.
-- **Live request:** trace `e81c974b3aa5aac45c631c5fb0c5c866`, a fresh José SMART launch
-  with content enabled: exact provider prompt and served brief, raw structured answer metadata,
-  6/6 FHIR content spans, 14/14 verifier claim spans, and the six request-level scores above.
+- **Historical live request:** trace `e81c974b3aa5aac45c631c5fb0c5c866` pre-dates the
+  aggregate-only export policy. Current traces retain only span outcomes, counts, latency,
+  usage/cost, claim types/verdicts, and the six request-level scores above.
 
 ### Metric semantics
 

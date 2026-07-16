@@ -354,6 +354,10 @@ async def test_duplicate_storing_upload_reconciles_under_source_lease() -> None:
     assert submission.accepted.document_id == stale.document_id
     assert submission.accepted.state == "queued"
     assert len(transport.posts) == 1
+    assert transport.posts[0].filename == (
+        f"document:{stale.document_id}:source:v1.png"
+    )
+    assert upload.filename not in transport.posts[0].filename
 
 
 class _SourceLoader:

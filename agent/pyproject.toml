@@ -23,7 +23,7 @@ dependencies = [
     "asyncpg>=0.29",
     # Authenticated encryption for the patient/clinician-bound delegated-job
     # credential (W2-D1/D9; §3). Keys are environment-only SecretStr values.
-    "cryptography>=44,<47",
+    "cryptography>=48.0.1,<49",
     # W2 orchestration framework (W2-R1, W2-D2 — binding). Supervisor + worker graph
     # lives in app/orchestrator/graph.py (W2-M3); the W1 direct loop runs unchanged
     # inside a worker node. Pre-staged on swarm/w2-wave0 so W2-M1 (container) and
@@ -64,6 +64,9 @@ dependencies = [
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
+    "PyYAML>=6,<7",
+    # Test-only PDF writer used to build resource-cap boundary fixtures.
+    "pypdf==6.14.2",
     # Selenium is a TEST-HARNESS-ONLY dependency (drives the interactive SMART
     # login/consent to prove the token returns real FHIR data). The runtime agent
     # never imports it.

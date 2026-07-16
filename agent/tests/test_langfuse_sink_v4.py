@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 
 import langfuse
+import pytest
 
 import app.observability.langfuse as langfuse_module
 from app.observability.langfuse import (
@@ -173,7 +174,7 @@ def _propagate_attributes(**_kwargs):
     yield
 
 
-def _sink_with_fake(monkeypatch, *, log_content, fail_scores=False):
+def _sink_with_fake(monkeypatch, *, fail_scores=False):
     fake = _FakeLangfuse(fail_scores=fail_scores, mask=lambda *, data: data)
 
     def build_client(**kwargs):
@@ -187,14 +188,13 @@ def _sink_with_fake(monkeypatch, *, log_content, fail_scores=False):
         host=None,
         public_key="pk-lf-11111111",
         secret_key="sk-lf-11111111",
-        log_content=log_content,
     )
     return sink, fake
 
 
-def test_content_mask_off_redacts_every_marked_surface(monkeypatch):
-    """D16/§7: default-off exports useful structure but no prompt, chart, claim, or brief."""
-    sink, fake = _sink_with_fake(monkeypatch, log_content=False)
+def test_content_mask_redacts_every_marked_surface(monkeypatch):
+    """Exports retain useful structure but no prompt, chart, claim, or brief."""
+    sink, fake = _sink_with_fake(monkeypatch)
 
     sink.emit(_content_trace())
 
@@ -209,9 +209,17 @@ def test_content_mask_off_redacts_every_marked_surface(monkeypatch):
     assert _CHART_TEXT not in repr(fake.scores)
 
 
-def test_content_mask_on_exports_prompt_claims_fhir_and_served_brief(monkeypatch):
-    """D16/§7: demo-only explicit opt-in makes each marked content surface inspectable."""
-    sink, fake = _sink_with_fake(monkeypatch, log_content=True)
+def test_content_export_has_no_constructor_opt_in_and_is_always_redacted(monkeypatch):
+    """No environment or constructor value can export prompt/claim/tool/answer content."""
+
+    with pytest.raises(TypeError):
+        LangfuseSink(
+            host=None,
+            public_key="pk-lf-11111111",
+            secret_key="sk-lf-11111111",
+            log_content=True,  # type: ignore[call-arg]
+        )
+    sink, fake = _sink_with_fake(monkeypatch)
 
     sink.emit(_content_trace())
 
@@ -219,19 +227,70 @@ def test_content_mask_on_exports_prompt_claims_fhir_and_served_brief(monkeypatch
     fhir = next(o for o in fake.observations if o["name"] == "fhir.get_conditions")
     tool = next(o for o in fake.observations if o["name"] == "tool.get_conditions")
     verify = next(o for o in fake.observations if o["name"] == "verify")
-    assert _CHART_TEXT in repr(generation["input"])
-    assert generation["output"] == _SERVED_BRIEF
-    assert generation["metadata"]["raw_completion"][0]["text"] == _CHART_TEXT
-    assert generation["metadata"]["raw_submit_claims"]["claims"][0]["display"] == _CHART_TEXT
-    assert _CHART_TEXT in repr(fhir["output"])
-    assert _CHART_TEXT in repr(tool["input"])
-    assert _CHART_TEXT in repr(tool["output"])
-    assert _CHART_TEXT in repr(verify["input"])
-    assert _CHART_TEXT in repr(fake.root["output"])
+    for value in (
+        generation["input"],
+        generation["output"],
+        generation["metadata"]["raw_completion"],
+        generation["metadata"]["raw_submit_claims"],
+        fhir["output"],
+        tool["input"],
+        tool["output"],
+        verify["input"],
+        fake.root["output"],
+    ):
+        assert "redacted" in repr(value).lower()
+    assert _CHART_TEXT not in repr(fake.root)
+    assert _CHART_TEXT not in repr(fake.observations)
 
 
-def test_pathological_content_flag_fails_closed_without_touching_the_value(monkeypatch):
-    """A non-boolean opt-in and an unserializable value must never bypass or break masking."""
+def test_operational_detail_values_cannot_smuggle_content() -> None:
+    """Allowlisted key names do not make free text, mappings, or multiline values safe."""
+
+    sink = langfuse_module.InMemoryTraceSink()
+    builder = RequestTracer(sink).begin(
+        langfuse_module.AccountabilityContext(
+            correlation_id="safe-correlation",
+            client_id="copilot",
+            exercised_scopes=("openid",),
+            request_url="https://agent/chat",
+            user_id="synthetic-user",
+            patient_id="synthetic-patient",
+            utc_timestamp="2026-07-15T00:00:00Z",
+        )
+    )
+    builder.step(
+        "llm.complete",
+        latency_ms=1.0,
+        status=_CHART_TEXT,
+        records={"patient": _CHART_TEXT},
+        missing_reason=_CHART_TEXT,
+        input_tokens=_CHART_TEXT,
+        stop_reason=f"tool_use\n{_CHART_TEXT}",
+        verdict=_CHART_TEXT,
+        claim_type=_CHART_TEXT,
+    )
+    builder.step(
+        f"tool.{_CHART_TEXT}",
+        latency_ms=1.0,
+        status="ok",
+    )
+    builder.record_verdict(_CHART_TEXT)
+    builder.record_verdict("pass")
+    trace = builder.finish(
+        model="claude-sonnet-4-6",
+        source="llm",
+        degraded=False,
+        fallback_kind=None,
+    )
+
+    assert [step.name for step in trace.steps] == ["llm.complete"]
+    assert trace.steps[0].detail == {}
+    assert trace.verdicts == ("pass",)
+    assert _CHART_TEXT not in repr(trace)
+
+
+def test_pathological_content_fails_closed_without_touching_the_value(monkeypatch):
+    """An unserializable value must never bypass or break unconditional masking."""
     class Poison:
         def __repr__(self):
             raise AssertionError("mask inspected marked content while disabled")
@@ -239,7 +298,7 @@ def test_pathological_content_flag_fails_closed_without_touching_the_value(monke
         def __str__(self):
             raise AssertionError("mask inspected marked content while disabled")
 
-    mask = langfuse_module._content_mask("true")  # type: ignore[arg-type]
+    mask = langfuse_module._content_mask()
     result = mask(data=langfuse_module._marked_content(Poison()))
     assert "redacted" in result.lower()
 
@@ -257,7 +316,7 @@ def test_pathological_content_flag_fails_closed_without_touching_the_value(monke
         })
         poison_steps.append(replace(step, detail=detail))
     trace = replace(_content_trace(), steps=tuple(poison_steps), served_output=poison)
-    sink, fake = _sink_with_fake(monkeypatch, log_content=False)
+    sink, fake = _sink_with_fake(monkeypatch)
     tracer = RequestTracer(sink)
 
     tracer._emit(trace)
@@ -271,7 +330,7 @@ def test_pathological_content_flag_fails_closed_without_touching_the_value(monke
 
 
 def test_live_scores_are_complete_and_phi_free_when_content_is_off(monkeypatch):
-    sink, fake = _sink_with_fake(monkeypatch, log_content=False)
+    sink, fake = _sink_with_fake(monkeypatch)
 
     sink.emit(_content_trace())
 
@@ -299,7 +358,7 @@ def test_live_scores_are_complete_and_phi_free_when_content_is_off(monkeypatch):
 
 
 def test_score_api_failure_never_drops_the_trace(monkeypatch):
-    sink, fake = _sink_with_fake(monkeypatch, log_content=False, fail_scores=True)
+    sink, fake = _sink_with_fake(monkeypatch, fail_scores=True)
     tracer = RequestTracer(sink)
 
     tracer._emit(_content_trace())

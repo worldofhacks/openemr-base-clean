@@ -53,3 +53,8 @@ class GraphState(TypedDict):
     evidence_snippets: tuple[str, ...]
     citations: tuple[str, ...]
     brief: BriefResult | None   # the W1 loop's answer, passed through unchanged (W2-D2)
+    pending_composition: object | None
+    critic_reviewed: bool
+    critic_approved: bool
+    critic_finalized: bool
+    critic_reason: str | None

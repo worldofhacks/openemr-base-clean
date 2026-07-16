@@ -15,6 +15,21 @@ import sys
 from typing import TextIO
 
 _CONFIGURED = False
+_SUPPRESSED_THIRD_PARTY_PREFIXES = (
+    "anthropic",
+    "asyncpg",
+    "httpcore",
+    "httpx",
+    "urllib3",
+    "uvicorn.access",
+)
+
+
+class _DropUnsafeThirdPartyLogs(logging.Filter):
+    """The application emits its own content-free dependency events."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not record.name.startswith(_SUPPRESSED_THIRD_PARTY_PREFIXES)
 
 
 class JsonFormatter(logging.Formatter):
@@ -43,7 +58,9 @@ class JsonFormatter(logging.Formatter):
             if key not in self._RESERVED and not key.startswith("_") and key not in payload:
                 payload[key] = value
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+            # Exception text and tracebacks can contain URLs, queries, or provider
+            # payloads. Preserve only the exception class for operational grouping.
+            payload["exception_type"] = record.exc_info[0].__name__
         return json.dumps(payload, default=str)
 
 
@@ -57,6 +74,7 @@ def configure_logging(stream: TextIO | None = None, level: int = logging.INFO) -
         root.removeHandler(handler)
     handler = logging.StreamHandler(stream or sys.stdout)
     handler.setFormatter(JsonFormatter())
+    handler.addFilter(_DropUnsafeThirdPartyLogs())
     root.addHandler(handler)
     _CONFIGURED = True
 

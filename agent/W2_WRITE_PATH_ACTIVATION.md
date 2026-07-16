@@ -269,13 +269,14 @@ DOCUMENT_WORKER_LEASE_SECONDS
 DOCUMENT_WORKER_MAX_ATTEMPTS
 DOCUMENT_WORKER_BASE_BACKOFF_SECONDS
 RERANKER
-LANGFUSE_LOG_CONTENT
 ```
 
 The worker also receives Railway project references—not fetched values—for the already
 managed web variables `ANTHROPIC_API_KEY`, `SESSION_STORE_DSN`, `LANGFUSE_HOST`,
 `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY`. `RERANKER=local`, so no Cohere secret is
-needed for activation.
+needed for activation. Langfuse receives aggregate accountability, latency, usage, cost, and
+verdict metadata only; prompts, transcripts, tool payloads, claims, and answers are always
+redacted and have no deployment override.
 
 Optional non-secret selector overrides exist for a non-production clone:
 

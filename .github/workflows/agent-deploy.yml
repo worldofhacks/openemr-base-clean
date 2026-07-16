@@ -72,7 +72,12 @@ jobs:
           test -n "$RAILWAY_TOKEN"
           worker_context="$RUNNER_TEMP/document-worker-context"
           mkdir -p "$worker_context"
-          git archive "$EVALUATED_SHA" agent | tar -x -C "$worker_context" --strip-components=1
+          git diff --quiet "$EVALUATED_SHA" -- agent
+          # Root export-ignore rules strip app/tools; copy only tracked files from the verified checkout.
+          git ls-files -z -- agent \
+            | tar --null --files-from=- --create --file=- \
+            | tar --extract --file=- --directory="$worker_context" --strip-components=1
+          test -f "$worker_context/app/tools/__init__.py"
           cp "$worker_context/railway.worker.json" "$worker_context/railway.json"
           test "$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["deploy"]["startCommand"])' "$worker_context/railway.json")" = "python -m app.ingestion.worker"
           railway="$GITHUB_WORKSPACE/.github/railway-cli/node_modules/.bin/railway"
@@ -85,7 +90,7 @@ jobs:
         run: |
           test -n "$RAILWAY_TOKEN"
           railway="../.github/railway-cli/node_modules/.bin/railway"
-          "$railway" up --service agent --ci --detach
+          "$railway" up --service agent --ci
       - name: Verify deployed SHA, health, readiness, and synthetic smoke
         env:
           EVALUATED_SHA: ${{ github.event.workflow_run.head_sha }}

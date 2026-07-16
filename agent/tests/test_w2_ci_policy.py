@@ -93,23 +93,35 @@ def test_deploy_installs_locked_cli_before_exposing_production_token() -> None:
 def test_deploy_uses_an_exact_sha_context_and_explicit_worker_config() -> None:
     workflow = _read(".github/workflows/agent-deploy.yml")
 
-    archive = 'git archive "$EVALUATED_SHA" agent'
+    exact_context = 'git diff --quiet "$EVALUATED_SHA" -- agent'
+    tracked_files = "git ls-files -z -- agent"
+    tracked_copy = "tar --null --files-from=- --create --file=-"
+    required_worker_module = 'test -f "$worker_context/app/tools/__init__.py"'
     worker_config = (
         'cp "$worker_context/railway.worker.json" '
         '"$worker_context/railway.json"'
     )
     worker_deploy = '"$railway" up --service document-worker --ci'
+    web_deploy = '"$railway" up --service agent --ci'
 
-    assert workflow.count('"$railway" up --service agent --ci --detach') == 1
+    assert "git archive" not in workflow
+    assert workflow.count(web_deploy) == 1
+    assert "--detach" not in workflow
     assert workflow.count(worker_deploy) == 1
-    assert archive in workflow
+    assert exact_context in workflow
+    assert tracked_files in workflow
+    assert tracked_copy in workflow
     assert '--strip-components=1' in workflow
+    assert required_worker_module in workflow
     assert worker_config in workflow
     assert '"deploy"]["startCommand"]' in workflow
-    assert workflow.index(archive) < workflow.index(worker_config) < workflow.index(
-        worker_deploy
+    assert (
+        workflow.index(exact_context)
+        < workflow.index(tracked_files)
+        < workflow.index(required_worker_module)
+        < workflow.index(worker_config)
+        < workflow.index(worker_deploy)
     )
-    web_deploy = '"$railway" up --service agent --ci --detach'
     assert workflow.index(worker_deploy) < workflow.index(web_deploy)
     assert worker_deploy + " --detach" not in workflow
     assert workflow.count('set "DEPLOYMENT_SHA=$EVALUATED_SHA" --skip-deploys') == 2

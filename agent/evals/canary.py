@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable
+from datetime import datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -73,6 +74,50 @@ def _clinical_strings(value: Any) -> Iterable[str]:
 
 _DATE_SIG = re.compile(r"^\d{4}-\d{1,2}-\d{1,2}$|^\d{1,2}/\d{1,2}/\d{2,4}$")
 _NUMERIC_SIG = re.compile(r"^-?\d[\d,]*\.?\d*$")
+_UTC_TIMESTAMP_SIG = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$"
+)
+_OPERATIONAL_TIMESTAMP = "<operational-utc-timestamp>"
+
+
+def _is_utc_timestamp(value: str) -> bool:
+    """Return true only for a real, timezone-qualified instant at UTC offset zero."""
+
+    if not _UTC_TIMESTAMP_SIG.fullmatch(value):
+        return False
+    try:
+        normalized = (
+            value.removesuffix("Z") + "+00:00" if value.endswith("Z") else value
+        )
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return False
+    return parsed.utcoffset() == timedelta(0)
+
+
+def _sanitize_trace_metadata(value: Any) -> Any:
+    """Remove only typed operational timestamps before clinical signature matching.
+
+    Clock minute/second components are ordinary trace metadata and can equal a short
+    clinical number by coincidence.  The exemption is deliberately narrow: it applies only
+    to the direct, closed ``utc_timestamp`` field on a top-level trace record and only when
+    it contains a real UTC instant.  Nested values, free text, unknown keys, date-only
+    values, and malformed or non-UTC timestamps remain scannable.
+    """
+
+    if not isinstance(value, list):
+        return value
+    sanitized: list[Any] = []
+    for trace in value:
+        if not isinstance(trace, dict):
+            sanitized.append(trace)
+            continue
+        record = dict(trace)
+        timestamp = record.get("utc_timestamp")
+        if isinstance(timestamp, str) and _is_utc_timestamp(timestamp):
+            record["utc_timestamp"] = _OPERATIONAL_TIMESTAMP
+        sanitized.append(record)
+    return sanitized
 
 
 def _is_short_phi_value(value: str) -> bool:
@@ -162,7 +207,10 @@ def scan_generated_surfaces(
     leak_channels: list[str] = []
     match_count = 0
     for channel in _CHANNELS:
-        channel_matches = _contains_leak(_serialize(targets[channel]), phrases, tokens)
+        target = targets[channel]
+        if channel == "traces":
+            target = _sanitize_trace_metadata(target)
+        channel_matches = _contains_leak(_serialize(target), phrases, tokens)
         if channel_matches:
             leak_channels.append(channel)
             match_count += channel_matches

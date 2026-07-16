@@ -39,6 +39,10 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: agent/pyproject.toml
+      - name: Install OCR runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng
       - name: Install pinned quality tools and agent
         run: |
           python -m pip install --disable-pip-version-check -e '.[dev]'
@@ -125,6 +129,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24'
+      - name: Install OCR runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng
       - name: Install agent
         run: python -m pip install --disable-pip-version-check -e '.[dev]'
       - name: Pin Bruno CLI and validate committed contracts

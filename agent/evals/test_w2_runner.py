@@ -594,6 +594,8 @@ async def test_live_time_ceiling_is_inconclusive(
 def test_ci_live_cli_requires_canonical_reviewed_baseline(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    missing_baseline = tmp_path / "missing-canonical-baseline.json"
+    monkeypatch.setattr(w2_runner, "DEFAULT_BASELINE", missing_baseline)
     monkeypatch.setenv("CI", "true")
     output = tmp_path / "result.json"
     assert main(["run", "--tier", "live", "--output", str(output)]) == 2

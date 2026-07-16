@@ -3,8 +3,8 @@
   "tier": "live",
   "case_count": 50,
   "manifest_sha256": "c847a5443e8b45bbd8e1b5b69b4f48fc39a9d11479d68b28a653a9f4f7410cd2",
-  "source_sha": "9f95ad5e78352d838b0c06a6c1f9081619403efb",
-  "generated_from_result_sha256": "36250317dd9d76394659b66f51218acf8a85e5d9fd8a3ef67e45c7506d919c21",
+  "source_sha": "60597031142d269a79ab3a8aa0e3537cc6c6f90b",
+  "generated_from_result_sha256": "061b668706e1e35f07b47a112282e36dd8c708f97112ebe9e3f350b7e0404ae2",
   "categories": [
     {
       "rubric": "schema_valid",

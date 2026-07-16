@@ -37,8 +37,23 @@ jobs:
       - name: Install locked Railway CLI without deployment credentials
         run: |
           npm ci --ignore-scripts --prefix .github/railway-cli
+          test "$(node -p "require('./.github/railway-cli/node_modules/@railway/cli/package.json').version")" = "5.26.1"
+          test "$(node -p "require('./.github/railway-cli/node_modules/tar/package.json').version")" = "7.5.20"
+          cli_dir=.github/railway-cli/node_modules/@railway/cli/bin
+          archive="$RUNNER_TEMP/railway-v5.26.1-x86_64-unknown-linux-gnu.tar.gz"
+          test -d "$cli_dir"
+          test ! -e "$cli_dir/railway"
+          curl --proto '=https' --tlsv1.2 --fail --show-error --silent --location --retry 3 \
+            'https://github.com/railwayapp/cli/releases/download/v5.26.1/railway-v5.26.1-x86_64-unknown-linux-gnu.tar.gz' \
+            --output "$archive"
+          printf '%s  %s\n' '7ab32701c4da05eafd0e2a956b441bea581d61def9a0689d9c35d2759e6f3640' "$archive" | sha256sum -c -
+          test "$(tar -tzf "$archive")" = "railway"
+          tar -xzf "$archive" -C "$cli_dir" railway
+          test -f "$cli_dir/railway"
+          test -x "$cli_dir/railway"
+          test ! -L "$cli_dir/railway"
+          test "$(.github/railway-cli/node_modules/.bin/railway --version)" = "railway 5.26.1"
           npm audit --audit-level=high --prefix .github/railway-cli
-          .github/railway-cli/node_modules/.bin/railway --version
       - name: Configure exact source identity for both services
         working-directory: agent
         env:

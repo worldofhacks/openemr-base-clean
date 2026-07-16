@@ -53,12 +53,40 @@ def test_new_agent_workflows_pin_third_party_actions_to_commits() -> None:
 def test_deploy_installs_locked_cli_before_exposing_production_token() -> None:
     workflow = _read(".github/workflows/agent-deploy.yml")
     package = json.loads(_read(".github/railway-cli/package.json"))
+    lock = json.loads(_read(".github/railway-cli/package-lock.json"))
+    install = workflow.split(
+        "- name: Install locked Railway CLI without deployment credentials",
+        maxsplit=1,
+    )[1].split("- name: Configure exact source identity", maxsplit=1)[0]
 
     assert "npx" not in workflow
-    assert "npm ci --ignore-scripts --prefix .github/railway-cli" in workflow
-    assert workflow.index("npm ci --ignore-scripts") < workflow.index("RAILWAY_TOKEN")
+    assert "RAILWAY_TOKEN" not in install
+    assert "npm ci --ignore-scripts --prefix .github/railway-cli" in install
+    assert "npm rebuild" not in install
+    assert "npm run" not in install
+    assert "npm install" not in install
+    assert re.search(r"curl[^\n]*\|\s*(?:ba)?sh", install) is None
+    assert "railway-v5.26.1-x86_64-unknown-linux-gnu.tar.gz" in install
+    assert "7ab32701c4da05eafd0e2a956b441bea581d61def9a0689d9c35d2759e6f3640" in install
+    assert 'test "$(tar -tzf "$archive")" = "railway"' in install
+    assert 'test ! -L "$cli_dir/railway"' in install
+    assert 'railway --version)" = "railway 5.26.1"' in install
+    assert install.index("npm ci --ignore-scripts") < install.index("curl --proto")
+    assert install.index("curl --proto") < install.index("sha256sum -c -")
+    assert install.index("sha256sum -c -") < install.index("tar -xzf")
+    assert install.index("tar -xzf") < install.index("railway --version")
+    assert install.index("railway --version") < install.index("npm audit")
+    assert workflow.index("npm audit") < workflow.index("RAILWAY_TOKEN")
     assert package["dependencies"]["@railway/cli"] == "5.26.1"
     assert package["overrides"]["tar"] == "7.5.20"
+    cli_lock = lock["packages"]["node_modules/@railway/cli"]
+    tar_lock = lock["packages"]["node_modules/tar"]
+    assert cli_lock["version"] == "5.26.1"
+    assert cli_lock["integrity"] == (
+        "sha512-fMue1EcqsBldpvataux1lT6Fp68MqvurAQNEy2ZfNQLaikgfz2VwpU/"
+        "QSA5qs9HYQsC1QuTr4O5svL/sUmIcPA=="
+    )
+    assert tar_lock["version"] == "7.5.20"
     assert (_ROOT / ".github/railway-cli/package-lock.json").is_file()
 
 

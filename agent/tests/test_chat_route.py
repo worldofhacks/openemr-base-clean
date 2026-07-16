@@ -8,16 +8,14 @@ Services are injected on `app.state.services`, so no live OpenEMR / Anthropic is
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
 from app.evidence.packet import build_evidence_packet
 from app.llm.provider import LLMResponse, ToolUseBlock, Usage
-from app.orchestrator.loop import BriefResult, Orchestrator, ToolRegistry
+from app.orchestrator.loop import Orchestrator, ToolRegistry
 from app.session.store import (
-    CrossPatientError,
     Session,
     SessionExpiredError,
     SessionNotFound,
@@ -111,3 +109,25 @@ def test_chat_cross_patient_request_refused_403(complete_env):
     client = _client(_FakeServices(session=_session()), complete_env)
     resp = client.post("/chat", json={"session_id": "sess-1", "patient_id": "some-other-patient"})
     assert resp.status_code == 403  # the session pin refuses a different patient (F-S.2)
+
+
+def test_chat_rejects_oversized_character_input_before_session_or_model(complete_env):
+    client = _client(_FakeServices(session=_session()), complete_env)
+
+    response = client.post(
+        "/chat",
+        json={"session_id": "sess-1", "message": "x" * 4_001},
+    )
+
+    assert response.status_code == 422
+
+
+def test_chat_rejects_oversized_multibyte_input_before_session_or_model(complete_env):
+    client = _client(_FakeServices(session=_session()), complete_env)
+
+    response = client.post(
+        "/chat",
+        json={"session_id": "sess-1", "message": "😀" * 3_001},
+    )
+
+    assert response.status_code == 422

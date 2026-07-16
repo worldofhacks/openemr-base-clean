@@ -22,7 +22,11 @@ T = TypeVar("T")
 # minus sign carry value. Stripping them (final-review CRITICAL, W2-D3/§5) let numerically
 # DISTINCT clinical values collapse to one token — '6.5' grounded against a page reading
 # '65' (a 10x error) and reached the chart write. Only true separators are removed.
-_NON_ALNUM = re.compile(r"[^0-9a-z.\-]+")
+# Percent is itself a clinically meaningful unit token.  Dropping it made a source
+# value such as ``6.5 %`` impossible to ground through the production verifier even
+# when the page carried an exact ``%`` word box.  Keep it alongside the already
+# preserved decimal point and sign; other punctuation remains a separator.
+_NON_ALNUM = re.compile(r"[^0-9a-z.%\-]+")
 # A comma between two digits is a thousands separator: '1,000' and '1000' are the SAME
 # number and must still match. Every other comma is a separator and is dropped by _NON_ALNUM.
 _THOUSANDS_COMMA = re.compile(r"(?<=\d),(?=\d)")

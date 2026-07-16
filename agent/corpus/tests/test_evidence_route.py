@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -18,11 +21,46 @@ from app.schemas.retrieval import (
     EvidenceSearchRequest as CanonicalEvidenceSearchRequest,
     EvidenceSearchResponse as CanonicalEvidenceSearchResponse,
 )
+from app.session.store import (
+    Session,
+    SessionExpiredError,
+    SessionNotFound,
+    SessionStoreUnavailable,
+)
 from corpus.retrieval import EvidenceHit, RetrievalOutcome, RetrievalUnavailableError
 
 
 MANIFEST_HASH = "a" * 64
 CORPUS_VERSION = f"vadod-cpg-trio@{MANIFEST_HASH}"
+SESSION_ID = "session-synthetic"
+
+
+def _session() -> Session:
+    now = datetime.now(timezone.utc)
+    return Session(
+        session_id=SESSION_ID,
+        clinician_sub="clinician-synthetic",
+        patient_id="patient-synthetic",
+        created_at=now,
+        last_activity_at=now,
+        token_expires_at=now + timedelta(hours=1),
+        idle_timeout_s=1800,
+        turn_cap=20,
+    )
+
+
+class _FakeServices:
+    def __init__(self, *, error: Exception | None = None) -> None:
+        self.error = error
+        self.calls: list[str] = []
+
+    async def resolve_session(self, session_id: str) -> Session:
+        self.calls.append(session_id)
+        if self.error is not None:
+            raise self.error
+        if session_id != SESSION_ID:
+            raise SessionNotFound(session_id)
+        return _session()
 
 
 class _FakeRetriever:
@@ -62,12 +100,24 @@ class _FakeRetriever:
         )
 
 
-def _client(retriever: _FakeRetriever) -> TestClient:
+def _client(
+    retriever: _FakeRetriever,
+    *,
+    services: _FakeServices | None = None,
+    limiter: evidence.EvidenceRequestLimiter | None = None,
+) -> TestClient:
     app = FastAPI()
     app.state.evidence_retriever = retriever
+    app.state.services = services or _FakeServices()
+    if limiter is not None:
+        app.state.evidence_request_limiter = limiter
     app.add_middleware(CorrelationIdMiddleware)
     app.include_router(evidence.router)
     return TestClient(app)
+
+
+def _headers(**extra: str) -> dict[str, str]:
+    return {"X-Copilot-Session-Id": SESSION_ID, **extra}
 
 
 def test_models_are_named_strict_and_field_for_field_typed() -> None:
@@ -127,7 +177,7 @@ def test_search_route_returns_typed_items_and_correlation_id() -> None:
     response = client.post(
         "/evidence/search",
         json={"query": "hypertension blood pressure", "k": 3},
-        headers={"X-Copilot-Request-Id": "corr-evidence-1"},
+        headers=_headers(**{"X-Copilot-Request-Id": "corr-evidence-1"}),
     )
     assert response.status_code == 200
     body = response.json()
@@ -144,6 +194,10 @@ def test_openapi_uses_named_request_and_response_models() -> None:
     response_ref = operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
     assert request_ref.endswith("/EvidenceSearchRequest")
     assert response_ref.endswith("/EvidenceSearchResponse")
+    assert [
+        (parameter["name"].casefold(), parameter["in"], parameter["required"])
+        for parameter in operation["parameters"]
+    ] == [("x-copilot-session-id", "header", True)]
 
 
 def test_request_bounds_extra_fields_and_phi_are_rejected_before_retrieval() -> None:
@@ -153,24 +207,32 @@ def test_request_bounds_extra_fields_and_phi_are_rejected_before_retrieval() -> 
         {"query": "hypertension", "k": 0},
         {"query": "hypertension", "k": K_MAX + 1},
         {"query": "hypertension", "k": "not-an-int"},
+        {"query": "x" * 181, "k": 3},
         {"query": "What should I tell my patient?", "k": 3},
         {"query": "hypertension MRN AB123456", "k": 3},
         {"query": "hypertension", "k": 3, "patient_id": "synthetic"},
     ]
     for payload in bad_payloads:
-        assert client.post("/evidence/search", json=payload).status_code == 422
+        assert (
+            client.post("/evidence/search", json=payload, headers=_headers()).status_code
+            == 422
+        )
     assert retriever.calls == []
 
 
 def test_healthy_empty_is_200_but_unavailable_index_is_503() -> None:
     empty = _client(_FakeRetriever(empty=True)).post(
-        "/evidence/search", json={"query": "xylophonemia", "k": 3}
+        "/evidence/search",
+        json={"query": "xylophonemia", "k": 3},
+        headers=_headers(),
     )
     assert empty.status_code == 200
     assert empty.json()["items"] == []
 
     unavailable = _client(_FakeRetriever(unavailable=True)).post(
-        "/evidence/search", json={"query": "hypertension", "k": 3}
+        "/evidence/search",
+        json={"query": "hypertension", "k": 3},
+        headers=_headers(),
     )
     assert unavailable.status_code == 503
     assert unavailable.json()["detail"] == "guideline retrieval unavailable"
@@ -180,10 +242,78 @@ def test_import_is_lazy_and_does_not_initialize_models_or_network() -> None:
     assert evidence._default_retriever is None
 
 
+@pytest.mark.parametrize(
+    ("error", "expected_status"),
+    [
+        (SessionNotFound("synthetic"), 404),
+        (SessionExpiredError("synthetic"), 401),
+        (SessionStoreUnavailable("synthetic"), 503),
+    ],
+)
+def test_session_is_required_and_failures_never_reach_retrieval(
+    error: Exception, expected_status: int
+) -> None:
+    retriever = _FakeRetriever()
+    client = _client(retriever, services=_FakeServices(error=error))
+    missing = client.post(
+        "/evidence/search", json={"query": "hypertension", "k": 2}
+    )
+    assert missing.status_code == 422
+
+    refused = client.post(
+        "/evidence/search",
+        json={"query": "hypertension", "k": 2},
+        headers=_headers(),
+    )
+    assert refused.status_code == expected_status
+    assert retriever.calls == []
+
+
+def test_rate_limit_is_content_free_and_precedes_retrieval() -> None:
+    retriever = _FakeRetriever()
+    limiter = evidence.EvidenceRequestLimiter(
+        max_requests=1,
+        window_seconds=60,
+        max_concurrent=1,
+        max_sessions=4,
+        idle_ttl_seconds=60,
+    )
+    client = _client(retriever, limiter=limiter)
+    payload = {"query": "hypertension", "k": 2}
+    assert client.post("/evidence/search", json=payload, headers=_headers()).status_code == 200
+
+    refused = client.post("/evidence/search", json=payload, headers=_headers())
+    assert refused.status_code == 429
+    assert refused.json() == {"detail": "evidence request limit exceeded"}
+    assert refused.headers["retry-after"] == "60"
+    assert retriever.calls == [("hypertension", 2, ())]
+    assert SESSION_ID not in refused.text
+    assert "hypertension" not in refused.text
+
+
+def test_limiter_rejects_concurrent_work_for_the_same_session() -> None:
+    limiter = evidence.EvidenceRequestLimiter(
+        max_requests=4,
+        window_seconds=60,
+        max_concurrent=1,
+        max_sessions=4,
+        idle_ttl_seconds=60,
+    )
+
+    async def exercise() -> None:
+        async with limiter.slot(SESSION_ID):
+            with pytest.raises(evidence.EvidenceRequestLimitExceeded):
+                async with limiter.slot(SESSION_ID):
+                    pytest.fail("a concurrent slot should not be admitted")
+
+    asyncio.run(exercise())
+
+
 def test_request_scoped_demographics_reach_the_final_egress_screen() -> None:
     retriever = _FakeRetriever()
     app = FastAPI()
     app.state.evidence_retriever = retriever
+    app.state.services = _FakeServices()
 
     @app.middleware("http")
     async def attach_demographics(request, call_next):
@@ -192,7 +322,9 @@ def test_request_scoped_demographics_reach_the_final_egress_screen() -> None:
 
     app.include_router(evidence.router)
     response = TestClient(app).post(
-        "/evidence/search", json={"query": "hypertension", "k": 2}
+        "/evidence/search",
+        json={"query": "hypertension", "k": 2},
+        headers=_headers(),
     )
     assert response.status_code == 200
     assert retriever.calls == [
@@ -202,7 +334,9 @@ def test_request_scoped_demographics_reach_the_final_egress_screen() -> None:
 
 def test_defensive_query_rejection_is_a_typed_422_not_a_500() -> None:
     response = _client(_FakeRetriever(reject_query=True)).post(
-        "/evidence/search", json={"query": "hypertension", "k": 2}
+        "/evidence/search",
+        json={"query": "hypertension", "k": 2},
+        headers=_headers(),
     )
     assert response.status_code == 422
     assert response.json()["detail"] == "query must contain PHI-free condition/test terms only"

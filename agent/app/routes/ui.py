@@ -253,6 +253,25 @@ _PAGE = """<!doctype html>
   }
 
   // ---- citation popover ----
+  var CITATION_LABELS = Object.freeze({
+    patient_record: 'Chart',
+    uploaded_document: 'Uploaded document',
+    guideline: 'Guideline'
+  });
+  function validCitation(citation) {
+    if (!citation || typeof citation !== 'object' || Array.isArray(citation)) return false;
+    if (!Object.prototype.hasOwnProperty.call(CITATION_LABELS, citation.source_type)) return false;
+    if (typeof citation.source_id !== 'string' || !citation.source_id.trim()) return false;
+    if (typeof citation.field_or_chunk_id !== 'string' || !citation.field_or_chunk_id.trim()) return false;
+    if (typeof citation.quote_or_value !== 'string' || !citation.quote_or_value.trim()) return false;
+    if (citation.source_type === 'patient_record') return citation.page_or_section === null;
+    return typeof citation.page_or_section === 'string' && Boolean(citation.page_or_section.trim());
+  }
+  function citationLabel(citation) { return CITATION_LABELS[citation.source_type]; }
+  function compactEvidenceKey(citation) {
+    var key = citation.field_or_chunk_id;
+    return key.length > 22 ? '…' + key.slice(-21) : key;
+  }
   var pop = null, popChip = null, popOpenedAt = 0;
   function closePop() { if (pop) { pop.remove(); pop = null; popChip = null; } }
   document.addEventListener('click', function (e) { if (pop && !e.target.classList.contains('chip')) closePop(); });
@@ -261,21 +280,25 @@ _PAGE = """<!doctype html>
   // the brief scroll-into-view that can accompany the opening click — else the click that opens
   // the popover immediately closes it when the chip was below the fold.
   log.addEventListener('scroll', function () { if (pop && Date.now() - popOpenedAt > 350) closePop(); }, true);
-  function showPop(chip, cid) {
+  function showPop(chip, citation) {
+    if (!validCitation(citation)) return;
     if (popChip === chip) { closePop(); return; }   // clicking the same chip toggles it off
     closePop();
-    var parts = String(cid).split(':');
-    var type = parts[0] || 'Reference', hash = parts[parts.length - 1] || cid;
-    var srcId = parts.length > 2 ? parts.slice(1, -1).join(':') : (parts[1] || '');
-    // Build with DOM + textContent (never innerHTML): evidence ids flow from external FHIR
-    // data, so they are treated as untrusted — textContent neutralizes any markup in them.
+    // Build with DOM + textContent: every citation value is treated as untrusted data.
     pop = el('pop'); popChip = chip; popOpenedAt = Date.now();
-    var title = el(null, type + ' — chart record'); title.style.cssText = 'font-weight:700;margin-bottom:4px';
+    var suffix = citation.source_type === 'patient_record' ? ' — chart record' : ' — cited evidence';
+    var title = el(null, citationLabel(citation) + suffix); title.style.cssText = 'font-weight:700;margin-bottom:4px';
     pop.appendChild(title);
     var r1 = el(null); r1.appendChild(document.createTextNode('source id: '));
-    r1.appendChild(elt('span', 'pk', srcId || '(synthetic)')); pop.appendChild(r1);
-    var r2 = el(null); r2.appendChild(document.createTextNode('evidence key: '));
-    r2.appendChild(elt('span', 'pk', hash)); pop.appendChild(r2);
+    r1.appendChild(elt('span', 'pk', citation.source_id)); pop.appendChild(r1);
+    if (citation.page_or_section !== null) {
+      var location = el(null); location.appendChild(document.createTextNode('page / section: '));
+      location.appendChild(elt('span', 'pk', citation.page_or_section)); pop.appendChild(location);
+    }
+    var r2 = el(null); r2.appendChild(document.createTextNode('field / chunk: '));
+    r2.appendChild(elt('span', 'pk', citation.field_or_chunk_id)); pop.appendChild(r2);
+    var r3 = el(null); r3.appendChild(document.createTextNode('verified value: '));
+    r3.appendChild(elt('span', 'pk', citation.quote_or_value)); pop.appendChild(r3);
     var note = el(null, '✓ this line was verified field-by-field against this record');
     note.style.cssText = 'margin-top:5px;color:#9fd0a8'; pop.appendChild(note);
     document.body.appendChild(pop);
@@ -289,7 +312,7 @@ _PAGE = """<!doctype html>
   // ---- render one assistant brief ----
   function renderAssistant(card, data) {
     setHeader(data.patient);
-    card.className = 'brief'; card.innerHTML = '';
+    card.className = 'brief'; card.replaceChildren();
 
     var verdicts = data.verdicts || [];
     var verified = verdicts.filter(function (v) { return v === 'pass' || v === 'flagged'; }).length;
@@ -347,15 +370,15 @@ _PAGE = """<!doctype html>
     if (!totalItems) body.appendChild(el('meta', 'No verified clinical lines to display — see the note above.'));
 
     // citation chips (clickable + keyboard-accessible; full id on hover)
-    var cites = data.citations || [];
+    var cites = (Array.isArray(data.citations) ? data.citations : []).filter(validCitation);
     if (cites.length) {
       var cw = el('cites'); cw.appendChild(el('lbl', 'Evidence:'));
-      cites.slice(0, 30).forEach(function (c) {
-        var parts = String(c).split(':'); var type = parts[0] || 'ref'; var hash = parts[parts.length - 1] || c;
-        var chip = el('chip', type + ' · ' + hash);
-        chip.title = c; chip.tabIndex = 0; chip.setAttribute('role', 'button');
-        chip.onclick = function (e) { e.stopPropagation(); showPop(chip, c); };
-        chip.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showPop(chip, c); } };
+      cites.slice(0, 30).forEach(function (citation) {
+        var chip = el('chip', citationLabel(citation) + ' · ' + compactEvidenceKey(citation));
+        chip.title = citation.source_id + ' · ' + citation.field_or_chunk_id;
+        chip.tabIndex = 0; chip.setAttribute('role', 'button');
+        chip.onclick = function (e) { e.stopPropagation(); showPop(chip, citation); };
+        chip.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showPop(chip, citation); } };
         cw.appendChild(chip);
       });
       if (cites.length > 30) cw.appendChild(el('chip', '+' + (cites.length - 30) + ' more'));
@@ -374,7 +397,7 @@ _PAGE = """<!doctype html>
     'Rendering the verified brief'
   ];
   function renderLoading(card) {
-    card.className = 'brief'; card.innerHTML = '';
+    card.className = 'brief'; card.replaceChildren();
     var head = el('head'); head.appendChild(el('title', 'Preparing pre-visit brief…')); card.appendChild(head);
     var body = el('body'); var ul = elt('ul', 'steps');
     LOAD_STEPS.forEach(function (s, i) {
@@ -401,7 +424,7 @@ _PAGE = """<!doctype html>
     log.scrollTop = log.scrollHeight;
   }
   function renderError(card, msg) {
-    card.className = 'brief'; card.innerHTML = '';
+    card.className = 'brief'; card.replaceChildren();
     var b = el('body'); b.style.color = '#b3261e';
     b.appendChild(el(null, '⚠ ' + msg)); card.appendChild(b);
   }

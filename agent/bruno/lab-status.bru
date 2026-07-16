@@ -1,0 +1,54 @@
+meta {
+  name: Bounded lab status poll
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{agent_base_url}}/documents/{{lab_document_id}}/status?session_id={{session_id}}
+  body: none
+  auth: none
+}
+
+tests {
+  test("status uses the closed processing vocabulary", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody().state).to.be.oneOf([
+      "storing",
+      "reconciling",
+      "queued",
+      "extracting",
+      "grounding",
+      "writing",
+      "complete",
+      "failed"
+    ]);
+  });
+
+  test("poll remains bound to the uploaded document", function () {
+    expect(res.getBody().document_id).to.equal(bru.getVar("lab_document_id"));
+  });
+}
+
+script:post-response {
+  const body = res.getBody();
+  const terminal = ["complete", "failed"];
+  const attempts = Number(bru.getVar("lab_poll_attempts") || 0) + 1;
+  bru.setVar("lab_poll_attempts", attempts);
+
+  if (!terminal.includes(body.state) && attempts < 30) {
+    await bru.sleep(1000);
+    bru.setNextRequest("Bounded lab status poll");
+  } else if (!terminal.includes(body.state)) {
+    throw new Error("lab job did not reach a terminal state within 30 bounded polls");
+  } else if (body.state === "failed") {
+    throw new Error("lab job reached the typed failed state");
+  } else {
+    bru.deleteVar("lab_poll_attempts");
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 180000
+}

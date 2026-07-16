@@ -26,7 +26,11 @@ from app.llm.provider import (
     LLMTimeout,
     ToolUseBlock,
 )
-from app.schemas.extraction import IntakeFormExtraction, LabPdfExtraction
+from app.schemas.extraction import (
+    IntakeFormExtraction,
+    LabPdfExtraction,
+    MedicationListExtraction,
+)
 
 
 class VlmTimeout(TimeoutError):
@@ -63,10 +67,16 @@ _SYSTEM = (
 
 _SCHEMAS: dict[
     DocumentType,
-    tuple[str, type[LabPdfExtraction] | type[IntakeFormExtraction]],
+    tuple[
+        str,
+        type[LabPdfExtraction]
+        | type[IntakeFormExtraction]
+        | type[MedicationListExtraction],
+    ],
 ] = {
     "lab_pdf": ("extract_lab_pdf", LabPdfExtraction),
     "intake_form": ("extract_intake_form", IntakeFormExtraction),
+    "medication_list": ("extract_medication_list", MedicationListExtraction),
 }
 
 
@@ -103,7 +113,11 @@ def _validated_mapping(
     block: ToolUseBlock,
     *,
     expected_name: str,
-    expected_schema: type[LabPdfExtraction] | type[IntakeFormExtraction],
+    expected_schema: (
+        type[LabPdfExtraction]
+        | type[IntakeFormExtraction]
+        | type[MedicationListExtraction]
+    ),
     source_document_id: str,
 ) -> Mapping[str, object]:
     if block.name != expected_name or not isinstance(block.input, dict):

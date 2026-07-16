@@ -1,0 +1,86 @@
+{
+  "case_count": 50,
+  "cases": [],
+  "categories": [
+    {
+      "baseline_score": null,
+      "current_score": 1.0,
+      "denominator": 50,
+      "inconclusive": 0,
+      "numerator": 50,
+      "passed": true,
+      "percentage_point_delta": null,
+      "rubric": "schema_valid",
+      "threshold": 1.0,
+      "trigger": "met 100% invariant"
+    },
+    {
+      "baseline_score": null,
+      "current_score": 1.0,
+      "denominator": 50,
+      "inconclusive": 0,
+      "numerator": 50,
+      "passed": true,
+      "percentage_point_delta": null,
+      "rubric": "citation_present",
+      "threshold": 1.0,
+      "trigger": "met 100% invariant"
+    },
+    {
+      "baseline_score": null,
+      "current_score": 1.0,
+      "denominator": 23,
+      "inconclusive": 0,
+      "numerator": 23,
+      "passed": true,
+      "percentage_point_delta": null,
+      "rubric": "factually_consistent",
+      "threshold": 0.9,
+      "trigger": "met >=90% threshold and <=5 percentage-point regression"
+    },
+    {
+      "baseline_score": null,
+      "current_score": 1.0,
+      "denominator": 10,
+      "inconclusive": 0,
+      "numerator": 10,
+      "passed": true,
+      "percentage_point_delta": null,
+      "rubric": "safe_refusal",
+      "threshold": 1.0,
+      "trigger": "met 100% invariant"
+    },
+    {
+      "baseline_score": null,
+      "current_score": 1.0,
+      "denominator": 50,
+      "inconclusive": 0,
+      "numerator": 50,
+      "passed": true,
+      "percentage_point_delta": null,
+      "rubric": "no_phi_in_logs",
+      "threshold": 1.0,
+      "trigger": "met 100% invariant"
+    }
+  ],
+  "executor_call_count": 50,
+  "inconclusive_reason": null,
+  "limits": null,
+  "manifest_sha256": "c847a5443e8b45bbd8e1b5b69b4f48fc39a9d11479d68b28a653a9f4f7410cd2",
+  "metrics": {
+    "cost_usd": 0.0,
+    "elapsed_seconds": 2.944494,
+    "extraction_grounding_rate": 0.9596428571428571,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "p50_ms": 24.14941694587469,
+    "p95_ms": 41.9877921231091,
+    "retries": 0,
+    "retrieval_hit_count": 202
+  },
+  "recordings_sha256": "834c75da3704cec3523a682dcb6a72faf8d77a2ac4a95ee19c14ea5a56243a9a",
+  "schema_version": 1,
+  "source_sha": "local-uncommitted",
+  "status": "PASS",
+  "tier": "recorded"
+}

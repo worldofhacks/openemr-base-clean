@@ -9,10 +9,13 @@ Uvicorn process writes the source/enqueues but never claims clinical jobs.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import secrets
 import threading
+import time
+from collections import deque
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,6 +27,11 @@ from app.auth.scopes import (
     requested_scope_string,
     requested_w2_scope_string,
 )
+from app.auth.job_credentials import (
+    JobCredentialAuthExpired,
+    JobCredentialBindingError,
+    JobCredentialUnavailable,
+)
 from app.auth.smart_client import SmartClient, TokenResponse, generate_pkce
 from app.config import Settings
 from app.evidence.packet import build_evidence_packet
@@ -34,19 +42,27 @@ from app.health import DependencyResult
 from app.llm.cost import DailyCostCap
 from app.llm.provider import AnthropicLLMProvider
 from app.middleware.correlation import correlation_id_var
-from app.observability.langfuse import LangfuseSink, NullTraceSink, RequestTracer
+from app.observability.langfuse import (
+    LangfuseSink,
+    NullTraceSink,
+    RequestTracer,
+    TraceSink,
+)
+from app.observability.events import EventEmitter, EventSink, NullEventSink
 from app.observability.trace import AccountabilityContext
 from app.orchestrator import graph as orchestrator_graph
 from app.orchestrator.loop import BriefResult, Orchestrator, ToolRegistry
 from app.orchestrator.refs import CompositeRefResolver, RefResolver, TurnRefRegistry
 from app.orchestrator.workers.extraction_adapter import build_extraction_worker
 from app.orchestrator.workers.evidence_retriever import build_evidence_worker
+from app.schemas.answers import GroundedAnswerContext
 from app.schemas.retrieval import EvidenceSearchRequest
 from app.schemas.workers import WorkerInput, WorkerOutput
 from app.session.store import PostgresSessionStore, Session
 from app.tools.fhir_client import FhirClient
 from app.tools.fhir_tools import run_previsit_fanout
 from app.writeback.route_attestations import RouteAttestationNotFound
+from app.writeback.live_gateway import PatientRouteMismatch
 from corpus.retrieval import (
     HybridRetriever,
     QueryContractError,
@@ -64,21 +80,34 @@ class _PendingLaunch:
 
     verifier: str
     destination: LaunchDestination
+    created_monotonic: float
 
 
-def _build_tracer(settings: Settings) -> RequestTracer:
+class LaunchRateLimited(RuntimeError):
+    """Too many OAuth launch attempts reached one serving instance."""
+
+
+_PENDING_LAUNCH_TTL_SECONDS = 300.0
+_MAX_PENDING_LAUNCHES = 256
+_LAUNCH_RATE_WINDOW_SECONDS = 60.0
+_MAX_LAUNCHES_PER_WINDOW = 60
+
+
+def _build_tracer(
+    settings: Settings, *, events: EventEmitter | None = None
+) -> RequestTracer:
+    sink: TraceSink
     if settings.langfuse_public_key and settings.langfuse_secret_key:
         sink = LangfuseSink(
             host=str(settings.langfuse_host) if settings.langfuse_host else None,
             public_key=settings.langfuse_public_key.get_secret_value(),
             secret_key=settings.langfuse_secret_key.get_secret_value(),
-            log_content=settings.langfuse_log_content,
         )
     else:
         sink = (
             NullTraceSink()
         )  # observability optional (§6 soft dep) — serving is unaffected
-    return RequestTracer(sink)
+    return RequestTracer(sink, events=events)
 
 
 def _build_job_credential_vault(*, settings: Settings, connect, smart: SmartClient):
@@ -126,13 +155,8 @@ async def _pg_connect(dsn: str):
     return await asyncpg.connect(dsn)
 
 
-def _fhir_trace_content(result) -> dict:
-    """Exact typed FHIR tool result for D16 tracing; the sink mask owns disclosure policy."""
-    return result.model_dump(mode="json")
-
-
 class AgentServices:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, *, event_sink: EventSink | None = None):
         self.settings = settings
         oauth = str(settings.openemr_oauth_base_url).rstrip("/")
         self.smart = SmartClient(
@@ -168,6 +192,8 @@ class AgentServices:
         # beside its PKCE verifier server-side; no callback ``next`` parameter is trusted.
         # ``str`` remains accepted on read for the frozen W1 auth tests/rolling deploy.
         self._pkce: dict[str, str | _PendingLaunch] = {}
+        self._launch_attempts: deque[float] = deque()
+        self._launch_clock = time.monotonic
         self.provider = AnthropicLLMProvider(
             api_key=settings.anthropic_api_key.get_secret_value(),
             model=settings.llm_model,
@@ -175,7 +201,8 @@ class AgentServices:
             timeout=settings.llm_timeout_seconds,
         )
         self.cost_cap = DailyCostCap(cap_usd=settings.daily_cost_cap_usd)
-        self.tracer = _build_tracer(settings)
+        self.events = EventEmitter(event_sink or NullEventSink())
+        self.tracer = _build_tracer(settings, events=self.events)
         self.orchestrator = Orchestrator(
             self.provider,
             cost_cap=self.cost_cap,
@@ -196,6 +223,7 @@ class AgentServices:
                 provider=self.provider,
                 connect=self._document_connect,
                 credential_vault=credential_vault,
+                events=self.events,
             )
             self.document_runtime = runtime
             self.document_repository = runtime.repository
@@ -265,6 +293,7 @@ class AgentServices:
             )
         try:
             ready, detail = await runtime.heartbeat_store.readiness(
+                worker_id=runtime.worker_identity,
                 max_age_seconds=float(
                     max(2 * self.settings.document_worker_lease_seconds, 1)
                 )
@@ -273,7 +302,71 @@ class AgentServices:
             ready, detail = False, "worker_heartbeat_unavailable"
         return DependencyResult("document_runtime", "hard", ready, detail)
 
+    async def probe_document_category_read(
+        self, _settings: Settings
+    ) -> DependencyResult:
+        """Hard, bounded, delegated read of both attested document categories.
+
+        The runtime selects only a previously stored patient/credential binding.  It
+        never accepts a readiness patient setting and never returns remote contents or
+        identifier-bearing exception text.
+        """
+
+        if not self.settings.w2_document_runtime_enabled:
+            return DependencyResult("document_category_read", "hard", True, "disabled")
+        runtime = self.document_runtime
+        if runtime is None:
+            return DependencyResult(
+                "document_category_read", "hard", False, "composition_unavailable"
+            )
+        try:
+            async with asyncio.timeout(5.0):
+                detail = await runtime.category_read_probe.probe()
+        except TimeoutError:
+            detail = "timeout"
+        except JobCredentialAuthExpired:
+            detail = "delegation_expired"
+        except JobCredentialBindingError:
+            detail = "patient_binding_failed"
+        except JobCredentialUnavailable:
+            detail = "credential_unavailable"
+        except (PatientRouteMismatch, RouteAttestationNotFound):
+            detail = "patient_route_unavailable"
+        except Exception:  # noqa: BLE001 - readiness detail is a closed, content-free code
+            detail = "authorized_read_failed"
+        ok = detail in {"authorized_read_ok", "pending_first_pinned_job"}
+        return DependencyResult("document_category_read", "hard", ok, detail)
+
     # --- SMART launch → pinned session ---------------------------------------
+
+    def _prepare_launch_slot(self) -> float:
+        """Expire abandoned state, bound memory, and apply a per-instance rate cap."""
+
+        clock = getattr(self, "_launch_clock", time.monotonic)
+        now = clock()
+        expired = [
+            state
+            for state, pending in self._pkce.items()
+            if isinstance(pending, _PendingLaunch)
+            and now - pending.created_monotonic >= _PENDING_LAUNCH_TTL_SECONDS
+        ]
+        for state in expired:
+            self._pkce.pop(state, None)
+
+        attempts = getattr(self, "_launch_attempts", None)
+        if attempts is None:
+            attempts = deque()
+            self._launch_attempts = attempts
+        cutoff = now - _LAUNCH_RATE_WINDOW_SECONDS
+        while attempts and attempts[0] <= cutoff:
+            attempts.popleft()
+        if len(attempts) >= _MAX_LAUNCHES_PER_WINDOW:
+            raise LaunchRateLimited("SMART launch rate limit exceeded")
+        attempts.append(now)
+
+        while len(self._pkce) >= _MAX_PENDING_LAUNCHES:
+            self._pkce.pop(next(iter(self._pkce)))
+        return now
 
     def begin_launch(
         self,
@@ -287,9 +380,10 @@ class AgentServices:
             raise ValueError("unknown SMART launch destination")
         if destination == "week2" and not self.settings.w2_document_runtime_enabled:
             raise RuntimeError("Week 2 document runtime is disabled")
+        now = self._prepare_launch_slot()
         verifier, challenge, _method = generate_pkce()
         state = secrets.token_urlsafe(24)
-        self._pkce[state] = _PendingLaunch(verifier, destination)
+        self._pkce[state] = _PendingLaunch(verifier, destination, now)
         scope = (
             requested_w2_scope_string()
             if self.settings.w2_document_runtime_enabled
@@ -309,6 +403,8 @@ class AgentServices:
     ) -> tuple[Session, LaunchDestination]:
         """Consume one OAuth state and return its fixed server-owned UI destination."""
 
+        clock = getattr(self, "_launch_clock", time.monotonic)
+        now = clock()
         pending = self._pkce.pop(state, None)
         if pending is None:
             raise ValueError("unknown or replayed OAuth state")
@@ -317,6 +413,11 @@ class AgentServices:
             verifier = pending
             destination: LaunchDestination = "week1"
         else:
+            if (
+                now - pending.created_monotonic
+                >= _PENDING_LAUNCH_TTL_SECONDS
+            ):
+                raise ValueError("unknown or replayed OAuth state")
             verifier = pending.verifier
             destination = pending.destination
         token = await self.smart.exchange_code(code=code, code_verifier=verifier)
@@ -517,25 +618,40 @@ class AgentServices:
         async def run_brief_pinned() -> BriefResult:
             return await self.run_brief(session, message, request_url=request_url)
 
-        graph_kwargs = {
-            "run_brief": run_brief_pinned,
-            "correlation_id": correlation_id,
-            "tracer": self.tracer,
-            "accountability": self._accountability_context(
+        async def run_brief_with_context(
+            answer_context: GroundedAnswerContext,
+        ) -> BriefResult:
+            return await self.run_brief(
+                session,
+                message,
+                request_url=request_url,
+                answer_context=answer_context,
+                emit_summary=False,
+            )
+
+        return await orchestrator_graph.run_graph_turn(
+            run_brief=run_brief_pinned,
+            run_brief_with_context=run_brief_with_context,
+            correlation_id=correlation_id,
+            tracer=self.tracer,
+            accountability=self._accountability_context(
                 session, token, request_url=request_url
             ),
-            "worker_input": worker_input,
-            "retrieval_worker": retrieval_worker,
-            "ref_registry": refs,
-        }
-        if extraction_worker is not None:
-            graph_kwargs["extraction_worker"] = extraction_worker
-        return await orchestrator_graph.run_graph_turn(
-            **graph_kwargs,
+            worker_input=worker_input,
+            extraction_worker=extraction_worker,
+            retrieval_worker=retrieval_worker,
+            ref_registry=refs,
+            events=getattr(self, "events", None),
         )
 
     async def run_brief(
-        self, session: Session, message: str, *, request_url: str
+        self,
+        session: Session,
+        message: str,
+        *,
+        request_url: str,
+        answer_context: GroundedAnswerContext | None = None,
+        emit_summary: bool = True,
     ) -> BriefResult:
         token = self._tokens.get(session.session_id)
         if token is None:
@@ -557,16 +673,13 @@ class AgentServices:
         def _record_fhir(name: str, latency_ms: float, result) -> None:
             # One accountability span per outbound FHIR read (CXR-05): resource, latency, and
             # tri-state outcome — so the trace localizes FHIR work and every PHI read is logged,
-            # including timeouts/budget failures. Operational fields remain PHI-minimized; the
-            # exact typed result is a D16-marked payload that exports only under the synthetic
-            # deployment's explicit content opt-in.
+            # including timeouts/budget failures. Only the closed outcome and record count enter
+            # the trace; the typed result and free-text failure reason never cross this boundary.
             builder.step(
                 f"fhir.{name}",
                 latency_ms=latency_ms,
                 status=result.status.value,
                 records=len(result.records),
-                missing_reason=result.missing_reason or "",
-                content=_fhir_trace_content(result),
             )
 
         fanout = await run_previsit_fanout(
@@ -582,7 +695,12 @@ class AgentServices:
         # claims (empty tool registry → only submit_claims), which are verified and re-rendered.
         # The trace begun above is threaded in so the LLM/verify spans join the FHIR spans.
         result = await self.orchestrator.run_previsit_brief(
-            packet, message, tools=ToolRegistry([]), builder=builder
+            packet,
+            message,
+            tools=ToolRegistry([]),
+            builder=builder,
+            answer_context=answer_context,
+            emit_summary=emit_summary,
         )
         # Attach the patient header (presentation-only, T-E9 UI) from the already-fetched Patient
         # record — the UI draws a chart header from it; verification/serving are untouched.

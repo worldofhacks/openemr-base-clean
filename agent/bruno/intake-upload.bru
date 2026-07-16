@@ -1,0 +1,35 @@
+meta {
+  name: Intake upload
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{agent_base_url}}/documents
+  body: multipartForm
+  auth: none
+}
+
+body:multipart-form {
+  session_id: {{session_id}}
+  doc_type: intake_form
+  file: @file(../evals/fixtures/golden/intake-full-valid.pdf)
+}
+
+tests {
+  test("intake source is accepted or already deduplicated", function () {
+    expect([200, 202]).to.include(res.getStatus());
+    expect(res.getBody().document_id).to.be.a("string").and.not.be.empty;
+  });
+}
+
+script:post-response {
+  if ([200, 202].includes(res.getStatus())) {
+    bru.setVar("intake_document_id", res.getBody().document_id);
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 180000
+}

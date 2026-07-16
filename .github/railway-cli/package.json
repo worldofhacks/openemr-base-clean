@@ -1,0 +1,11 @@
+{
+  "name": "w2-railway-cli-lock",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "@railway/cli": "5.26.1"
+  },
+  "overrides": {
+    "tar": "7.5.20"
+  }
+}

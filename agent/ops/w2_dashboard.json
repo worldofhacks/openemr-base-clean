@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "title": "Clinical Co-Pilot / Week 2 Operations",
+  "default_window": "1h",
+  "refresh_seconds": 60,
+  "data_policy": "aggregate_refs_only",
+  "panels": [
+    {"id": "ingestion", "metric": "ingestion.duration_ms", "views": ["rate", "p50", "p95", "failures"]},
+    {"id": "grounding", "metric": "grounding.fields", "views": ["grounded_rate", "unsupported_rate"]},
+    {"id": "retrieval", "metric": "retrieval.duration_ms", "views": ["hits", "misses", "p50", "p95"]},
+    {"id": "worker-routing", "metric": "handoff.total", "views": ["worker", "reason_code", "outcome"]},
+    {"id": "queue", "metric": "queue.state", "views": ["depth", "oldest_age_seconds", "heartbeat_age_seconds"]},
+    {"id": "write-intents", "metric": "write_intent.total", "views": ["leg", "state", "reconciliations"]},
+    {"id": "tokens-cost", "metric": "encounter.summary", "views": ["input_tokens", "output_tokens", "cost_usd"]},
+    {"id": "evals", "metric": "eval.category.score", "views": ["current", "baseline", "delta_points", "status"]},
+    {"id": "readiness", "metric": "readiness.check", "views": ["hard", "soft", "latency_ms"]},
+    {"id": "breakers", "metric": "breaker.state", "views": ["dependency", "state", "open_seconds"]}
+  ]
+}

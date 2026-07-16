@@ -74,6 +74,14 @@ def test_worker_service_definition_has_exact_non_http_start_command() -> None:
     assert "healthcheckPath" not in definition["deploy"]
 
 
+def test_web_service_uses_hard_dependency_readiness_for_rotation() -> None:
+    agent_root = Path(__file__).resolve().parents[1]
+    definition = json.loads((agent_root / "railway.json").read_text())
+
+    assert definition["deploy"]["healthcheckPath"] == "/ready"
+    assert definition["deploy"]["healthcheckTimeout"] == 60
+
+
 def test_procfile_keeps_web_enqueue_only_and_worker_separate() -> None:
     agent_root = Path(__file__).resolve().parents[1]
     processes = dict(
@@ -83,7 +91,11 @@ def test_procfile_keeps_web_enqueue_only_and_worker_separate() -> None:
     )
 
     assert processes == {
-        "web": "sh -c 'uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'",
+        "web": (
+            "sh -c 'uvicorn app.main:app --host 0.0.0.0 "
+            "--port ${PORT:-8000} --no-access-log'"
+        ),
         "worker": "python -m app.ingestion.worker",
     }
     assert "ingestion.worker" not in processes["web"]
+    assert "--no-access-log" in processes["web"]

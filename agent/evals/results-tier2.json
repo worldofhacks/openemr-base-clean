@@ -1,0 +1,28 @@
+{
+  "case_count": 50,
+  "cases": [],
+  "categories": [],
+  "executor_call_count": 0,
+  "inconclusive_reason": "provider_or_parse_exhaustion",
+  "limits": {
+    "max_cost_usd": 10.0,
+    "max_seconds": 1800.0
+  },
+  "manifest_sha256": "c847a5443e8b45bbd8e1b5b69b4f48fc39a9d11479d68b28a653a9f4f7410cd2",
+  "metrics": {
+    "cost_usd": 0.0,
+    "elapsed_seconds": 5.6e-05,
+    "extraction_grounding_rate": null,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "p50_ms": null,
+    "p95_ms": null,
+    "retries": 0,
+    "retrieval_hit_count": 0
+  },
+  "recordings_sha256": null,
+  "schema_version": 1,
+  "source_sha": "local-uncommitted",
+  "status": "INCONCLUSIVE",
+  "tier": "live"
+}

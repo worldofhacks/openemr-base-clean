@@ -1,0 +1,930 @@
+openapi: 3.0.3
+info:
+  title: Clinical Co-Pilot Week 2 API
+  version: 0.2.0
+  description: >-
+    Sole authoritative contract for every mounted Week 2 HTTP surface. Clinical document
+    content and identifiers are never included as examples. JSON and SSE answers expose
+    CitationV2 only; uploaded documents remain patient-pinned through an opaque session.
+tags:
+  - name: operations
+  - name: smart
+  - name: documents
+  - name: evidence
+  - name: answers
+paths:
+  /health:
+    get:
+      tags: [operations]
+      operationId: getHealth
+      responses:
+        "200":
+          description: Process liveness and deployed SHA.
+          headers:
+            x-copilot-request-id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /ready:
+    get:
+      tags: [operations]
+      operationId: getReadiness
+      responses:
+        "200":
+          description: All hard probes are healthy; soft probes may be degraded.
+          headers:
+            x-copilot-request-id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          description: At least one hard readiness probe failed.
+          headers:
+            x-copilot-request-id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+  /launch:
+    get:
+      tags: [smart]
+      operationId: launchWeek1
+      parameters:
+        - $ref: "#/components/parameters/Launch"
+        - $ref: "#/components/parameters/Issuer"
+      responses:
+        "302":
+          $ref: "#/components/responses/SmartRedirect"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /week2/launch:
+    get:
+      tags: [smart]
+      operationId: launchWeek2
+      parameters:
+        - $ref: "#/components/parameters/Launch"
+        - $ref: "#/components/parameters/Issuer"
+      responses:
+        "302":
+          $ref: "#/components/responses/SmartRedirect"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /callback:
+    get:
+      tags: [smart]
+      operationId: completeSmartCallback
+      parameters:
+        - name: code
+          in: query
+          schema: {type: string}
+        - name: state
+          in: query
+          schema: {type: string}
+        - name: error
+          in: query
+          schema: {type: string}
+      responses:
+        "302":
+          $ref: "#/components/responses/SmartRedirect"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /week2:
+    get:
+      tags: [smart]
+      operationId: getWeek2Workspace
+      parameters:
+        - name: sid
+          in: query
+          required: true
+          schema: {type: string, minLength: 1}
+      responses:
+        "200":
+          description: Patient-pinned Week 2 workspace.
+          headers:
+            x-copilot-request-id:
+              $ref: "#/components/headers/CorrelationId"
+            Cache-Control:
+              schema: {type: string, enum: ["private, no-store"]}
+          content:
+            text/html:
+              schema: {type: string}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /documents:
+    post:
+      tags: [documents]
+      operationId: uploadDocument
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/DocumentUpload"
+      responses:
+        "200":
+          description: Permanent patient-scoped duplicate; no second write was made.
+          headers:
+            x-copilot-request-id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadAccepted"
+        "202":
+          description: New source accepted for bounded asynchronous processing.
+          headers:
+            x-copilot-request-id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /documents/lab-trends:
+    get:
+      tags: [documents]
+      operationId: getLabTrends
+      description: >-
+        Reads completed, verified lab artifacts for the session-pinned patient. It accepts
+        no patient identifier, performs no aliasing or unit conversion, and writes no FHIR
+        Observation resource.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Neutral exact-unit lab series, possibly empty.
+          headers:
+            x-copilot-request-id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LabTrendResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /documents/{document_id}/status:
+    get:
+      tags: [documents]
+      operationId: getDocumentStatus
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Current durable state for a patient-pinned document.
+          headers:
+            x-copilot-request-id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /documents/{document_id}/extraction-report:
+    get:
+      tags: [documents]
+      operationId: getExtractionReport
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Grounded facts and structurally redacted unsupported proposals.
+          headers:
+            x-copilot-request-id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentExtractionReport"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /documents/{document_id}/retry:
+    post:
+      tags: [documents]
+      operationId: retryDocument
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetryRequest"
+      responses:
+        "202":
+          description: Failed job safely requeued.
+          headers:
+            x-copilot-request-id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetryAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /documents/{document_id}/pages/{page_number}:
+    get:
+      tags: [documents]
+      operationId: getDocumentPage
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - $ref: "#/components/parameters/PageNumber"
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Ephemeral patient-pinned page render.
+          headers:
+            x-copilot-request-id:
+              $ref: "#/components/headers/CorrelationId"
+            Cache-Control:
+              schema: {type: string, enum: ["private, no-store"]}
+          content:
+            image/png:
+              schema: {type: string, format: binary}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /documents/{document_id}/readback-verification:
+    get:
+      tags: [documents]
+      operationId: getDocumentReadbackVerification
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Content-free SHA-256 results from fresh Binary reads.
+          headers:
+            x-copilot-request-id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentReadbackVerification"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /evidence/search:
+    post:
+      tags: [evidence]
+      operationId: searchEvidence
+      parameters:
+        - $ref: "#/components/parameters/EvidenceSessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidenceSearchRequest"
+      responses:
+        "200":
+          description: Version-pinned guideline snippets in rank order.
+          headers:
+            x-copilot-request-id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceSearchResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /chat:
+    post:
+      tags: [answers]
+      operationId: createCitedAnswer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: >-
+            Verified answer. Content negotiation selects one JSON envelope or SSE
+            claim_block/done events; no clinical bytes are flushed before verification.
+          headers:
+            x-copilot-request-id:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+            text/event-stream:
+              schema:
+                type: string
+              x-event-schemas:
+                claim_block:
+                  $ref: "#/components/schemas/SseClaimBlock"
+                done:
+                  $ref: "#/components/schemas/SseDone"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+components:
+  headers:
+    CorrelationId:
+      description: PHI-free request correlation identifier.
+      required: true
+      schema: {type: string, minLength: 1}
+  parameters:
+    SessionId:
+      name: session_id
+      in: query
+      required: true
+      schema: {type: string, minLength: 1}
+    EvidenceSessionId:
+      name: X-Copilot-Session-Id
+      in: header
+      required: true
+      description: Opaque SMART session pin; no patient identifier is accepted.
+      schema: {type: string, minLength: 1, maxLength: 128}
+    DocumentId:
+      name: document_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    PageNumber:
+      name: page_number
+      in: path
+      required: true
+      schema: {type: integer, minimum: 1}
+    Launch:
+      name: launch
+      in: query
+      schema: {type: string}
+    Issuer:
+      name: iss
+      in: query
+      schema: {type: string, format: uri}
+  responses:
+    SmartRedirect:
+      description: Redirect to the trusted SMART authorization origin or server-owned UI.
+      headers:
+        Location:
+          required: true
+          schema: {type: string, format: uri-reference}
+        x-copilot-request-id:
+          $ref: "#/components/headers/CorrelationId"
+    BadRequest:
+      description: The request could not complete the closed workflow.
+      headers:
+        x-copilot-request-id:
+          $ref: "#/components/headers/CorrelationId"
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorResponse"}
+    Unauthorized:
+      description: The opaque session expired.
+      headers:
+        x-copilot-request-id:
+          $ref: "#/components/headers/CorrelationId"
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorResponse"}
+    Forbidden:
+      description: Patient, encounter, scope, or route authorization failed closed.
+      headers:
+        x-copilot-request-id:
+          $ref: "#/components/headers/CorrelationId"
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorResponse"}
+    NotFound:
+      description: Session, document, or page was not found within the patient pin.
+      headers:
+        x-copilot-request-id:
+          $ref: "#/components/headers/CorrelationId"
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorResponse"}
+    Conflict:
+      description: The durable job is not in the required state.
+      headers:
+        x-copilot-request-id:
+          $ref: "#/components/headers/CorrelationId"
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorResponse"}
+    UnsupportedMediaType:
+      description: File signature/media type is not permitted for the selected document type.
+      headers:
+        x-copilot-request-id:
+          $ref: "#/components/headers/CorrelationId"
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorResponse"}
+    ValidationError:
+      description: Request validation or a closed input contract failed.
+      headers:
+        x-copilot-request-id:
+          $ref: "#/components/headers/CorrelationId"
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/HTTPValidationError"
+              - $ref: "#/components/schemas/ErrorResponse"
+    PayloadTooLarge:
+      description: Request-body middleware rejected the body before route processing.
+      headers:
+        x-copilot-request-id:
+          $ref: "#/components/headers/CorrelationId"
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorResponse"}
+    TooManyRequests:
+      description: A caller-scoped request or daily resource bound was reached.
+      headers:
+        Retry-After:
+          required: true
+          schema: {type: integer, minimum: 1}
+        x-copilot-request-id:
+          $ref: "#/components/headers/CorrelationId"
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorResponse"}
+    ServiceUnavailable:
+      description: A required dependency or artifact integrity check failed closed.
+      headers:
+        x-copilot-request-id:
+          $ref: "#/components/headers/CorrelationId"
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorResponse"}
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, sha]
+      properties:
+        status: {type: string, enum: [alive]}
+        sha: {type: string, minLength: 1}
+    ReadinessCheck:
+      type: object
+      additionalProperties: false
+      required: [name, kind, ok, detail]
+      properties:
+        name: {type: string, minLength: 1}
+        kind: {type: string, enum: [hard, soft]}
+        ok: {type: boolean}
+        detail: {type: string}
+    ReadinessResponse:
+      type: object
+      additionalProperties: false
+      required: [status, checks]
+      properties:
+        status: {type: string, enum: [ready, degraded, not_ready]}
+        checks:
+          type: array
+          items: {$ref: "#/components/schemas/ReadinessCheck"}
+    DocumentType:
+      type: string
+      enum: [lab_pdf, intake_form, medication_list]
+    DocumentUpload:
+      type: object
+      additionalProperties: false
+      required: [file, session_id, doc_type]
+      properties:
+        file: {type: string, format: binary}
+        session_id: {type: string, minLength: 1}
+        doc_type: {$ref: "#/components/schemas/DocumentType"}
+        patient_id:
+          type: string
+          minLength: 1
+          description: Optional defence-in-depth value; when present it must equal the session pin.
+        encounter_id: {type: string, nullable: true}
+        content_hash:
+          type: string
+          nullable: true
+          pattern: "^[0-9a-f]{64}$"
+    UploadAccepted:
+      type: object
+      additionalProperties: false
+      required: [job_id, document_id, state, status_url, correlation_id]
+      properties:
+        job_id: {type: string, minLength: 1}
+        document_id: {type: string, minLength: 1}
+        state: {$ref: "#/components/schemas/DocumentState"}
+        status_url: {type: string, minLength: 1}
+        correlation_id: {type: string, minLength: 1}
+    DocumentState:
+      type: string
+      enum: [storing, reconciling, queued, extracting, grounding, writing, complete, failed]
+    FailureReason:
+      type: string
+      enum:
+        - patient_mismatch
+        - encounter_mismatch
+        - unit_mismatch
+        - range_violation
+        - scope_mismatch
+        - category_mismatch
+        - binary_readback_unsafe
+        - upload_rejected
+        - unsupported_media_type
+        - size_or_page_cap_exceeded
+        - storage_write_failed
+        - ocr_failed
+        - vlm_timeout
+        - vlm_unavailable
+        - schema_violation
+        - auth_expired
+        - writeback_failed
+        - writeback_verify_failed
+        - doc_type_mismatch
+        - worker_restart
+    DocumentStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - document_id
+        - state
+        - reason
+        - correlation_id
+        - updated_ts
+        - fields_grounded
+        - fields_unsupported
+        - attempt_count
+        - next_retry_at
+      properties:
+        document_id: {type: string, minLength: 1}
+        state: {$ref: "#/components/schemas/DocumentState"}
+        reason:
+          allOf: [{$ref: "#/components/schemas/FailureReason"}]
+          nullable: true
+        correlation_id: {type: string, minLength: 1}
+        updated_ts: {type: string, format: date-time}
+        fields_grounded: {type: integer, minimum: 0}
+        fields_unsupported: {type: integer, minimum: 0}
+        attempt_count: {type: integer, minimum: 0}
+        next_retry_at: {type: string, format: date-time, nullable: true}
+    RetryRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_state]
+      properties:
+        expected_state: {type: string, enum: [failed]}
+    RetryAccepted:
+      allOf:
+        - $ref: "#/components/schemas/UploadAccepted"
+    CitationSourceType:
+      type: string
+      enum: [patient_record, uploaded_document, guideline]
+    CitationV2:
+      type: object
+      additionalProperties: false
+      required:
+        - source_type
+        - source_id
+        - page_or_section
+        - field_or_chunk_id
+        - quote_or_value
+      properties:
+        source_type: {$ref: "#/components/schemas/CitationSourceType"}
+        source_id: {type: string, minLength: 1}
+        page_or_section:
+          type: string
+          minLength: 1
+          nullable: true
+          description: Null only for patient_record citations.
+        field_or_chunk_id: {type: string, minLength: 1}
+        quote_or_value: {type: string, minLength: 1}
+    NormBBox:
+      type: object
+      additionalProperties: false
+      required: [x0, y0, x1, y1]
+      properties:
+        x0: {type: number, minimum: 0, maximum: 1}
+        y0: {type: number, minimum: 0, maximum: 1}
+        x1: {type: number, minimum: 0, maximum: 1}
+        y1: {type: number, minimum: 0, maximum: 1}
+    ExtractionReportField:
+      type: object
+      additionalProperties: false
+      required: [field_path, verdict, display_value, page, bbox, citation]
+      properties:
+        field_path: {type: string, minLength: 1}
+        verdict: {type: string, enum: [grounded, unsupported]}
+        display_value: {type: string, nullable: true}
+        page: {type: integer, minimum: 1, nullable: true}
+        bbox:
+          allOf: [{$ref: "#/components/schemas/NormBBox"}]
+          nullable: true
+        citation:
+          allOf: [{$ref: "#/components/schemas/CitationV2"}]
+          nullable: true
+    DocumentExtractionReport:
+      type: object
+      additionalProperties: false
+      required:
+        - document_id
+        - doc_type
+        - state
+        - fields_grounded
+        - fields_unsupported
+        - fields
+      properties:
+        document_id: {type: string, minLength: 1}
+        doc_type: {$ref: "#/components/schemas/DocumentType"}
+        state: {type: string, enum: [complete]}
+        fields_grounded: {type: integer, minimum: 0}
+        fields_unsupported: {type: integer, minimum: 0}
+        fields:
+          type: array
+          items: {$ref: "#/components/schemas/ExtractionReportField"}
+    BinaryReadbackVerification:
+      type: object
+      additionalProperties: false
+      required: [algorithm, expected_hash, observed_hash, verified]
+      properties:
+        algorithm: {type: string, enum: [sha256]}
+        expected_hash: {type: string, pattern: "^[0-9a-f]{64}$"}
+        observed_hash: {type: string, pattern: "^[0-9a-f]{64}$", nullable: true}
+        verified: {type: boolean}
+    DocumentReadbackVerification:
+      type: object
+      additionalProperties: false
+      required: [document_id, source, artifact]
+      properties:
+        document_id: {type: string, minLength: 1}
+        source: {$ref: "#/components/schemas/BinaryReadbackVerification"}
+        artifact:
+          allOf: [{$ref: "#/components/schemas/BinaryReadbackVerification"}]
+          nullable: true
+    LabTrendPoint:
+      type: object
+      additionalProperties: false
+      required:
+        - document_id
+        - result_index
+        - collection_date
+        - value
+        - display_value
+        - citation
+        - date_citation
+        - page
+        - bbox
+      properties:
+        document_id: {type: string, minLength: 1}
+        result_index: {type: integer, minimum: 0}
+        collection_date: {type: string, format: date}
+        value:
+          type: string
+          pattern: "^[+-]?[0-9]+(?:\\.[0-9]+)?$"
+          description: Exact finite Decimal serialization; 6.5 and 65 remain distinct.
+        display_value: {type: string, minLength: 1}
+        citation: {$ref: "#/components/schemas/CitationV2"}
+        date_citation: {$ref: "#/components/schemas/CitationV2"}
+        page: {type: integer, minimum: 1}
+        bbox: {$ref: "#/components/schemas/NormBBox"}
+    LabTrendSeries:
+      type: object
+      additionalProperties: false
+      required: [test_name, unit, points]
+      properties:
+        test_name: {type: string, minLength: 1}
+        unit:
+          type: string
+          minLength: 1
+          description: Exact source unit; mixed units are separate series.
+        points:
+          type: array
+          minItems: 1
+          items: {$ref: "#/components/schemas/LabTrendPoint"}
+    LabTrendResponse:
+      type: object
+      additionalProperties: false
+      required: [series]
+      properties:
+        series:
+          type: array
+          items: {$ref: "#/components/schemas/LabTrendSeries"}
+    EvidenceSearchRequest:
+      type: object
+      additionalProperties: false
+      required: [query]
+      properties:
+        query: {type: string, minLength: 1, maxLength: 180}
+        k: {type: integer, minimum: 1, maximum: 10, default: 5}
+    EvidenceSnippet:
+      type: object
+      additionalProperties: false
+      required: [source_id, section, chunk_id, quote, score, corpus_version]
+      properties:
+        source_id: {type: string, minLength: 1, pattern: "^.*@[0-9a-f]{64}$"}
+        section: {type: string, minLength: 1}
+        chunk_id: {type: string, minLength: 1}
+        quote: {type: string, minLength: 1}
+        score: {type: number, minimum: 0, maximum: 1}
+        corpus_version: {type: string, minLength: 1, pattern: "^.*@[0-9a-f]{64}$"}
+    EvidenceSearchResponse:
+      type: object
+      additionalProperties: false
+      required: [items, corpus_version, correlation_id]
+      properties:
+        items:
+          type: array
+          maxItems: 10
+          items: {$ref: "#/components/schemas/EvidenceSnippet"}
+        corpus_version: {type: string, minLength: 1, pattern: "^.*@[0-9a-f]{64}$"}
+        correlation_id: {type: string, minLength: 1}
+    ChatRequest:
+      type: object
+      additionalProperties: false
+      required: [session_id]
+      properties:
+        session_id: {type: string, minLength: 1}
+        message:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          default: Give me the pre-visit brief.
+        patient_id:
+          type: string
+          nullable: true
+          description: Optional defence-in-depth value; it cannot switch the session pin.
+    ChatResponse:
+      type: object
+      additionalProperties: false
+      required: [brief, source, degraded, verdicts, citations, patient, correlation_id]
+      properties:
+        brief: {type: string}
+        source:
+          type: string
+          enum: [llm, deterministic_fallback, deterministic_refusal]
+        degraded: {type: boolean}
+        verdicts:
+          type: array
+          items: {type: string}
+        citations:
+          type: array
+          items: {$ref: "#/components/schemas/CitationV2"}
+        patient:
+          type: object
+          additionalProperties: {type: string}
+          nullable: true
+        correlation_id: {type: string, minLength: 1}
+    SseClaimBlock:
+      type: object
+      additionalProperties: false
+      required: [claim_block, citations, verdict]
+      properties:
+        claim_block: {type: string}
+        citations:
+          type: array
+          items: {$ref: "#/components/schemas/CitationV2"}
+        verdict: {type: string}
+        source_class:
+          allOf: [{$ref: "#/components/schemas/CitationSourceType"}]
+          nullable: true
+        overlay:
+          allOf: [{$ref: "#/components/schemas/CitationOverlay"}]
+          nullable: true
+    CitationOverlay:
+      type: object
+      additionalProperties: false
+      required: [source_id, page, bbox]
+      properties:
+        source_id: {type: string, minLength: 1}
+        page: {type: integer, minimum: 1}
+        bbox: {$ref: "#/components/schemas/NormBBox"}
+    SseDone:
+      type: object
+      additionalProperties: false
+      required: [correlation_id, source, degraded]
+      properties:
+        correlation_id: {type: string, minLength: 1}
+        source:
+          type: string
+          enum: [llm, deterministic_fallback, deterministic_refusal]
+        degraded: {type: boolean}
+    ErrorResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail: {}
+    HTTPValidationError:
+      type: object
+      properties:
+        detail:
+          type: array
+          items: {$ref: "#/components/schemas/ValidationError"}
+    ValidationError:
+      type: object
+      required: [loc, msg, type]
+      properties:
+        loc:
+          type: array
+          items:
+            oneOf: [{type: string}, {type: integer}]
+        msg: {type: string}
+        type: {type: string}

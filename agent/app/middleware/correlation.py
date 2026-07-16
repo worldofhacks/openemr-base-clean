@@ -1,7 +1,7 @@
 """Correlation-ID middleware (ARCHITECTURE.md §3.1, §7, D10-rev).
 
 Every request carries a correlation id: the inbound `X-Copilot-Request-Id` header
-is honored if present (so a caller/trace can thread its own id), otherwise one is
+is honored only when it matches the bounded log-safe format, otherwise one is
 minted. The id is stored in a context variable for the duration of the request so
 log lines pick it up, is echoed on the response, and is exposed via
 `outbound_headers()` for the FHIR client (E3) to attach to every outbound call —
@@ -14,6 +14,7 @@ then this middleware guarantees every request has one.
 
 from __future__ import annotations
 
+import re
 import uuid
 from contextvars import ContextVar
 
@@ -23,10 +24,30 @@ from app.logging import get_logger
 
 HEADER_NAME = "X-Copilot-Request-Id"
 _HEADER_BYTES = HEADER_NAME.lower().encode()
+_SAFE_CORRELATION_ID = re.compile(rb"[A-Za-z0-9_.:-]{1,128}\Z")
 
 correlation_id_var: ContextVar[str] = ContextVar("correlation_id", default="-")
 
 _log = get_logger("agent.request")
+
+
+def _route_label(path: str) -> str:
+    """Collapse dynamic path parameters to a closed, identifier-free label."""
+
+    if path in {"/", "/health", "/ready"}:
+        return {"/": "root", "/health": "health", "/ready": "ready"}[path]
+    if path in {"/launch", "/week2/launch", "/callback"}:
+        return "smart"
+    for prefix, label in (
+        ("/documents", "documents"),
+        ("/evidence", "evidence"),
+        ("/chat", "chat"),
+        ("/week2", "week2_ui"),
+        ("/app", "week1_ui"),
+    ):
+        if path.startswith(prefix):
+            return label
+    return "other"
 
 
 def outbound_headers() -> dict[str, str]:
@@ -37,8 +58,8 @@ def outbound_headers() -> dict[str, str]:
 
 def _inbound_id(scope: Scope) -> str:
     for key, value in scope.get("headers", []):
-        if key == _HEADER_BYTES and value:
-            return value.decode()
+        if key == _HEADER_BYTES and _SAFE_CORRELATION_ID.fullmatch(value):
+            return value.decode("ascii")
     return uuid.uuid4().hex
 
 
@@ -56,8 +77,12 @@ class CorrelationIdMiddleware:
 
         correlation_id = _inbound_id(scope)
         token = correlation_id_var.set(correlation_id)
-        # Method + path only — never query strings or bodies (no PHI, §7).
-        _log.info("request_start", extra={"method": scope.get("method"), "path": scope.get("path")})
+        # Route labels are closed and omit dynamic path/query/body identifiers (§7).
+        route = _route_label(str(scope.get("path", "")))
+        _log.info(
+            "request_start",
+            extra={"method": scope.get("method"), "route": route},
+        )
 
         async def send_with_header(message: Message) -> None:
             if message["type"] == "http.response.start":
@@ -65,7 +90,7 @@ class CorrelationIdMiddleware:
                 headers.append((_HEADER_BYTES, correlation_id.encode()))
                 _log.info(
                     "request_complete",
-                    extra={"status": message["status"], "path": scope.get("path")},
+                    extra={"status": message["status"], "route": route},
                 )
             await send(message)
 

@@ -228,6 +228,10 @@ class _EvidenceServices:
     def __init__(self) -> None:
         self.factory_calls = 0
 
+    async def resolve_session(self, session_id: str) -> Session:
+        assert session_id == "synthetic-session"
+        return _session()
+
     def get_evidence_retriever(self):
         self.factory_calls += 1
         return _FixtureRetriever()
@@ -239,7 +243,9 @@ def test_evidence_router_is_mounted_and_uses_service_lazy_factory(complete_env):
     assert services.factory_calls == 0
 
     response = client.post(
-        "/evidence/search", json={"query": "type 2 diabetes; HbA1c", "k": 1}
+        "/evidence/search",
+        json={"query": "type 2 diabetes; HbA1c", "k": 1},
+        headers={"X-Copilot-Session-Id": "synthetic-session"},
     )
 
     assert response.status_code == 200

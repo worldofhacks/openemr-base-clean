@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "data_policy": "aggregate_refs_only",
+  "rules": [
+    {"id": "extraction-failure-rate", "metric": "extraction.failure_rate", "operator": ">", "threshold": 0.2, "window_seconds": 3600, "for_seconds": 0, "runbook": "extraction"},
+    {"id": "retrieval-p95", "metric": "retrieval.p95_ms", "operator": ">", "threshold": 2000, "window_seconds": 900, "for_seconds": 0, "runbook": "retrieval"},
+    {"id": "ingestion-p95", "metric": "ingestion.p95_ms", "operator": ">", "threshold": 30000, "window_seconds": 3600, "for_seconds": 0, "runbook": "ingestion"},
+    {"id": "queue-oldest", "metric": "queue.oldest_age_seconds", "operator": ">", "threshold": 120, "window_seconds": 300, "for_seconds": 0, "runbook": "queue"},
+    {"id": "worker-heartbeat", "metric": "worker.heartbeat_age_seconds", "operator": ">", "threshold_expression": "2 * document_worker_lease_seconds", "window_seconds": 300, "for_seconds": 0, "runbook": "worker"},
+    {"id": "breaker-open", "metric": "breaker.open_seconds", "operator": ">", "threshold": 300, "window_seconds": 300, "for_seconds": 0, "runbook": "breaker"},
+    {"id": "deterministic-eval", "metric": "eval.deterministic_score", "operator": "<", "threshold": 1.0, "window_seconds": 0, "for_seconds": 0, "runbook": "eval"},
+    {"id": "factual-eval-threshold", "metric": "eval.factual_score", "operator": "<", "threshold": 0.9, "window_seconds": 0, "for_seconds": 0, "runbook": "eval"},
+    {"id": "factual-eval-delta", "metric": "eval.factual_baseline_minus_current_points", "operator": ">", "threshold": 5.0, "window_seconds": 0, "for_seconds": 0, "runbook": "eval"}
+  ]
+}

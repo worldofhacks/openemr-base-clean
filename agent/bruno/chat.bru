@@ -1,7 +1,7 @@
 meta {
-  name: Authenticated UC1 pre-visit brief
+  name: Cited patient-pinned chat
   type: http
-  seq: 3
+  seq: 9
 }
 
 post {
@@ -39,6 +39,18 @@ tests {
     expect(body.verdicts).to.be.an("array");
     body.verdicts.forEach(function (verdict) {
       expect(verdict).to.be.a("string");
+    });
+    expect(body.citations).to.be.an("array");
+    body.citations.forEach(function (citation) {
+      expect(citation.source_type).to.be.oneOf([
+        "patient_record",
+        "uploaded_document",
+        "guideline"
+      ]);
+      expect(citation.source_id).to.be.a("string").and.not.be.empty;
+      expect(citation).to.have.property("page_or_section");
+      expect(citation.field_or_chunk_id).to.be.a("string").and.not.be.empty;
+      expect(citation.quote_or_value).to.be.a("string").and.not.be.empty;
     });
     expect(body.correlation_id).to.be.a("string").and.not.be.empty;
   });

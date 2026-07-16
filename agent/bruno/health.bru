@@ -16,7 +16,8 @@ tests {
   });
 
   test("liveness returns the process-only contract", function () {
-    expect(res.getBody()).to.deep.equal({ status: "alive" });
+    expect(res.getBody().status).to.equal("alive");
+    expect(res.getBody().sha).to.be.a("string").and.not.be.empty;
   });
 
   test("liveness carries a correlation id", function () {

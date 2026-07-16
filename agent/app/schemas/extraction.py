@@ -14,9 +14,9 @@ This module owns:
 * ``NormBBox`` — the canonical normalized page-relative box. This is the CANONICAL
   home unified from the M4 reader (§2); ``app.ingestion.reader`` re-exports THIS class
   object by identity, never a copy.
-* the lab (``LabResult``/``LabPdfExtraction``) and intake
+* the lab (``LabResult``/``LabPdfExtraction``), intake
   (``Demographics``/``VitalCandidate``/``IntakeVitals``/``IntakeFormExtraction``)
-  extraction shapes, and the persisted ``ExtractionArtifact`` + typed ``VitalsWrite``
+  and medication-list extraction shapes, and the persisted ``ExtractionArtifact`` + typed ``VitalsWrite``
   (W2-D10). Every clinical leaf is a ``GroundedField`` of the right ``T``.
 
 @package   OpenEMR — Clinical Co-Pilot agent
@@ -214,6 +214,37 @@ class IntakeFormExtraction(BaseModel):
     source_document_id: str = Field(min_length=1)
 
 
+# --- medication-list extraction (additive artifact v2) -------------------------------
+
+
+class MedicationListEntry(BaseModel):
+    """One source-attested medication-list row.
+
+    This is an extraction artifact only.  It is deliberately not a MedicationRequest
+    payload and every clinical leaf passes through the same local grounding gate used by
+    labs and intake forms.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    medication_name: GroundedField[str]
+    strength: GroundedField[str]
+    dose: GroundedField[str]
+    route: GroundedField[str]
+    frequency: GroundedField[str]
+    status: GroundedField[str]
+
+
+class MedicationListExtraction(BaseModel):
+    """A medication-list source plus grounded-artifact-only extraction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    medications: list[MedicationListEntry] = Field(default_factory=list)
+    as_of_date: GroundedField[date]
+    source_document_id: str = Field(min_length=1)
+
+
 # --- persisted artifact + typed write (§2, W2-D10) ------------------------------------
 
 
@@ -228,15 +259,33 @@ class ExtractionArtifact(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    artifact_version: int
+    artifact_version: Literal[1, 2]
     document_id: str = Field(min_length=1)
     content_hash: str = Field(min_length=1)
     correlation_id: str = Field(min_length=1)
-    doc_type: Literal["lab_pdf", "intake_form"]
-    extraction: LabPdfExtraction | IntakeFormExtraction
+    doc_type: Literal["lab_pdf", "intake_form", "medication_list"]
+    extraction: LabPdfExtraction | IntakeFormExtraction | MedicationListExtraction
     grounding_summary: dict[str, int] = Field(default_factory=dict)
     created_ts: str = Field(min_length=1)
     agent_version: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_versioned_extraction(self) -> "ExtractionArtifact":
+        expected = {
+            "lab_pdf": (1, LabPdfExtraction),
+            "intake_form": (1, IntakeFormExtraction),
+            "medication_list": (2, MedicationListExtraction),
+        }
+        version, extraction_type = expected[self.doc_type]
+        if self.artifact_version != version:
+            raise ValueError(
+                f"{self.doc_type} requires extraction artifact version {version}"
+            )
+        if not isinstance(self.extraction, extraction_type):
+            raise ValueError("artifact doc_type does not match extraction schema")
+        if self.extraction.source_document_id != self.document_id:
+            raise ValueError("artifact extraction does not match its source document")
+        return self
 
 
 class VitalsWrite(BaseModel):

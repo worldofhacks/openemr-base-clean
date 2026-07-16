@@ -735,7 +735,6 @@ class ActivationOrchestrator:
             # The attested configuration opts in only after every prerequisite passes.
             "W2_GRAPH_ENABLED": "0",
             "RERANKER": "local",
-            "LANGFUSE_LOG_CONTENT": "false",
         }
 
     def _attested_variables(

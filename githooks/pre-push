@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root/agent"
+
+python_bin=python
+if [ -x .venv/bin/python ]; then
+    python_bin=.venv/bin/python
+fi
+
+exec make PYTHON="$python_bin" eval-tier1

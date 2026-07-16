@@ -17,6 +17,11 @@ from dataclasses import dataclass
 from pydantic import BaseModel
 
 from app.orchestrator.loop import BriefResult
+from app.schemas.answers import (
+    GroundedAnswerContext,
+    MAX_GUIDELINE_SNIPPETS,
+    VerifiedClinicalClaim,
+)
 from app.schemas.citations import (
     CitationSourceType,
     CitationV2,
@@ -26,6 +31,7 @@ from app.schemas.extraction import ExtractionArtifact, GroundedField, NormBBox
 
 
 RunBrief = Callable[[], Awaitable[BriefResult]]
+RunBriefWithContext = Callable[[GroundedAnswerContext], Awaitable[BriefResult]]
 
 
 @dataclass(frozen=True)
@@ -125,6 +131,8 @@ def verify_then_render(claims: Iterable[CandidateClaim]) -> VerifiedComposition:
 def citation_for_guideline(snippet: EvidenceSnippet) -> CitationV2:
     """Map one canonical retrieval hit to the exact CitationV2 source class."""
 
+    if not snippet.section.strip() or not snippet.quote.strip():
+        raise ValueError("guideline snippets require a non-blank section and quote")
     return CitationV2(
         source_type=CitationSourceType.GUIDELINE,
         source_id=snippet.source_id,
@@ -191,6 +199,87 @@ def claims_from_artifact(artifact: ExtractionArtifact) -> tuple[CandidateClaim, 
     return tuple(candidates)
 
 
+def verified_claims_from_artifact(
+    artifact: ExtractionArtifact,
+) -> tuple[VerifiedClinicalClaim, ...]:
+    """Convert grounded artifact leaves to the one canonical internal claim shape."""
+
+    claims: list[VerifiedClinicalClaim] = []
+    for candidate in claims_from_artifact(artifact):
+        if candidate.citation is None or candidate.page is None or candidate.bbox is None:
+            continue
+        claims.append(
+            VerifiedClinicalClaim(
+                text=candidate.text,
+                citation=candidate.citation,
+                page=candidate.page,
+                bbox=candidate.bbox,
+            )
+        )
+    return tuple(claims)
+
+
+def _citation_key(citation: CitationV2) -> tuple[object, ...]:
+    return (
+        citation.source_type,
+        citation.source_id,
+        citation.page_or_section,
+        citation.field_or_chunk_id,
+        citation.quote_or_value,
+    )
+
+
+def build_grounded_answer_context(
+    *,
+    verified_facts: Sequence[object],
+    evidence_snippets: Sequence[object],
+    citations: Sequence[object],
+) -> GroundedAnswerContext:
+    """Build the bounded evidence block supplied to the answer model.
+
+    Guideline order is the retriever/reranker order.  Anything outside the first five,
+    or without the exact canonical citation in the citation lane, is excluded.
+    """
+
+    allowed = {
+        _citation_key(citation)
+        for citation in citations
+        if isinstance(citation, CitationV2)
+    }
+    documents: list[VerifiedClinicalClaim] = []
+    for fact in verified_facts:
+        if isinstance(fact, ExtractionArtifact):
+            documents.extend(
+                claim
+                for claim in verified_claims_from_artifact(fact)
+                if _citation_key(claim.citation) in allowed
+            )
+        elif (
+            isinstance(fact, VerifiedClinicalClaim)
+            and fact.citation.source_type is CitationSourceType.UPLOADED_DOCUMENT
+            and _citation_key(fact.citation) in allowed
+        ):
+            documents.append(fact)
+
+    snippets: list[EvidenceSnippet] = []
+    for item in evidence_snippets:
+        if len(snippets) >= MAX_GUIDELINE_SNIPPETS:
+            break
+        if not isinstance(item, EvidenceSnippet):
+            continue
+        try:
+            citation = citation_for_guideline(item)
+        except ValueError:
+            continue
+        if _citation_key(citation) in allowed:
+            snippets.append(item)
+
+    return GroundedAnswerContext(
+        document_claims=tuple(documents),
+        guideline_snippets=tuple(snippets),
+    )
+
+
 def claims_from_inputs(
     *,
     verified_facts: Sequence[object],
@@ -237,7 +326,10 @@ def claims_from_inputs(
     for snippet in evidence_snippets:
         if not isinstance(snippet, EvidenceSnippet):
             continue
-        citation = citation_for_guideline(snippet)
+        try:
+            citation = citation_for_guideline(snippet)
+        except ValueError:
+            continue
         if is_allowed(citation):
             candidates.append(
                 CandidateClaim(
@@ -255,15 +347,41 @@ async def compose_answer(
     evidence_snippets: Sequence[object],
     citations: Sequence[object],
     run_brief: RunBrief,
+    run_brief_with_context: RunBriefWithContext | None = None,
 ) -> ComposerResult:
-    """Run W1 verification, then independently gate W2 document/guideline claims."""
+    """Run answer generation over bounded context, then gate canonical W2 claims."""
 
-    brief = await run_brief()
-    candidates = claims_from_inputs(
+    context = build_grounded_answer_context(
         verified_facts=verified_facts,
         evidence_snippets=evidence_snippets,
         citations=citations,
     )
+    brief = (
+        await run_brief_with_context(context)
+        if run_brief_with_context is not None
+        else await run_brief()
+    )
+    candidates = claims_from_inputs(
+        verified_facts=verified_facts,
+        evidence_snippets=context.guideline_snippets,
+        citations=citations,
+    )
+    if run_brief_with_context is not None:
+        # In the production context-aware path, guideline text is rendered only when the
+        # typed answer selected an allowed chunk id.  The canonical stored snippet supplies
+        # all metadata and quote bytes; model-authored quote/source fields are never used.
+        selected = {
+            claim.citation.field_or_chunk_id
+            for claim in brief.verified_claims
+            if claim.citation.source_type is CitationSourceType.GUIDELINE
+        }
+        candidates = tuple(
+            claim
+            for claim in candidates
+            if claim.citation is None
+            or claim.citation.source_type is not CitationSourceType.GUIDELINE
+            or claim.citation.field_or_chunk_id in selected
+        )
     return ComposerResult(brief=brief, composition=verify_then_render(candidates))
 
 

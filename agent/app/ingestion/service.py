@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Awaitable, Callable, Protocol
 
+from app.ingestion.telemetry import DocumentTelemetry
 from app.ingestion.uploads import ValidatedUpload
 from app.ingestion.repository import (
     DocumentNotRetryable,
@@ -21,6 +23,8 @@ from app.schemas.documents import (
 )
 from app.ingestion.readback import DocumentReadbackVerification
 from app.schemas.extraction_report import DocumentExtractionReport
+from app.schemas.lab_trends import LabTrendResponse
+from app.observability.events import EventComponent, EventEmitter, EventType
 from app.session.store import Session
 from app.schemas.writeback import WriteLeg, WriteState
 from app.writeback.intents import (
@@ -52,7 +56,16 @@ class ExtractionReportUnavailable(Exception):
     """A complete job's persisted artifact failed an integrity check."""
 
 
+class LabTrendsUnavailable(Exception):
+    """Completed lab artifacts could not be projected without weakening integrity."""
+
+
 _SOURCE_STORAGE_LEASE_SECONDS = 300
+_SOURCE_EXTENSION_BY_MEDIA_TYPE = {
+    "application/pdf": ".pdf",
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+}
 
 
 @dataclass(frozen=True)
@@ -61,7 +74,19 @@ class DocumentSubmission:
     duplicate: bool
 
 
+@dataclass(frozen=True)
+class DocumentAdmissionSnapshot:
+    """Content-free repository facts used by pre-write HTTP admission."""
+
+    duplicate: bool
+    outstanding_jobs: int
+
+
 class DocumentOperations(Protocol):
+    async def admission_snapshot(
+        self, session: Session, content_hash: str
+    ) -> DocumentAdmissionSnapshot: ...
+
     async def submit(
         self,
         session: Session,
@@ -94,6 +119,8 @@ class DocumentOperations(Protocol):
         self, session: Session, document_id: str
     ) -> DocumentExtractionReport: ...
 
+    async def lab_trends(self, session: Session) -> LabTrendResponse: ...
+
 
 class PageRenderer(Protocol):
     async def page_png(
@@ -112,12 +139,57 @@ class DocumentCoordinator:
         encounter_belongs_to_patient: Callable[[str, str], Awaitable[bool]],
         credential_ref_for_session: Callable[[Session], Awaitable[str]],
         page_renderer: PageRenderer | None = None,
+        events: EventEmitter | None = None,
     ) -> None:
         self._repository = repository
         self._source_writer = source_writer
         self._encounter_belongs = encounter_belongs_to_patient
         self._credential_ref = credential_ref_for_session
         self._page_renderer = page_renderer
+        self._events = events
+
+    @staticmethod
+    def _queue_age_ms(record) -> float:
+        try:
+            created = datetime.fromisoformat(record.created_ts)
+            if created.tzinfo is None:
+                return 0.0
+            return max(
+                (datetime.now(timezone.utc) - created).total_seconds() * 1000,
+                0.0,
+            )
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+
+    def _emit_queue(self, record) -> None:
+        if self._events is None:
+            return
+        self._events.emit(
+            EventType.QUEUE_STATE,
+            {
+                "state": record.state,
+                "attempt_count": record.attempt_count,
+                "queue_age_ms": self._queue_age_ms(record),
+            },
+            component=EventComponent.API,
+            job_id=record.job_id,
+            correlation_id=record.correlation_id,
+        )
+
+    async def admission_snapshot(
+        self, session: Session, content_hash: str
+    ) -> DocumentAdmissionSnapshot:
+        """Read dedup/workload authority without constructing a remote client."""
+
+        session.authorize_patient(session.patient_id)
+        existing = await self._repository.find_by_patient_hash(
+            session.patient_id, content_hash
+        )
+        outstanding_jobs = await self._repository.count_outstanding()
+        return DocumentAdmissionSnapshot(
+            duplicate=existing is not None,
+            outstanding_jobs=outstanding_jobs,
+        )
 
     async def submit(
         self,
@@ -145,6 +217,12 @@ class DocumentCoordinator:
                 credential_ref=credential_ref,
             )
         )
+        self._emit_queue(record)
+        telemetry = DocumentTelemetry(
+            self._events,
+            correlation_id=record.correlation_id,
+            job_id=record.job_id,
+        )
         source_owner = f"source:{correlation_id}"
         claimed = await self._repository.claim_source_storage(
             record.document_id,
@@ -164,21 +242,38 @@ class DocumentCoordinator:
                 payload_hash=upload.content_hash,
             )
             try:
-                result = await self._source_writer.execute(
-                    spec,
-                    payload=DocumentWritePayload(
-                        filename=f"{marker}-{upload.filename}",
-                        content_type=upload.content_type,
-                        content=upload.data,
-                    ),
-                )
+                async with telemetry.stage("source_write") as span:
+                    result = await self._source_writer.execute(
+                        spec,
+                        payload=DocumentWritePayload(
+                            # The remote title is a server-generated marker only. The
+                            # caller's original filename is metadata, never executable
+                            # content in OpenEMR's document UI.
+                            filename=(
+                                marker
+                                + _SOURCE_EXTENSION_BY_MEDIA_TYPE[upload.content_type]
+                            ),
+                            content_type=upload.content_type,
+                            content=upload.data,
+                        ),
+                    )
             except (ReconciliationConflict, ReconciliationRequired):
+                telemetry.record_write_transition(
+                    WriteLeg.SOURCE_DOCUMENT,
+                    state="unknown",
+                    verified=False,
+                )
                 record = await self._repository.finish_source_storage(
                     record.document_id,
                     owner=source_owner,
                     state="reconciling",
                 )
             else:
+                telemetry.record_write_result(
+                    WriteLeg.SOURCE_DOCUMENT,
+                    result,
+                    latency_ms=span.latency_ms,
+                )
                 if result.state is WriteState.COMPLETE:
                     record = await self._repository.finish_source_storage(
                         record.document_id,
@@ -200,6 +295,7 @@ class DocumentCoordinator:
                     )
         else:
             record = await self._repository.get(record.document_id)
+        self._emit_queue(record)
         return DocumentSubmission(self._accepted(record), duplicate=not created)
 
     async def status(self, session: Session, document_id: str) -> DocumentStatus:
@@ -226,6 +322,7 @@ class DocumentCoordinator:
             raise DocumentAccessError(document_id) from exc
         except DocumentNotRetryable as exc:
             raise RetryConflict(document_id) from exc
+        self._emit_queue(record)
         return RetryAccepted(
             job_id=record.job_id,
             document_id=record.document_id,

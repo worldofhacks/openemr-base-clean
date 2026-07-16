@@ -10,8 +10,9 @@ fallback-rate is alertable; any failure propagates to the tracer, which counts i
 
 from __future__ import annotations
 
+import math
 import time
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, get_args, runtime_checkable
 
 from app.llm.cost import estimate_cost
 from app.llm.provider import Usage
@@ -21,6 +22,14 @@ from app.observability.trace import (
     TraceStep,
     hash_identifier,
     sanitize_request_url,
+)
+from app.observability.events import (
+    EventComponent,
+    EventEmitter,
+    EventSeverity,
+    EventType,
+    OperationalStepCode,
+    VerificationOutcomeCode,
 )
 
 
@@ -78,51 +87,96 @@ def _cost_details(detail: dict, model: str) -> dict[str, float] | None:
 _CONTENT_MARKER = "__copilot_marked_content_v1__"
 _CONTENT_VALUE = "value"
 _REDACTED_CONTENT = "<redacted clinical trace content>"
-_CONTENT_DETAIL_KEYS = frozenset({
-    "prompt",
-    "raw_completion",
-    "raw_submit_claims",
-    "content",
-    "claim",
-    "tool_input",
-})
+_COUNT_DETAIL_KEYS = frozenset(
+    {
+        "records",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+    }
+)
+_CLOSED_TEXT_DETAIL_VALUES = {
+    "status": frozenset({"ok", "no_records", "failed", "error"}),
+    "stop_reason": frozenset(
+        {
+            "end_turn",
+            "max_tokens",
+            "model_context_window_exceeded",
+            "pause_turn",
+            "refusal",
+            "stop_sequence",
+            "tool_use",
+        }
+    ),
+    "verdict": frozenset({"pass", "flagged", "blocked", "refused"}),
+    "claim_type": frozenset(
+        {
+            "AllergyClaim",
+            "ConditionClaim",
+            "ImmunizationClaim",
+            "LabValueClaim",
+            "MedicationClaim",
+            "TextClaim",
+        }
+    ),
+}
+_CLOSED_STEP_NAMES = frozenset(
+    {*get_args(OperationalStepCode), "graph.supervisor"}
+)
+_CLOSED_VERDICTS = frozenset(
+    value
+    for value in get_args(VerificationOutcomeCode)
+    if value not in {"complete", "failed"}
+)
+
+
+def _safe_step_identity(name: object, latency_ms: object) -> bool:
+    """Only closed step codes and finite non-negative latency may enter telemetry."""
+
+    if type(name) is not str or name not in _CLOSED_STEP_NAMES:
+        return False
+    if isinstance(latency_ms, bool) or not isinstance(latency_ms, (int, float)):
+        return False
+    return math.isfinite(latency_ms) and latency_ms >= 0
 
 
 def _marked_content(value: Any) -> dict[str, Any]:
-    """Mark a value as clinical trace content so one client-level mask owns disclosure (D16).
+    """Mark legacy/malformed clinical content so one client-level mask always redacts it.
 
-    Content is deliberately retained in the in-process RequestTrace for the synthetic demo and
-    wrapped only at the export boundary. The Langfuse mask below then makes the default-off rule
-    impossible to bypass by adding a new observation mapping without a separate redaction path.
+    ``TraceBuilder`` removes content before constructing ``RequestTrace``.  This marker is a
+    second fail-closed boundary for a manually constructed or older trace: adding a new
+    observation mapping cannot opt prompts, transcripts, claims, tool payloads, credentials,
+    or served text into export.
     """
     return {_CONTENT_MARKER: True, _CONTENT_VALUE: value}
 
 
-def _mask_marked(value: Any, *, enabled: bool) -> Any:
-    """Recursively unwrap or redact only our marked envelopes.
+def _mask_marked(value: Any) -> Any:
+    """Recursively redact every marked envelope without inspecting its payload.
 
     Langfuse invokes its mask once for an entire input/output/metadata value, so marked content
-    can be nested beside a PHI-free summary. Exact built-in container checks avoid invoking
-    hostile mapping/sequence hooks; any exception is handled by the public mask fail-closed.
+    can be nested beside a PHI-free summary. There is intentionally no configuration path that
+    unwraps marked data. Exact built-in container checks avoid invoking hostile mapping/sequence
+    hooks; any exception is handled by the public mask fail-closed.
     """
     if type(value) is dict:
         if value.get(_CONTENT_MARKER) is True:
-            return value.get(_CONTENT_VALUE) if enabled else _REDACTED_CONTENT
-        return {key: _mask_marked(item, enabled=enabled) for key, item in value.items()}
+            return _REDACTED_CONTENT
+        return {key: _mask_marked(item) for key, item in value.items()}
     if type(value) is list:
-        return [_mask_marked(item, enabled=enabled) for item in value]
+        return [_mask_marked(item) for item in value]
     if type(value) is tuple:
-        return [_mask_marked(item, enabled=enabled) for item in value]
+        return [_mask_marked(item) for item in value]
     return value
 
 
-def _content_mask(log_content: bool):
-    """Build the Langfuse SDK mask. Only the literal boolean True opts content in (D16/D5)."""
-    enabled = log_content is True
+def _content_mask() -> Callable[..., Any]:
+    """Build the unconditional Langfuse SDK clinical-content mask."""
 
     def mask(*, data: Any, **_kwargs: Any) -> Any:
         try:
-            return _mask_marked(data, enabled=enabled)
+            return _mask_marked(data)
         except Exception:
             # Masking is both a safety and a soft-dependency boundary: malformed content must
             # neither escape nor make an otherwise valid request fail.
@@ -132,8 +186,24 @@ def _content_mask(log_content: bool):
 
 
 def _content_free_detail(detail: dict) -> dict:
-    """Keep operational metadata while preventing raw content from bypassing the SDK mask."""
-    return {key: value for key, value in detail.items() if key not in _CONTENT_DETAIL_KEYS}
+    """Return closed operational metadata; keys alone never make a value safe.
+
+    Counts must be non-negative integers and text must be one of the closed execution enums.
+    Free-text reasons are deliberately excluded because exception, query, and clinical text can
+    ride in them. Unknown keys and malformed values are dropped before in-process storage and
+    again at export for legacy/manually constructed traces.
+    """
+
+    sanitized: dict[str, int | str] = {}
+    for key in _COUNT_DETAIL_KEYS:
+        value = detail.get(key)
+        if type(value) is int and value >= 0:
+            sanitized[key] = value
+    for key, allowed in _CLOSED_TEXT_DETAIL_VALUES.items():
+        value = detail.get(key)
+        if type(value) is str and value in allowed:
+            sanitized[key] = value
+    return sanitized
 
 
 def _step_content(step: TraceStep, *, served_output: Any | None) -> tuple[Any | None, Any | None]:
@@ -159,7 +229,7 @@ def _step_content(step: TraceStep, *, served_output: Any | None) -> tuple[Any | 
 
 
 def _step_metadata(step: TraceStep) -> dict:
-    """Operational fields plus marked raw model artifacts used only for debugging."""
+    """Allowlisted operational fields; legacy raw artifacts stay marked and redacted."""
     metadata = _content_free_detail(step.detail)
     if step.name == "llm.complete":
         for key in ("raw_completion", "raw_submit_claims"):
@@ -180,7 +250,7 @@ def _verification_summary(trace: RequestTrace) -> tuple[str, list[dict[str, Any]
         f"submitted {submitted} · verified {verified} · dropped {dropped} · "
         f"source={source}"
     )
-    scores = [
+    scores: list[dict[str, Any]] = [
         {"name": "claims_submitted", "value": submitted, "data_type": "NUMERIC"},
         {"name": "claims_verified", "value": verified, "data_type": "NUMERIC"},
         {"name": "claims_dropped", "value": dropped, "data_type": "NUMERIC"},
@@ -211,12 +281,12 @@ class LangfuseSink:
     SDK is imported and the client built on first emit; a missing credential or SDK error
     RAISES so the tracer can count the drop (§6 soft dependency — the tracer swallows)."""
 
-    def __init__(self, *, host: str | None, public_key: str | None, secret_key: str | None,
-                 log_content: bool = False):
+    def __init__(
+        self, *, host: str | None, public_key: str | None, secret_key: str | None
+    ):
         self._host = host
         self._public_key = public_key
         self._secret_key = secret_key
-        self._log_content = log_content is True
         self._client: Any = None
 
     def _get_client(self) -> Any:
@@ -229,7 +299,7 @@ class LangfuseSink:
                 public_key=self._public_key,
                 secret_key=self._secret_key,
                 host=self._host,
-                mask=_content_mask(self._log_content),
+                mask=_content_mask(),
             )
         return self._client
 
@@ -285,6 +355,10 @@ class LangfuseSink:
                 status_message=trace.fallback_kind, end_on_exit=False,
             ) as root:
                 for st in trace.steps:
+                    # Defense in depth for manually constructed/legacy RequestTrace values.
+                    # The normal TraceBuilder path has already enforced the same closed set.
+                    if not _safe_step_identity(st.name, st.latency_ms):
+                        continue
                     end_ns = now_ns + int(st.latency_ms * 1_000_000)
                     observation_input, observation_output = _step_content(
                         st, served_output=served_output)
@@ -338,17 +412,41 @@ class TraceBuilder:
         return self._tracer
 
     def step(self, name: str, *, latency_ms: float, **detail: Any) -> None:
-        self._steps.append(TraceStep(order=self._order, name=name, latency_ms=latency_ms, detail=detail))
+        # RequestTrace itself is an artifact surface, so sanitize before storage rather than
+        # relying on an eventual Langfuse mask. Prompts, transcripts, provider responses,
+        # claims, tool/FHIR payloads, credential/token values, and unknown future fields never
+        # enter the trace. Aggregate token counts remain on the closed operational allowlist.
+        if not _safe_step_identity(name, latency_ms):
+            return
+        operational_detail = _content_free_detail(detail)
+        self._steps.append(
+            TraceStep(
+                order=self._order,
+                name=name,
+                latency_ms=latency_ms,
+                detail=operational_detail,
+            )
+        )
         self._order += 1
 
     def record_usage(self, usage: Usage) -> None:
         self._usage = self._usage.add(usage)
 
     def record_verdict(self, verdict: str) -> None:
-        self._verdicts.append(str(verdict))
+        if type(verdict) is str and verdict in _CLOSED_VERDICTS:
+            self._verdicts.append(verdict)
+
+    def step_summary(self) -> tuple[tuple[str, float], ...]:
+        """Return PHI-free ordered step names/latencies for the terminal event."""
+
+        return tuple((step.name, step.latency_ms) for step in self._steps)
 
     def finish(self, *, model: str, source: str, degraded: bool,
-               fallback_kind: str | None, served_output: str | None = None) -> RequestTrace:
+               fallback_kind: str | None, served_output: str | None = None,
+               emit_summary: bool = True) -> RequestTrace:
+        # Keep the keyword for serving-call compatibility, but never retain clinical output in
+        # the trace value object (including in-memory/test sinks).
+        del served_output
         try:
             cost = estimate_cost(self._usage, model)
         except KeyError:
@@ -372,15 +470,36 @@ class TraceBuilder:
             source=source,
             degraded=degraded,
             fallback_kind=fallback_kind,
-            served_output=served_output,
+            served_output=None,
         )
         self._tracer._emit(trace)
+        if emit_summary and self._tracer.events is not None:
+            bounded_steps = trace.steps[:64]
+            self._tracer.events.emit(
+                EventType.ENCOUNTER_SUMMARY,
+                {
+                    "ordered_steps": [step.name for step in bounded_steps],
+                    "step_latencies_ms": [step.latency_ms for step in bounded_steps],
+                    "input_tokens": trace.input_tokens,
+                    "output_tokens": trace.output_tokens,
+                    "cost_usd": trace.cost_usd,
+                    "retrieval_hit_count": 0,
+                    "extraction_grounding_rate": 0.0,
+                    "verification_outcomes": list(trace.verdicts[:64]),
+                },
+                component=EventComponent.ORCHESTRATOR,
+                severity=(
+                    EventSeverity.WARNING if trace.degraded else EventSeverity.INFO
+                ),
+                correlation_id=trace.correlation_id,
+            )
         return trace
 
 
 class RequestTracer:
-    def __init__(self, sink: TraceSink):
+    def __init__(self, sink: TraceSink, *, events: EventEmitter | None = None):
         self.sink = sink
+        self.events = events
         self.dropped = 0
 
     def begin(self, acct: AccountabilityContext) -> TraceBuilder:

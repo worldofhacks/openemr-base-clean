@@ -18,12 +18,22 @@
 
 # Clinical Co-Pilot for OpenEMR
 
-This fork adds a read-only SMART-on-FHIR sidecar that gives a primary-care clinician a
-cited pre-visit brief over synthetic Synthea charts. The model never writes to OpenEMR and
-its prose is never sent directly to the physician: it produces typed claims, a deterministic
-verifier checks each claim against cited FHIR fields, and a deterministic renderer flushes
-only verified record content. Unsupported claims are blocked; a bounded, explicitly labeled
-grounded fallback is used when synthesis cannot be verified (D2/D7/D9/D13, §2/§5/§6).
+This fork adds two patient-pinned SMART-on-FHIR workflows over synthetic Synthea charts:
+
+- **Week 1 — read-only pre-visit brief.** Six delegated FHIR reads become a typed evidence
+  packet. Model claims are deterministically verified and only verified CitationV2-backed
+  content reaches JSON, SSE, or the UI.
+- **Week 2 — multimodal document workbench.** A dedicated worker stores an uploaded source,
+  extracts and locally grounds its fields, writes a byte-attested artifact, and may append
+  eligible intake vitals to the already selected encounter through permanent exactly-once
+  intents. Lab PDFs and medication lists remain source/artifact only; the system never creates
+  FHIR lab Observations or MedicationRequests.
+
+Document text is untrusted data, never instructions. The answer model receives only verified
+chart/document claims and at most five canonical reranked guideline snippets; a deterministic
+critic approves the complete composition before any clinical answer bytes flush. Unsupported,
+uncited, altered, mixed-source, diagnostic, treatment, ordering, or prescribing claims return
+the existing manual-review refusal.
 
 - **OpenEMR:** https://openemr-production-cc95.up.railway.app
 - **Clinical Co-Pilot agent:** https://agent-production-9f62.up.railway.app
@@ -31,24 +41,20 @@ grounded fallback is used when synthesis cannot be verified (D2/D7/D9/D13, §2/�
 - **Security/data-quality audit:** [AUDIT.md](docs/week1/AUDIT.md)
 - **Target physician and UC1–UC4:** [USERS.md](USERS.md)
 - **Deployment and rollback:** [DEPLOYMENT.md](DEPLOYMENT.md)
-- **Eval results:** [agent/evals/results.json](agent/evals/results.json)
+- **Week 2 implementation evidence:** [docs/week2/evidence](docs/week2/evidence)
+- **Eval gate:** `cd agent && python -m evals.w2_runner run --tier recorded`
 
 ```text
-OpenEMR chart --SMART launch + delegated read scopes--> Python sidecar
-                                                        | six FHIR reads
-                                                        v
-                                               typed EvidencePacket
-                                                        |
-                                              Sonnet typed claims
-                                                        |
-                                      deterministic verify-then-flush
-                                                        v
-                                           cited practitioner brief
+Week 1: OpenEMR chart -> delegated FHIR reads -> typed packet -> verify -> cited brief
+Week 2: pinned upload -> durable worker -> OCR/VLM proposal -> local grounding
+                                    -> source + artifact (+ eligible intake vitals)
+                                    -> top-five evidence -> critic -> cited answer
 ```
 
 All project-specific application code lives under `agent/`; the inherited PHP EHR remains
-the system of record. The demo is synthetic-data-only and intentionally has no write tools,
-OpenEMR database credentials, diagnosis/prescribing behavior, or chart-mutation path.
+the system of record and its PHP/schema are unchanged. The synthetic-only demo exposes no
+OpenEMR database credentials and no diagnosis, prescribing, medication-order, or lab-
+Observation write path. Week 2 uses only the documented delegated document/vital surfaces.
 
 ## Agent setup
 
@@ -63,13 +69,22 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 pytest -q
 python -m evals.runner
+python -m evals.w2_runner run --tier recorded
+make hooks
 uvicorn app.main:app --reload --port 8000
 ```
 
-`GET /health` is process liveness. `GET /ready` performs real FHIR, Anthropic, Postgres,
-and Langfuse probes. A patient-specific brief requires a SMART launch from OpenEMR; the
-standalone synthetic-demo fallback begins at the agent's `/launch` route. The runnable
-authenticated grader flow is documented in [agent/bruno/README.md](agent/bruno/README.md).
+`make hooks` installs the committed repository-local pre-push hook; it runs the same full
+50-case recorded gate as CI. Live Tier 2 has explicit cost/time ceilings, returns
+`INCONCLUSIVE` when provider capacity or either ceiling is exhausted, and cannot pass in CI or
+on `main` without the canonical reviewed green baseline. Candidate baseline generation is a
+separate local command; CI never rewrites it. See [agent/evals/README.md](agent/evals/README.md).
+
+`GET /health` reports liveness and deployed source SHA. `GET /ready` performs bounded,
+cached hard/soft probes. Week 1 starts at `/launch`; the separately registered Week 2 flow
+starts at `/week2/launch` and fails closed unless the document runtime attestations are
+complete. The runnable authenticated grader flows are documented in
+[agent/bruno/README.md](agent/bruno/README.md).
 
 ## OpenEMR foundation
 

@@ -57,6 +57,30 @@ class ParseAppRedirectTests(unittest.TestCase):
                 "https://agent.example.test",
             )
 
+    def test_accepts_the_week2_destination_only_for_the_week2_flow(self) -> None:
+        payload = dev_mint.parse_session_redirect(
+            "https://agent.example.test/week2?sid=session_abc-123",
+            "https://agent.example.test",
+            flow="week2",
+        )
+
+        self.assertEqual(payload.session_id, "session_abc-123")
+        with self.assertRaises(dev_mint.MintError):
+            dev_mint.parse_session_redirect(
+                "https://agent.example.test/app?sid=session_abc-123",
+                "https://agent.example.test",
+                flow="week2",
+            )
+
+
+class CliTests(unittest.TestCase):
+    def test_flow_defaults_to_week1_and_accepts_week2(self) -> None:
+        self.assertEqual(dev_mint._argument_parser().parse_args([]).flow, "week1")
+        self.assertEqual(
+            dev_mint._argument_parser().parse_args(["--flow", "week2"]).flow,
+            "week2",
+        )
+
 
 class BrowserInterceptionTests(unittest.TestCase):
     def test_blocks_only_chat_on_the_expected_agent_origin(self) -> None:

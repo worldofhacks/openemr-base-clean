@@ -7,6 +7,9 @@ the still-independent B2 implementation module.
 
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from app.llm.provider import Usage
 from app.orchestrator.composer import (
     CandidateClaim,
@@ -22,6 +25,7 @@ from app.schemas.citations import (
     CitationV2,
     EvidenceSnippet,
 )
+from app.schemas.answers import VerifiedClinicalClaim
 from app.schemas.extraction import NormBBox
 from app.schemas.retrieval import EvidenceSearchRequest, K_MAX
 from app.schemas.workers import WorkerInput, WorkerOutput
@@ -44,6 +48,13 @@ def _citation(
 
 
 def _brief() -> BriefResult:
+    citation = CitationV2(
+        source_type=CitationSourceType.PATIENT_RECORD,
+        source_id="Observation/synthetic-observation",
+        page_or_section=None,
+        field_or_chunk_id="Observation:synthetic:01234567",
+        quote_or_value="synthetic grounded value",
+    )
     return BriefResult(
         text="Existing W1 verified brief.",
         source="llm",
@@ -51,7 +62,12 @@ def _brief() -> BriefResult:
         usage=Usage(),
         iterations=1,
         verdicts=["pass"],
-        citations=["Observation/synthetic:field:12345678"],
+        citations=[citation],
+        verified_claims=(
+            VerifiedClinicalClaim(
+                text="Existing W1 verified brief.", citation=citation
+            ),
+        ),
     )
 
 
@@ -101,10 +117,15 @@ def test_verify_then_render_enforces_source_specific_citations_and_bbox() -> Non
             ),
             CandidateClaim(
                 text="Guideline missing section",
-                citation=_citation(
-                    CitationSourceType.GUIDELINE,
+                # Construction now rejects this shape. ``model_construct`` deliberately
+                # simulates a corrupted legacy/internal value so the composer remains a
+                # second fail-closed boundary.
+                citation=CitationV2.model_construct(
+                    source_type=CitationSourceType.GUIDELINE,
+                    source_id="synthetic-source",
                     page_or_section=None,
-                    field_id="chunk-3",
+                    field_or_chunk_id="chunk-3",
+                    quote_or_value="synthetic grounded value",
                 ),
                 verified=True,
             ),
@@ -147,6 +168,21 @@ def test_verify_then_render_enforces_source_specific_citations_and_bbox() -> Non
     assert document_claim.overlay.page == 2
     assert document_claim.overlay.bbox == box
     assert all(claim.citation is not None for claim in result.claims)
+
+
+def test_uploaded_document_verified_claim_pages_are_one_based() -> None:
+    citation = _citation(
+        CitationSourceType.UPLOADED_DOCUMENT,
+        page_or_section="0",
+        field_id="results.0.value",
+    )
+    with pytest.raises(ValidationError):
+        VerifiedClinicalClaim(
+            text="Synthetic grounded fact",
+            citation=citation,
+            page=0,
+            bbox=NormBBox(x0=0.1, y0=0.2, x1=0.3, y1=0.4),
+        )
 
 
 def test_chart_citation_adapter_pins_the_frozen_w1_mapping() -> None:

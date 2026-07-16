@@ -2,6 +2,16 @@
 
 from __future__ import annotations
 
+import importlib
+import importlib.metadata
+import importlib.util
+import json
+import os
+import re
+import subprocess
+import sys
+
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -19,6 +29,33 @@ def test_app_boots_and_exposes_root(complete_env):
         assert "sk-ant-test" not in resp.text
 
 
+def test_sensitive_routes_are_never_browser_or_proxy_cached(complete_env):
+    from app.main import create_app
+
+    with TestClient(create_app(readiness_checks=[])) as client:
+        ui_response = client.get("/week2")
+        invalid_chat_response = client.post("/chat", json={})
+
+    assert ui_response.headers["Cache-Control"] == "private, no-store"
+    assert invalid_chat_response.headers["Cache-Control"] == "private, no-store"
+
+
+def test_request_body_limit_rejects_before_json_or_model_processing(complete_env):
+    from app.main import create_app
+
+    with TestClient(create_app(readiness_checks=[])) as client:
+        response = client.post(
+            "/chat",
+            content=b'x' * (33 * 1024),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": "request body exceeds the accepted size"}
+    assert response.headers["Cache-Control"] == "private, no-store"
+    assert response.headers["X-Copilot-Request-Id"]
+
+
 # ---------------------------------------------------------------------------
 # W2-M1 — Day-1 container spike: W2 native-dependency import smoke (AC-1) and
 # the no-torch / consistent-environment guard (AC-2). Appended per the
@@ -29,17 +66,6 @@ def test_app_boots_and_exposes_root(complete_env):
 # never a collection error that takes down the whole file. No model downloads
 # and no network access anywhere below (imports and local-metadata scans only).
 # ---------------------------------------------------------------------------
-
-import importlib
-import importlib.metadata
-import importlib.util
-import os
-import re
-import subprocess
-import sys
-
-import pytest
-
 
 def _import_w2_dep_or_fail(module_name: str, why: str):
     """Import a W2-M1 dependency inside a test body, failing helpfully if absent.
@@ -249,9 +275,6 @@ def test_installed_environment_passes_pip_check():
 # operator probe's deterministic seams: synthetic data, fake cgroup files, and
 # fake model loaders. They never download a model, open a socket, or run OCR.
 # ---------------------------------------------------------------------------
-
-import json
-
 
 _MIB = 1024**2
 _IMMUTABLE_HF_REVISION_RE = re.compile(r"[0-9a-f]{40}")

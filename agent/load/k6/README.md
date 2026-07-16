@@ -1,7 +1,8 @@
 # F6 k6 load profiles
 
-These scripts are bounded probes for the Clinical Co-Pilot's deployed read-only API. They do
-not create patients, mutate charts, or call an OpenEMR write endpoint.
+The legacy Week 1 scripts are bounded probes for the deployed read-only API. The Week 2
+profile below additionally uploads committed synthetic documents to an already synthetic
+deployment; it must never target a real patient or real clinical document.
 
 The commands below use the pinned `grafana/k6:2.1.0` image. k6's
 [`per-vu-iterations`](https://grafana.com/docs/k6/latest/using-k6/scenarios/executors/per-vu-iterations/)
@@ -87,3 +88,50 @@ configuration in `CHAT_VALIDATE_ONLY` mode, and use synthetic placeholder data:
 ```bash
 agent/load/k6/tests/guardrails.sh
 ```
+
+## Week 2 1/10/50-VU flow ladder
+
+`w2_profiles.js` runs three disjoint `per-vu-iterations` scenarios: 1, then 10,
+then 50 concurrent users. Supply a mode with `PROFILE=retrieval|ingestion|extraction|full_graph|week1`.
+The ingestion mode measures a new-upload 202 only; extraction measures from upload through
+the terminal completed job. Retrieval sends the required session-pin header. Week 1 checks
+`/health`, `/ready`, and `/chat`; full graph requires an explicit acknowledgement that the
+target deployment has the Week 2 graph enabled.
+
+The application intentionally limits document work to one concurrent upload per session.
+The profile therefore requires 61 distinct, synthetic SMART-pinned contexts: one for the
+1-VU stage, ten new contexts for the 10-VU stage, and fifty new contexts for the 50-VU
+stage. Reusing one session or patient would measure quota rejection and permanent document
+deduplication instead of the requested flow. The server's global four-upload admission cap
+is exercised with a bounded 503 retry; terminal capacity failure remains an error rather
+than being relabeled as latency. Store these fields in a private, untracked JSON
+file with this shape; never commit or print the populated file:
+
+```json
+[
+  {"session_id": "opaque synthetic session", "patient_id": "synthetic patient"}
+]
+```
+
+For document modes, mount a committed synthetic PDF and the private context file read-only.
+Every mode requires `SYNTHETIC_ONLY_ACK=synthetic-sessions-and-documents`. Provider-bearing
+modes also require `ALLOW_PROVIDER_SPEND=true`; even ingestion triggers asynchronous worker
+extraction after the upload response. Example container arguments (paths are illustrative):
+
+```bash
+docker run --rm \
+  -e PROFILE=extraction \
+  -e AGENT_BASE_URL=https://agent.example.org \
+  -e SYNTHETIC_CONTEXTS_FILE=/private/contexts.json \
+  -e SYNTHETIC_FIXTURE=/fixtures/lab-clean-glucose.pdf \
+  -e SYNTHETIC_ONLY_ACK=synthetic-sessions-and-documents \
+  -e ALLOW_PROVIDER_SPEND=true \
+  -v /private/w2-load:/private:ro \
+  -v "$PWD/agent/evals/fixtures/golden:/fixtures:ro" \
+  -v "$PWD/agent/load/k6:/scripts:ro" \
+  grafana/k6:2.1.0 run /scripts/w2_profiles.js
+```
+
+Retain only aggregate k6 output and separately sampled deployment CPU/memory, version,
+deployment ID, exact SHA, token, and cost totals. Do not retain response bodies, context
+files, request URLs containing opaque identifiers, prompts, or document contents.

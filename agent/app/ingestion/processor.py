@@ -12,6 +12,12 @@ from datetime import datetime, timedelta, timezone
 
 from app.ingestion.pipeline import DocumentExtractionPipeline, PipelineFailure
 from app.ingestion.repository import DocumentRecord, DocumentRepository
+from app.observability.events import (
+    EventComponent,
+    EventEmitter,
+    EventSeverity,
+    EventType,
+)
 from app.schemas.documents import FailureReason
 
 
@@ -33,6 +39,7 @@ class DocumentProcessor:
         base_backoff_seconds: int = 5,
         now: Callable[[], datetime] | None = None,
         worker_heartbeat: Callable[[str], object] | None = None,
+        events: EventEmitter | None = None,
     ) -> None:
         if lease_seconds <= 0 or max_attempts <= 0 or base_backoff_seconds <= 0:
             raise ValueError("lease, attempt, and backoff bounds must be positive")
@@ -44,6 +51,56 @@ class DocumentProcessor:
         self._base_backoff_seconds = base_backoff_seconds
         self._now = now or _utcnow
         self._worker_heartbeat = worker_heartbeat
+        self._events = events
+
+    @staticmethod
+    def _legs(record: DocumentRecord) -> list[str]:
+        legs = ["extraction_artifact"]
+        if record.doc_type == "intake_form" and record.encounter_id is not None:
+            legs.append("vital")
+        return legs
+
+    def _queue_age_ms(self, record: DocumentRecord) -> float:
+        try:
+            created = datetime.fromisoformat(record.created_ts)
+            if created.tzinfo is None:
+                return 0.0
+            return max((self._now() - created).total_seconds() * 1000, 0.0)
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+
+    def _emit(
+        self,
+        event_type: EventType,
+        record: DocumentRecord,
+        attributes: dict[str, object],
+        *,
+        severity: EventSeverity = EventSeverity.INFO,
+    ) -> None:
+        if self._events is None:
+            return
+        self._events.emit(
+            event_type,
+            attributes,
+            component=EventComponent.WORKER,
+            severity=severity,
+            job_id=record.job_id,
+            correlation_id=record.correlation_id,
+        )
+
+    def _emit_queue(self, record: DocumentRecord, state: str) -> None:
+        self._emit(
+            EventType.QUEUE_STATE,
+            record,
+            {
+                "state": state,
+                "attempt_count": record.attempt_count,
+                "queue_age_ms": self._queue_age_ms(record),
+            },
+            severity=(
+                EventSeverity.ERROR if state == "failed" else EventSeverity.INFO
+            ),
+        )
 
     async def record_worker_heartbeat(self) -> None:
         """Publish process liveness independently of any claimed clinical job."""
@@ -61,6 +118,16 @@ class DocumentProcessor:
         )
         if claimed is None:
             return None
+        self._emit(
+            EventType.JOB_CLAIMED,
+            claimed,
+            {
+                "reason": None,
+                "attempt_count": claimed.attempt_count,
+                "legs": self._legs(claimed),
+            },
+        )
+        self._emit_queue(claimed, "claimed")
 
         async def on_stage(state: str) -> None:
             await self._repository.heartbeat(
@@ -68,9 +135,10 @@ class DocumentProcessor:
                 worker_id=self._worker_id,
                 lease_seconds=self._lease_seconds,
             )
-            await self._repository.transition_claimed(
+            transitioned = await self._repository.transition_claimed(
                 claimed.document_id, worker_id=self._worker_id, state=state
             )
+            self._emit_queue(transitioned, state)
 
         try:
             result = await self._pipeline.extract_document(
@@ -83,12 +151,14 @@ class DocumentProcessor:
             return await self._handle_failure(claimed, exc.reason)
         except Exception:
             return await self._handle_failure(claimed, FailureReason.WORKER_RESTART)
-        return await self._repository.complete_claimed(
+        completed = await self._repository.complete_claimed(
             claimed.document_id,
             worker_id=self._worker_id,
             fields_grounded=result.fields_grounded,
             fields_unsupported=result.fields_unsupported,
         )
+        self._emit_queue(completed, "complete")
+        return completed
 
     async def _handle_failure(
         self, claimed: DocumentRecord, reason: FailureReason
@@ -102,16 +172,31 @@ class DocumentProcessor:
             }
             or claimed.attempt_count >= self._max_attempts
         ):
-            return await self._repository.fail_claimed(
+            result = await self._repository.fail_claimed(
                 claimed.document_id, worker_id=self._worker_id, reason=reason
             )
-        delay = self._base_backoff_seconds * (2 ** (claimed.attempt_count - 1))
-        return await self._repository.reschedule_claimed(
-            claimed.document_id,
-            worker_id=self._worker_id,
-            reason=reason,
-            next_retry_at=self._now() + timedelta(seconds=delay),
+            queue_state = "failed"
+        else:
+            delay = self._base_backoff_seconds * (2 ** (claimed.attempt_count - 1))
+            result = await self._repository.reschedule_claimed(
+                claimed.document_id,
+                worker_id=self._worker_id,
+                reason=reason,
+                next_retry_at=self._now() + timedelta(seconds=delay),
+            )
+            queue_state = "rescheduled"
+        self._emit(
+            EventType.JOB_FAILED,
+            result,
+            {
+                "reason": reason.value,
+                "attempt_count": result.attempt_count,
+                "legs": self._legs(result),
+            },
+            severity=EventSeverity.ERROR,
         )
+        self._emit_queue(result, queue_state)
+        return result
 
 
 async def run_worker(

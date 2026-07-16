@@ -272,6 +272,8 @@ async def test_synthetic_lab_pdf_full_path_renders_grounded_and_guideline_eviden
         "route_extract",
         "route_retrieve",
         "compose_answer",
+        "review_critic",
+        "critic_approve",
         "done",
     ]
 

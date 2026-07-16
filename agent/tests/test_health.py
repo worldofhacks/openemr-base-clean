@@ -8,9 +8,13 @@ because D13 + §6 keep the agent serving without observability.
 
 from __future__ import annotations
 
+import asyncio
+
+import pytest
 from fastapi.testclient import TestClient
 
-from app.health import DependencyResult
+from app.config import Settings
+from app.health import CachedReadinessRunner, DependencyResult
 
 
 def _app_with_checks(checks):
@@ -46,6 +50,7 @@ def test_health_is_liveness_only_200(complete_env):
         resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "alive"
+    assert resp.json()["sha"] == "unknown"
 
 
 def test_ready_200_when_all_dependencies_ok(complete_env):
@@ -89,3 +94,35 @@ def test_ready_503_when_only_soft_ok_but_hard_down(complete_env):
     with TestClient(_app_with_checks(checks)) as client:
         resp = client.get("/ready")
     assert resp.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_readiness_runner_caches_successful_probe(complete_env):
+    calls = 0
+
+    async def probe(_settings):
+        nonlocal calls
+        calls += 1
+        return DependencyResult("postgres", "hard", True, "ok")
+
+    runner = CachedReadinessRunner(ttl_seconds=60, probe_timeout_seconds=1)
+    settings = Settings()
+    first = await runner.run(settings, [probe])
+    second = await runner.run(settings, [probe])
+    assert first is second
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_readiness_runner_bounds_soft_reranker_timeout(complete_env):
+    async def probe_active_reranker(_settings):
+        await asyncio.sleep(1)
+        return DependencyResult("active_reranker", "soft", True, "ok")
+
+    runner = CachedReadinessRunner(ttl_seconds=60, probe_timeout_seconds=0.01)
+    report = await runner.run(Settings(), [probe_active_reranker])
+    assert report.status == "degraded"
+    assert report.http_status == 200
+    assert report.results == [
+        DependencyResult("active_reranker", "soft", False, "timeout")
+    ]

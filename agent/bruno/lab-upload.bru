@@ -1,0 +1,37 @@
+meta {
+  name: Lab upload
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{agent_base_url}}/documents
+  body: multipartForm
+  auth: none
+}
+
+body:multipart-form {
+  session_id: {{session_id}}
+  doc_type: lab_pdf
+  file: @file(../evals/fixtures/documents/clean.pdf)
+}
+
+tests {
+  test("lab source is accepted or permanently deduplicated", function () {
+    expect([200, 202]).to.include(res.getStatus());
+    const body = res.getBody();
+    expect(body.document_id).to.be.a("string").and.not.be.empty;
+    expect(body.status_url).to.equal("/documents/" + body.document_id + "/status");
+  });
+}
+
+script:post-response {
+  if ([200, 202].includes(res.getStatus())) {
+    bru.setVar("lab_document_id", res.getBody().document_id);
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 180000
+}

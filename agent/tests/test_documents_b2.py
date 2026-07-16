@@ -9,6 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from PIL import Image
+from pypdf import PdfWriter
 
 from app.schemas.documents import (
     DocumentStatus,
@@ -43,6 +44,57 @@ def test_size_cap_has_specific_reason():
             doc_type="lab_pdf",
         )
     assert caught.value.reason is FailureReason.SIZE_OR_PAGE_CAP_EXCEEDED
+
+
+def test_image_decode_resource_cap_has_specific_reason():
+    from app.ingestion.uploads import UploadValidationError, validate_upload
+
+    image = Image.new("1", (5_001, 5_001))
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+
+    with pytest.raises(UploadValidationError) as caught:
+        validate_upload(
+            filename="synthetic.png",
+            content_type="image/png",
+            data=buffer.getvalue(),
+            doc_type="intake_form",
+        )
+    assert caught.value.reason is FailureReason.SIZE_OR_PAGE_CAP_EXCEEDED
+
+
+def test_pdf_render_resource_cap_has_specific_reason():
+    from app.ingestion.uploads import UploadValidationError, validate_upload
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=4_000, height=4_000)
+    buffer = BytesIO()
+    writer.write(buffer)
+
+    with pytest.raises(UploadValidationError) as caught:
+        validate_upload(
+            filename="synthetic.pdf",
+            content_type="application/pdf",
+            data=buffer.getvalue(),
+            doc_type="lab_pdf",
+        )
+    assert caught.value.reason is FailureReason.SIZE_OR_PAGE_CAP_EXCEEDED
+
+
+@pytest.mark.asyncio
+async def test_route_upload_reader_stops_at_cap_and_closes_spooled_file():
+    from starlette.datastructures import UploadFile
+
+    from app.ingestion.uploads import MAX_UPLOAD_BYTES, UploadValidationError
+    from app.routes.documents import _read_bounded_upload
+
+    spool = BytesIO(b"x" * (MAX_UPLOAD_BYTES + 1))
+    upload = UploadFile(filename="synthetic.pdf", file=spool)
+    with pytest.raises(UploadValidationError) as caught:
+        await _read_bounded_upload(upload)
+
+    assert caught.value.reason is FailureReason.SIZE_OR_PAGE_CAP_EXCEEDED
+    assert spool.closed
 
 
 @pytest.mark.parametrize("filename", ["../synthetic.pdf", "", "synthetic\x00.pdf"])
@@ -95,6 +147,17 @@ class _FakeDocumentOperations:
     def __init__(self) -> None:
         self.submissions = []
         self.retries = 0
+        self.admission_duplicate = False
+        self.outstanding_jobs = 0
+        self.submission_duplicate = False
+
+    async def admission_snapshot(self, session, content_hash):
+        from app.ingestion.service import DocumentAdmissionSnapshot
+
+        return DocumentAdmissionSnapshot(
+            duplicate=self.admission_duplicate,
+            outstanding_jobs=self.outstanding_jobs,
+        )
 
     async def submit(self, session, upload, *, encounter_id, correlation_id):
         from app.ingestion.service import DocumentSubmission
@@ -108,7 +171,7 @@ class _FakeDocumentOperations:
                 status_url="/documents/doc-synthetic-1/status",
                 correlation_id=correlation_id,
             ),
-            duplicate=False,
+            duplicate=self.submission_duplicate,
         )
 
     async def status(self, session, document_id):
@@ -209,11 +272,15 @@ class _FakeServices:
         return self.session
 
 
-def _documents_client(services: _FakeServices) -> TestClient:
+def _documents_client(
+    services: _FakeServices, *, admission: object | None = None
+) -> TestClient:
     from app.routes.documents import router
 
     app = FastAPI()
     app.state.services = services
+    if admission is not None:
+        app.state.document_upload_admission = admission
     app.include_router(router)
     return TestClient(app)
 
@@ -259,6 +326,117 @@ def test_intake_png_multipart_reaches_typed_submission_contract():
     submitted = services.documents.submissions[0][1]
     assert submitted.content_type == "image/png"
     assert submitted.filename == "synthetic-intake.png"
+
+
+def _tight_upload_admission(*, daily_count: int = 1, outstanding_cap: int = 1):
+    from app.ingestion.admission import (
+        UploadAdmissionController,
+        UploadAdmissionLimits,
+    )
+
+    return UploadAdmissionController(
+        limits=UploadAdmissionLimits(
+            session_daily_count=daily_count,
+            session_daily_bytes=10 * 1024 * 1024,
+            clinician_daily_count=daily_count,
+            clinician_daily_bytes=10 * 1024 * 1024,
+            per_session_concurrent=1,
+            global_concurrent=1,
+            global_outstanding_jobs=outstanding_cap,
+            max_daily_meter_keys=10,
+        ),
+        hash_key=b"synthetic-admission-key-for-tests",
+    )
+
+
+def test_upload_daily_quota_is_content_free_429_before_submission():
+    services = _FakeServices()
+    client = _documents_client(services, admission=_tight_upload_admission())
+    request = {
+        "data": {
+            "session_id": "session-synthetic",
+            "patient_id": "patient-synthetic-a",
+            "doc_type": "intake_form",
+        },
+        "files": {
+            "file": ("synthetic-intake.png", _synthetic_png(), "image/png")
+        },
+    }
+
+    assert client.post("/documents", **request).status_code == 202
+    rejected = client.post("/documents", **request)
+
+    assert rejected.status_code == 429
+    assert rejected.json() == {"detail": "document upload quota exceeded"}
+    assert int(rejected.headers["retry-after"]) >= 1
+    assert len(services.documents.submissions) == 1
+
+
+def test_upload_global_job_cap_is_content_free_503_before_submission():
+    services = _FakeServices()
+    services.documents.outstanding_jobs = 1
+    response = _documents_client(
+        services, admission=_tight_upload_admission(outstanding_cap=1)
+    ).post(
+        "/documents",
+        data={
+            "session_id": "session-synthetic",
+            "patient_id": "patient-synthetic-a",
+            "doc_type": "intake_form",
+        },
+        files={
+            "file": ("synthetic-intake.png", _synthetic_png(), "image/png")
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "document upload capacity unavailable"}
+    assert services.documents.submissions == []
+
+
+def test_known_duplicate_bypasses_new_work_quota_and_job_cap():
+    services = _FakeServices()
+    services.documents.admission_duplicate = True
+    services.documents.submission_duplicate = True
+    services.documents.outstanding_jobs = 100
+    client = _documents_client(
+        services, admission=_tight_upload_admission(outstanding_cap=1)
+    )
+    request = {
+        "data": {
+            "session_id": "session-synthetic",
+            "patient_id": "patient-synthetic-a",
+            "doc_type": "intake_form",
+        },
+        "files": {
+            "file": ("synthetic-intake.png", _synthetic_png(), "image/png")
+        },
+    }
+
+    assert client.post("/documents", **request).status_code == 200
+    assert client.post("/documents", **request).status_code == 200
+    assert len(services.documents.submissions) == 2
+
+
+def test_dedup_race_refunds_reserved_daily_quota():
+    services = _FakeServices()
+    services.documents.admission_duplicate = False
+    services.documents.submission_duplicate = True
+    client = _documents_client(services, admission=_tight_upload_admission())
+    request = {
+        "data": {
+            "session_id": "session-synthetic",
+            "patient_id": "patient-synthetic-a",
+            "doc_type": "intake_form",
+        },
+        "files": {
+            "file": ("synthetic-intake.png", _synthetic_png(), "image/png")
+        },
+    }
+
+    assert client.post("/documents", **request).status_code == 200
+    assert client.post("/documents", **request).status_code == 200
+    assert len(services.documents.submissions) == 2
 
 
 def test_unattested_live_patient_route_is_typed_403_not_http_500():
@@ -419,15 +597,22 @@ async def test_document_dedup_is_patient_scoped_and_retry_reuses_logical_job():
     assert first.document_id == duplicate.document_id
     assert other_created is True
     assert other.document_id != first.document_id
+    assert (
+        await repo.find_by_patient_hash("patient-synthetic-a", "hash-synthetic")
+    ) == first
+    assert await repo.find_by_patient_hash("patient-synthetic-a", "missing") is None
+    assert await repo.count_outstanding() == 2
 
     failed = await repo.set_state(
         first.document_id, state="failed", reason=FailureReason.STORAGE_WRITE_FAILED
     )
+    assert await repo.count_outstanding() == 1
     retried = await repo.requeue_failed(
         failed.document_id, patient_id="patient-synthetic-a"
     )
     assert retried.job_id == first.job_id
     assert retried.state == "queued"
+    assert await repo.count_outstanding() == 2
 
 
 def test_intake_image_reader_emits_canonical_ocr_boxes():

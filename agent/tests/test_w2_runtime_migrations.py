@@ -25,7 +25,7 @@ async def test_document_migrations_apply_in_order_and_close_connection() -> None
 
     await apply_document_migrations(lambda: _return(connection))
 
-    assert len(connection.executed) == 4
+    assert len(connection.executed) == 5
     assert "agent_document_dedup" in connection.executed[0]
     assert "agent_write_intents" in connection.executed[0]
     assert "agent_extraction_refs" in connection.executed[1]
@@ -34,6 +34,8 @@ async def test_document_migrations_apply_in_order_and_close_connection() -> None
     assert "agent_patient_route_attestations" in connection.executed[3]
     assert "agent_encounter_route_attestations" in connection.executed[3]
     assert "ADD COLUMN IF NOT EXISTS encounter_id" in connection.executed[3]
+    assert "medication_list" in connection.executed[4]
+    assert "agent_document_dedup_doc_type_check" in connection.executed[4]
     assert connection.closed is True
 
 

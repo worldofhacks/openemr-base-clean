@@ -23,6 +23,7 @@ REQUIRED_ENV = {
 
 # Optional vars must be cleared too so the host env can't leak into a test.
 _ALL_KEYS = list(REQUIRED_ENV) + [
+    "DEPLOYMENT_SHA",
     "LANGFUSE_HOST",
     "LANGFUSE_PUBLIC_KEY",
     "LANGFUSE_SECRET_KEY",
@@ -47,12 +48,22 @@ def test_config_loads_when_all_required_present(monkeypatch):
     # Secrets must never leak via repr/str (no hardcoded secrets, D-secrets).
     assert "test-client-secret" not in repr(settings)
     assert "sk-ant-test" not in repr(settings)
-    assert settings.langfuse_log_content is False  # D16: production-safe default preserves D5
+    assert "langfuse_log_content" not in type(settings).model_fields
+    assert settings.deployment_sha == "unknown"
 
 
-def test_langfuse_content_logging_requires_explicit_opt_in(monkeypatch):
+def test_config_accepts_only_exact_lowercase_deployment_sha(monkeypatch):
+    sha = "a" * 40
+    settings = _load_from_env(monkeypatch, {**REQUIRED_ENV, "DEPLOYMENT_SHA": sha})
+    assert settings.deployment_sha == sha
+
+    with pytest.raises(ValidationError):
+        _load_from_env(monkeypatch, {**REQUIRED_ENV, "DEPLOYMENT_SHA": "abc123"})
+
+
+def test_retired_langfuse_content_env_cannot_enable_export(monkeypatch):
     settings = _load_from_env(monkeypatch, {**REQUIRED_ENV, "LANGFUSE_LOG_CONTENT": "true"})
-    assert settings.langfuse_log_content is True
+    assert not hasattr(settings, "langfuse_log_content")
 
 
 @pytest.mark.parametrize("missing", sorted(REQUIRED_ENV.keys()))

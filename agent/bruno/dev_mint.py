@@ -15,7 +15,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
-from typing import NamedTuple, Protocol
+from typing import Literal, NamedTuple, Protocol
 from urllib.parse import parse_qs, urlsplit
 
 
@@ -25,6 +25,7 @@ DEFAULT_SELENIUM_URL = "http://localhost:4444/wd/hub"
 DEFAULT_OUTPUT = Path(__file__).resolve().parent / "environments" / "Runtime.bru"
 _OPAQUE_SESSION_RE = re.compile(r"[A-Za-z0-9_-]+")
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+Flow = Literal["week1", "week2"]
 
 
 class MintError(RuntimeError):
@@ -95,17 +96,32 @@ def require_expected_origin(actual_url: str, expected_base_url: str, stage: str)
         raise MintError(f"{stage} reached an unexpected origin; refusing to continue")
 
 
-def _expected_app_path(agent_base_url: str) -> str:
+def _expected_destination_path(agent_base_url: str, flow: Flow) -> str:
     base_path = urlsplit(_normalize_agent_base_url(agent_base_url)).path.rstrip("/")
-    return f"{base_path}/app"
+    suffix = "/app" if flow == "week1" else "/week2"
+    return f"{base_path}{suffix}"
+
+
+def _expected_app_path(agent_base_url: str) -> str:
+    """Backward-compatible Week 1 helper used by existing local automation."""
+
+    return _expected_destination_path(agent_base_url, "week1")
 
 
 def parse_app_redirect(actual_url: str, expected_base_url: str) -> SessionPayload:
     """Extract the opaque session from the callback's trusted ``/app?sid=`` redirect."""
+    return parse_session_redirect(actual_url, expected_base_url, flow="week1")
+
+
+def parse_session_redirect(
+    actual_url: str, expected_base_url: str, *, flow: Flow
+) -> SessionPayload:
+    """Extract an opaque session from the trusted destination for one closed flow."""
+
     base_url = _normalize_agent_base_url(expected_base_url)
     require_expected_origin(actual_url, base_url, "agent app redirect")
     parts = urlsplit(actual_url)
-    if parts.path != _expected_app_path(base_url) or parts.fragment:
+    if parts.path != _expected_destination_path(base_url, flow) or parts.fragment:
         raise MintError("the agent callback did not produce the expected app redirect")
 
     query = parse_qs(parts.query, keep_blank_values=True)
@@ -166,6 +182,7 @@ def mint_session(
     password: str,
     patient_index: int,
     timeout_seconds: int,
+    flow: Flow = "week1",
 ) -> SessionPayload:
     """Drive standalone SMART launch/patient and return the agent's opaque session envelope."""
     base_url = _normalize_agent_base_url(agent_base_url)
@@ -193,7 +210,8 @@ def mint_session(
         # The callback now redirects to a UI that auto-submits /chat. Let /app commit so
         # current_url is reliable, but block its /chat request so Bruno is the sole caller.
         configure_chat_interception(driver, base_url)
-        driver.get(f"{base_url}/launch")
+        launch_path = "/launch" if flow == "week1" else "/week2/launch"
+        driver.get(f"{base_url}{launch_path}")
         require_expected_origin(driver.current_url, openemr_url, "OpenEMR login")
         wait = WebDriverWait(driver, timeout_seconds)
 
@@ -227,9 +245,9 @@ def mint_session(
 
         def captured_session(current):
             current_url = current.current_url
-            if urlsplit(current_url).path != _expected_app_path(base_url):
+            if urlsplit(current_url).path != _expected_destination_path(base_url, flow):
                 return False
-            return parse_app_redirect(current_url, base_url)
+            return parse_session_redirect(current_url, base_url, flow=flow)
 
         next_step = wait.until(
             lambda current: captured_session(current)
@@ -285,6 +303,12 @@ def _argument_parser() -> argparse.ArgumentParser:
         help="zero-based synthetic patient selector index (default: 0)",
     )
     parser.add_argument(
+        "--flow",
+        choices=("week1", "week2"),
+        default="week1",
+        help="SMART destination flow (default: week1)",
+    )
+    parser.add_argument(
         "--timeout",
         type=int,
         default=60,
@@ -310,6 +334,7 @@ def main(argv: list[str] | None = None) -> int:
             password=password,
             patient_index=args.patient_index,
             timeout_seconds=args.timeout,
+            flow=args.flow,
         )
         write_runtime_environment(DEFAULT_OUTPUT, args.agent_base_url, session.session_id)
     except MintError as exc:

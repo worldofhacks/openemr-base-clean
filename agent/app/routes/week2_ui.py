@@ -9,11 +9,13 @@ rendered as a fact.
 from __future__ import annotations
 
 import json
+import secrets
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 
+from app.routes.openapi_contract import documented_errors, documented_response
 from app.session.store import (
     SessionExpiredError,
     SessionNotFound,
@@ -42,7 +44,7 @@ _PAGE = r"""<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="data:,">
 <title>Week 2 Document Write · Clinical Co-Pilot</title>
-<style>
+<style nonce="__W2_NONCE__">
 :root {
   --navy:#15364d; --navy-2:#204f6d; --ink:#17232c; --muted:#647480;
   --canvas:#f3f5f6; --surface:#fbfcfc; --line:#cfd7dc; --line-strong:#9eabb3;
@@ -51,6 +53,7 @@ _PAGE = r"""<!doctype html>
   --red-bg:#fbeceb; --red:#9b302c; --radius:6px;
 }
 * { box-sizing:border-box; }
+[hidden] { display:none !important; }
 html,body { height:100%; }
 body { margin:0; background:var(--canvas); color:var(--ink); font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
 button,input { font:inherit; }
@@ -75,11 +78,13 @@ button:disabled { cursor:not-allowed; opacity:.55; }
 .eyebrow { margin:0 0 4px; color:var(--muted); font-size:11px; font-weight:750; letter-spacing:.08em; text-transform:uppercase; }
 .subtle { color:var(--muted); font-size:12px; }
 .section-note { margin:8px 0 0; color:var(--muted); font-size:12px; }
-.type-switch { display:grid; grid-template-columns:1fr 1fr; gap:0; margin-bottom:16px; }
-.type-switch button { border:1px solid var(--line-strong); background:#fff; color:var(--muted); padding:9px 8px; font-weight:700; }
+.type-switch { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:0; margin-bottom:16px; }
+.type-switch button { min-width:0; border:1px solid var(--line-strong); background:#fff; color:var(--muted); padding:8px 5px; font-weight:700; line-height:1.2; }
 .type-switch button:first-child { border-radius:5px 0 0 5px; }
-.type-switch button:last-child { border-left:0; border-radius:0 5px 5px 0; }
+.type-switch button + button { border-left:0; }
+.type-switch button:last-child { border-radius:0 5px 5px 0; }
 .type-switch button.active { background:var(--navy); color:#fff; border-color:var(--navy); }
+.type-note { display:block; margin-top:3px; font-size:9px; font-weight:600; line-height:1.2; }
 .drop { position:relative; display:block; border:1px dashed var(--line-strong); border-radius:var(--radius); padding:20px 12px; text-align:center; background:#fff; cursor:pointer; }
 .drop:focus-within { outline:2px solid #74a8c6; outline-offset:2px; }
 .drop strong { display:block; }
@@ -100,6 +105,13 @@ button:disabled { cursor:not-allowed; opacity:.55; }
 .pill.error:before { background:#b54139; }
 .progress { height:5px; overflow:hidden; background:#dce2e5; border-radius:999px; }
 .progress span { display:block; width:0; height:100%; background:#277aa1; transition:width .15s ease; }
+.progress span[data-state="storing"] { width:14%; }
+.progress span[data-state="reconciling"] { width:28%; }
+.progress span[data-state="queued"] { width:42%; }
+.progress span[data-state="extracting"] { width:57%; }
+.progress span[data-state="grounding"] { width:71%; }
+.progress span[data-state="writing"] { width:86%; }
+.progress span[data-state="complete"],.progress span[data-state="failed"] { width:100%; }
 .metrics { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
 .metric { border:1px solid var(--line); background:#fff; padding:8px; border-radius:5px; }
 .metric b { display:block; font-size:18px; }
@@ -136,6 +148,23 @@ button:disabled { cursor:not-allowed; opacity:.55; }
 .ask input:focus { outline:2px solid #74a8c6; outline-offset:1px; }
 .ask button { width:auto; min-width:96px; }
 .empty { color:var(--muted); padding:16px; border:1px dashed var(--line); border-radius:5px; text-align:center; }
+.trend-actions { margin-left:auto; }
+.trend-series { padding:12px 0; border-bottom:1px solid var(--line); }
+.trend-series:first-child { padding-top:0; }
+.trend-series:last-child { padding-bottom:0; border-bottom:0; }
+.trend-heading { display:flex; align-items:baseline; gap:8px; margin-bottom:8px; }
+.trend-heading h3 { margin:0; font-size:13px; }
+.trend-chart { display:block; width:100%; max-height:210px; border:1px solid var(--line); background:#fff; }
+.trend-axis { stroke:#a7b3ba; stroke-width:1; }
+.trend-line { fill:none; stroke:var(--blue); stroke-width:2; }
+.trend-point { fill:#fff; stroke:var(--blue); stroke-width:3; cursor:pointer; }
+.trend-point:focus { outline:none; stroke:#0b2638; stroke-width:5; }
+.trend-table-wrap { overflow-x:auto; margin-top:8px; }
+.trend-table { width:100%; border-collapse:collapse; font-size:12px; }
+.trend-table caption { text-align:left; color:var(--muted); padding:0 0 5px; }
+.trend-table th,.trend-table td { border-bottom:1px solid var(--line); padding:6px 8px; text-align:left; }
+.trend-table th { color:var(--muted); font-size:10px; letter-spacing:.06em; text-transform:uppercase; }
+.trend-table tr:last-child td { border-bottom:0; }
 .modal { position:fixed; inset:0; z-index:50; background:rgba(9,24,34,.72); display:none; align-items:center; justify-content:center; padding:24px; }
 .modal.open { display:flex; }
 .viewer { width:min(980px,96vw); max-height:94vh; overflow:auto; background:var(--surface); border:1px solid #71818b; border-radius:6px; }
@@ -143,8 +172,9 @@ button:disabled { cursor:not-allowed; opacity:.55; }
 .viewer-head button { margin-left:auto; }
 .page-wrap { position:relative; width:max-content; max-width:100%; margin:16px auto; }
 .page-wrap img { display:block; max-width:min(880px,calc(96vw - 64px)); height:auto; border:1px solid var(--line); }
-.box { position:absolute; border:3px solid #4e58b8; background:rgba(78,88,184,.14); pointer-events:none; }
-.box.unsupported { border-color:#cf9300; border-style:dashed; background:rgba(207,147,0,.12); }
+.overlay-svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+.box { fill:rgba(78,88,184,.14); stroke:#4e58b8; stroke-width:3; vector-effect:non-scaling-stroke; }
+.box.unsupported { fill:rgba(207,147,0,.12); stroke:#cf9300; stroke-dasharray:8 5; }
 @media (max-width:850px) {
   .shell { grid-template-columns:1fr; }
   .rail { border-right:0; border-bottom:1px solid var(--line); }
@@ -184,6 +214,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
         <div class="type-switch" role="group" aria-label="Document type">
           <button id="labType" type="button" class="active" aria-pressed="true">Lab PDF</button>
           <button id="intakeType" type="button" aria-pressed="false">Intake form</button>
+          <button id="medicationType" type="button" aria-pressed="false">Medication list<span class="type-note">source + grounded artifact only</span></button>
         </div>
         <p class="eyebrow">2 · Source file</p>
         <label class="drop">
@@ -192,12 +223,12 @@ button:disabled { cursor:not-allowed; opacity:.55; }
           <input id="file" type="file" accept="application/pdf">
           <span class="file-line"><span class="file-action">Browse</span><span id="fileName">No file selected</span></span>
         </label>
-        <label class="encounter" id="encounterRow">
+        <label class="encounter" id="encounterRow" hidden>
           <input id="useEncounter" type="checkbox" checked>
           <span><strong>Write grounded intake vitals</strong><br><span class="subtle">Uses the selected OpenEMR encounter. The agent never creates one.</span></span>
         </label>
         <button class="primary" id="upload" type="button">Upload and extract</button>
-        <p class="section-note">The source, grounded artifact, and eligible vitals use the verified exactly-once write path.</p>
+        <p class="section-note" id="writeScope">The source and grounded artifact use the verified exactly-once write path.</p>
         <div class="notice" id="runtimeNotice" hidden>Document write is unavailable for this selected chart because its UUID-to-route binding is not attested. Refresh the synthetic route attestations, then relaunch Week 2 for this patient.</div>
         <div class="status-panel" id="statusPanel" data-status-contract="/documents/{document_id}/status" hidden>
           <div class="status-line"><span class="eyebrow">Processing</span><span class="pill" id="statusPill">queued</span></div>
@@ -230,6 +261,10 @@ button:disabled { cursor:not-allowed; opacity:.55; }
       </div>
     </section>
     <section class="card">
+      <div class="card-head"><h2>Lab trends</h2><span class="subtle">verified artifacts · exact units · no clinical interpretation</span><button class="secondary trend-actions" id="refreshTrends" type="button">Refresh</button></div>
+      <div class="card-body" id="labTrends"><div class="empty">Loading verified lab artifacts…</div></div>
+    </section>
+    <section class="card">
       <div class="card-head"><h2>Cited answer</h2><span class="subtle">chart + uploaded document + VA/DoD guideline evidence</span></div>
       <div class="card-body">
         <form class="ask" id="askForm">
@@ -245,10 +280,10 @@ button:disabled { cursor:not-allowed; opacity:.55; }
 <div class="modal" id="modal" role="dialog" aria-modal="true" aria-label="Source page">
   <div class="viewer">
     <div class="viewer-head"><strong id="viewerTitle">Source page</strong><span class="subtle" id="viewerNote"></span><button class="secondary" id="closeViewer" type="button">Close</button></div>
-    <div class="page-wrap" id="pageWrap"><img id="pageImage" alt="Uploaded document source page"><div class="box" id="overlay"></div></div>
+    <div class="page-wrap" id="pageWrap"><img id="pageImage" alt="Uploaded document source page"><svg class="overlay-svg" id="overlaySvg" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true" hidden><rect class="box" id="overlay"></rect></svg></div>
   </div>
 </div>
-<script>
+<script nonce="__W2_NONCE__">
 (function () {
   "use strict";
   const context = __W2_CONTEXT__;
@@ -261,8 +296,26 @@ button:disabled { cursor:not-allowed; opacity:.55; }
   let currentDocument = null;
   let currentStatus = null;
   let pollGeneration = 0;
+  let workflowCorrelationId = null;
   const terminal = new Set(["complete", "failed"]);
   const stages = ["storing", "reconciling", "queued", "extracting", "grounding", "writing", "complete"];
+  const correlationPattern = /^[A-Za-z0-9_.:-]{1,128}$/;
+
+  function mintCorrelationId() {
+    const bytes = new Uint8Array(16);
+    globalThis.crypto.getRandomValues(bytes);
+    return "w2." + Array.from(bytes, function (value) { return value.toString(16).padStart(2, "0"); }).join("");
+  }
+  function retainAcceptedCorrelation(accepted) {
+    const value = accepted && accepted.correlation_id;
+    if (typeof value !== "string" || !correlationPattern.test(value)) throw new Error("Upload response omitted its safe correlation identifier");
+    workflowCorrelationId = value;
+  }
+  function requestHeaders(values) {
+    const headers = Object.assign({}, values || {});
+    if (workflowCorrelationId) headers["X-Copilot-Request-Id"] = workflowCorrelationId;
+    return headers;
+  }
 
   function make(tag, cls, text) {
     const item = document.createElement(tag);
@@ -296,16 +349,31 @@ button:disabled { cursor:not-allowed; opacity:.55; }
   function selectType(next) {
     docType = next;
     const lab = next === "lab_pdf";
+    const intake = next === "intake_form";
+    const medication = next === "medication_list";
     byId("labType").classList.toggle("active", lab);
     byId("labType").setAttribute("aria-pressed", String(lab));
-    byId("intakeType").classList.toggle("active", !lab);
-    byId("intakeType").setAttribute("aria-pressed", String(!lab));
+    byId("intakeType").classList.toggle("active", intake);
+    byId("intakeType").setAttribute("aria-pressed", String(intake));
+    byId("medicationType").classList.toggle("active", medication);
+    byId("medicationType").setAttribute("aria-pressed", String(medication));
     byId("file").accept = lab ? "application/pdf" : "application/pdf,image/png,image/jpeg";
     byId("fileRule").textContent = lab ? "PDF · up to 10 MB / 20 pages" : "PDF, PNG, or JPEG · up to 10 MB / 20 pages";
-    byId("encounterRow").style.display = lab ? "none" : "flex";
+    byId("encounterRow").hidden = !intake;
+    byId("writeScope").textContent = intake
+      ? "The source, grounded artifact, and eligible vitals use the verified exactly-once write path."
+      : medication
+        ? "Medication list: source + grounded artifact only. No MedicationRequest or vital record is created."
+        : "The source and grounded artifact use the verified exactly-once write path. No lab Observation is created.";
+    if (context.write_path_attested) {
+      byId("encounterState").textContent = intake && context.encounter_id
+        ? "encounter-bound vitals available"
+        : "source + grounded artifact only";
+    }
   }
   byId("labType").addEventListener("click", function () { selectType("lab_pdf"); });
   byId("intakeType").addEventListener("click", function () { selectType("intake_form"); });
+  byId("medicationType").addEventListener("click", function () { selectType("medication_list"); });
   byId("file").addEventListener("change", function () {
     const file = byId("file").files[0];
     byId("fileName").textContent = file ? file.name : "No file selected";
@@ -315,6 +383,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
     byId("upload").disabled = true;
     byId("labType").disabled = true;
     byId("intakeType").disabled = true;
+    byId("medicationType").disabled = true;
     byId("file").disabled = true;
     byId("useEncounter").disabled = true;
     byId("runtimeNotice").hidden = false;
@@ -326,9 +395,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
     byId("statusPanel").hidden = false;
     byId("statusPill").textContent = status.state;
     byId("statusPill").className = "pill " + (status.state === "complete" ? "ok" : status.state === "failed" ? "error" : "active");
-    const index = stages.indexOf(status.state);
-    const percent = status.state === "failed" ? 100 : Math.max(7, ((index + 1) / stages.length) * 100);
-    byId("progressBar").style.width = percent + "%";
+    byId("progressBar").dataset.state = stages.includes(status.state) || status.state === "failed" ? status.state : "unknown";
     byId("groundedCount").textContent = String(status.fields_grounded || 0);
     byId("unsupportedCount").textContent = String(status.fields_unsupported || 0);
     byId("documentRef").textContent = "document " + status.document_id + " · correlation " + status.correlation_id;
@@ -348,7 +415,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
   async function pollStatus(statusPath, generation) {
     const statusUrl = withSession(statusPath);
     for (let attempt = 0; attempt < 180 && generation === pollGeneration; attempt += 1) {
-      const response = await fetch(statusUrl, {headers:{"Accept":"application/json"}, cache:"no-store"});
+      const response = await fetch(statusUrl, {headers:requestHeaders({"Accept":"application/json"}), cache:"no-store"});
       if (!response.ok) throw await apiError(response);
       const status = await response.json();
       setStatus(status);
@@ -364,7 +431,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
   async function upload() {
     if (!context.write_path_attested) return;
     const file = byId("file").files[0];
-    if (!file) { message(byId("statusMessage"), "errorbox", "Choose a synthetic lab PDF or intake form first."); byId("statusPanel").hidden = false; return; }
+    if (!file) { message(byId("statusMessage"), "errorbox", "Choose a synthetic clinical document first."); byId("statusPanel").hidden = false; return; }
     byId("upload").disabled = true;
     byId("retry").hidden = true;
     const data = new FormData();
@@ -374,9 +441,11 @@ button:disabled { cursor:not-allowed; opacity:.55; }
     data.append("doc_type", docType);
     if (docType === "intake_form" && byId("useEncounter").checked && context.encounter_id) data.append("encounter_id", context.encounter_id);
     try {
-      const response = await fetch("/documents", {method:"POST", body:data});
+      workflowCorrelationId = mintCorrelationId();
+      const response = await fetch("/documents", {method:"POST",headers:requestHeaders({"Accept":"application/json"}),body:data});
       if (!response.ok) throw await apiError(response);
       const accepted = await response.json();
+      retainAcceptedCorrelation(accepted);
       currentDocument = accepted.document_id;
       pollGeneration += 1;
       setStatus({document_id:accepted.document_id,state:accepted.state,reason:null,correlation_id:accepted.correlation_id,updated_ts:"",fields_grounded:0,fields_unsupported:0,attempt_count:0,next_retry_at:null});
@@ -393,9 +462,10 @@ button:disabled { cursor:not-allowed; opacity:.55; }
     if (!currentDocument || !currentStatus || currentStatus.state !== "failed") return;
     byId("retry").disabled = true;
     try {
-      const response = await fetch(withSession("/documents/" + encodeURIComponent(currentDocument) + "/retry"), {method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify({expected_state:"failed"})});
+      const response = await fetch(withSession("/documents/" + encodeURIComponent(currentDocument) + "/retry"), {method:"POST",headers:requestHeaders({"Content-Type":"application/json","Accept":"application/json"}),body:JSON.stringify({expected_state:"failed"})});
       if (!response.ok) throw await apiError(response);
       const accepted = await response.json();
+      retainAcceptedCorrelation(accepted);
       pollGeneration += 1;
       await pollStatus(accepted.status_url, pollGeneration);
     } catch (error) { message(byId("statusMessage"), "errorbox", error instanceof Error ? error.message : "Retry failed"); }
@@ -416,7 +486,8 @@ button:disabled { cursor:not-allowed; opacity:.55; }
   async function loadCompletedDocument(documentId) {
     const reportUrl = withSession("/documents/" + encodeURIComponent(documentId) + "/extraction-report");
     const readbackUrl = withSession("/documents/" + encodeURIComponent(documentId) + "/readback-verification");
-    const results = await Promise.all([fetch(reportUrl,{cache:"no-store"}),fetch(readbackUrl,{cache:"no-store"})]);
+    const headers = requestHeaders({"Accept":"application/json"});
+    const results = await Promise.all([fetch(reportUrl,{headers:headers,cache:"no-store"}),fetch(readbackUrl,{headers:headers,cache:"no-store"})]);
     if (!results[0].ok) throw await apiError(results[0]);
     if (!results[1].ok) throw await apiError(results[1]);
     const report = await results[0].json();
@@ -426,6 +497,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
     renderAttestation(byId("artifactReadback"), "Grounded artifact", readback.artifact);
     const verified = readback.source && readback.source.verified && readback.artifact && readback.artifact.verified;
     if (!verified) message(byId("statusMessage"), "errorbox", "OpenEMR readback could not be verified. Treat the write as incomplete.");
+    if (verified && report.doc_type === "lab_pdf") await loadLabTrends();
   }
 
   function humanPath(path) { return path.replace(/^results\.(\d+)\./, "result $1 · ").replace(/^demographics\./, "demographics · ").replace(/^vitals\./, "vitals · ").replaceAll("_", " ").replaceAll(".", " · "); }
@@ -465,35 +537,137 @@ button:disabled { cursor:not-allowed; opacity:.55; }
     if (report.doc_type === "intake_form" && !hasAllergy) root.appendChild(make("div", "notice", "No allergy information was captured on this form — confirm with patient. This is never treated as NKDA."));
   }
 
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  function svgNode(tag, attributes) {
+    const node = document.createElementNS(SVG_NS, tag);
+    Object.keys(attributes).forEach(function (name) { node.setAttribute(name, String(attributes[name])); });
+    return node;
+  }
+  function openTrendPoint(point) {
+    if (!point || !point.document_id || !point.bbox || !Number.isInteger(point.page)) return;
+    openPage(point.document_id, point.page, point.bbox, false);
+  }
+  function renderTrendChart(series) {
+    const width = 720, height = 190, left = 52, right = 18, top = 18, bottom = 34;
+    const chartWidth = width - left - right, chartHeight = height - top - bottom;
+    const values = series.points.map(function (point) { return Number(point.value); });
+    const timestamps = series.points.map(function (point, index) {
+      const parsed = Date.parse(String(point.collection_date) + "T00:00:00Z");
+      return Number.isFinite(parsed) ? parsed : index;
+    });
+    if (!values.every(Number.isFinite)) return null;
+    const minValue = Math.min.apply(null, values), maxValue = Math.max.apply(null, values);
+    const minTime = Math.min.apply(null, timestamps), maxTime = Math.max.apply(null, timestamps);
+    function x(index) {
+      if (series.points.length === 1 || minTime === maxTime) return left + chartWidth / 2;
+      return left + ((timestamps[index] - minTime) / (maxTime - minTime)) * chartWidth;
+    }
+    function y(value) {
+      if (minValue === maxValue) return top + chartHeight / 2;
+      return top + (1 - ((value - minValue) / (maxValue - minValue))) * chartHeight;
+    }
+
+    const svg = svgNode("svg", {
+      class: "trend-chart",
+      viewBox: "0 0 " + width + " " + height,
+      role: "img",
+      "aria-label": series.test_name + " trend in exact unit " + series.unit,
+      preserveAspectRatio: "xMidYMid meet",
+    });
+    svg.appendChild(svgNode("line", {class:"trend-axis",x1:left,y1:top,x2:left,y2:height-bottom}));
+    svg.appendChild(svgNode("line", {class:"trend-axis",x1:left,y1:height-bottom,x2:width-right,y2:height-bottom}));
+    const coordinates = series.points.map(function (_point, index) { return x(index) + "," + y(values[index]); });
+    if (coordinates.length > 1) svg.appendChild(svgNode("polyline", {class:"trend-line",points:coordinates.join(" ")}));
+    series.points.forEach(function (point, index) {
+      const marker = svgNode("circle", {class:"trend-point",cx:x(index),cy:y(values[index]),r:6,tabindex:0,role:"button"});
+      marker.setAttribute("aria-label", point.collection_date + ": " + point.display_value + " " + series.unit + ". Open source page " + point.page + ".");
+      marker.addEventListener("click", function () { openTrendPoint(point); });
+      marker.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openTrendPoint(point); }
+      });
+      svg.appendChild(marker);
+    });
+    return svg;
+  }
+  function renderTrendTable(series) {
+    const wrapper = make("div", "trend-table-wrap");
+    const table = make("table", "trend-table");
+    table.appendChild(make("caption", null, series.test_name + " values, exact unit " + series.unit));
+    const head = make("thead"), headRow = make("tr");
+    ["Collection date", "Value", "Verified source"].forEach(function (label) {
+      const cell = make("th", null, label); cell.scope = "col"; headRow.appendChild(cell);
+    });
+    head.appendChild(headRow); table.appendChild(head);
+    const body = make("tbody");
+    series.points.forEach(function (point) {
+      const row = make("tr");
+      row.appendChild(make("td", null, point.collection_date));
+      row.appendChild(make("td", null, point.display_value + " " + series.unit));
+      const sourceCell = make("td");
+      const source = make("button", "secondary", "Open page " + point.page);
+      source.type = "button";
+      source.addEventListener("click", function () { openTrendPoint(point); });
+      sourceCell.appendChild(source); row.appendChild(sourceCell); body.appendChild(row);
+    });
+    table.appendChild(body); wrapper.appendChild(table);
+    return wrapper;
+  }
+  function renderLabTrends(payload) {
+    const root = byId("labTrends"); clear(root);
+    const seriesList = payload && Array.isArray(payload.series) ? payload.series : [];
+    if (!seriesList.length) { root.appendChild(make("div", "empty", "No completed, readback-verified numeric lab artifacts are available.")); return; }
+    seriesList.forEach(function (series, seriesIndex) {
+      if (!series || !Array.isArray(series.points) || !series.points.length) return;
+      const section = make("section", "trend-series");
+      const heading = make("div", "trend-heading");
+      heading.appendChild(make("h3", null, series.test_name));
+      heading.appendChild(make("span", "chip uploaded_document", "exact unit · " + series.unit));
+      section.appendChild(heading);
+      const chart = renderTrendChart(series);
+      if (chart) section.appendChild(chart);
+      section.appendChild(renderTrendTable(series));
+      root.appendChild(section);
+    });
+    if (!root.childNodes.length) root.appendChild(make("div", "empty", "No valid numeric lab trend series could be rendered."));
+  }
+  async function loadLabTrends() {
+    byId("refreshTrends").disabled = true;
+    try {
+      const response = await fetch(withSession("/documents/lab-trends"), {headers:requestHeaders({"Accept":"application/json"}),cache:"no-store"});
+      if (!response.ok) throw await apiError(response);
+      renderLabTrends(await response.json());
+    } catch (_error) {
+      message(byId("labTrends"), "errorbox", "Lab trends are unavailable. Verified source artifacts remain accessible above.");
+    } finally { byId("refreshTrends").disabled = false; }
+  }
+  byId("refreshTrends").addEventListener("click", loadLabTrends);
+  void loadLabTrends();
+
   function positionOverlay(bbox) {
-    const image = byId("pageImage");
     const overlay = byId("overlay");
-    const width = image.clientWidth, height = image.clientHeight;
-    overlay.style.left = (bbox.x0 * width) + "px";
-    overlay.style.top = (bbox.y0 * height) + "px";
-    overlay.style.width = ((bbox.x1 - bbox.x0) * width) + "px";
-    overlay.style.height = ((bbox.y1 - bbox.y0) * height) + "px";
+    overlay.setAttribute("x", String(bbox.x0));
+    overlay.setAttribute("y", String(bbox.y0));
+    overlay.setAttribute("width", String(bbox.x1 - bbox.x0));
+    overlay.setAttribute("height", String(bbox.y1 - bbox.y0));
   }
   function openPage(documentId, page, bbox, unsupported) {
     const image = byId("pageImage");
     const overlay = byId("overlay");
+    const overlaySvg = byId("overlaySvg");
     overlay.className = "box" + (unsupported ? " unsupported" : "");
     byId("viewerTitle").textContent = "Uploaded document · page " + page;
     byId("viewerNote").textContent = unsupported ? "UNSUPPORTED review region" : "verified grounded field";
-    image.onload = function () { positionOverlay(bbox); };
-    image.onerror = function () { byId("viewerNote").textContent = "Source page unavailable; use the citation quote."; overlay.style.display = "none"; };
-    overlay.style.display = "block";
+    positionOverlay(bbox);
+    overlaySvg.hidden = true;
+    image.onload = function () { overlaySvg.hidden = false; };
+    image.onerror = function () { byId("viewerNote").textContent = "Source page unavailable; use the citation quote."; overlaySvg.hidden = true; };
     image.src = withSession("/documents/" + encodeURIComponent(documentId) + "/pages/" + encodeURIComponent(page)).toString();
     byId("modal").classList.add("open");
-    const observer = new ResizeObserver(function () { if (image.complete && image.naturalWidth) positionOverlay(bbox); });
-    observer.observe(image);
-    byId("modal").dataset.observer = "active";
-    byId("modal")._observer = observer;
   }
   function closePage() {
     const modal = byId("modal");
-    if (modal._observer) modal._observer.disconnect();
     modal.classList.remove("open");
+    byId("overlaySvg").hidden = true;
     byId("pageImage").removeAttribute("src");
   }
   byId("closeViewer").addEventListener("click", closePage);
@@ -543,7 +717,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
     byId("ask").disabled = true;
     message(byId("answers"), "empty", "Running verify-then-flush…");
     try {
-      const response = await fetch("/chat", {method:"POST",headers:{"Content-Type":"application/json","Accept":"text/event-stream"},body:JSON.stringify({session_id:context.session_id,patient_id:context.patient_id,message:question})});
+      const response = await fetch("/chat", {method:"POST",headers:requestHeaders({"Content-Type":"application/json","Accept":"text/event-stream"}),body:JSON.stringify({session_id:context.session_id,patient_id:context.patient_id,message:question})});
       if (!response.ok) throw await apiError(response);
       const type = response.headers.get("content-type") || "";
       if (!type.includes("text/event-stream")) {
@@ -575,7 +749,16 @@ button:disabled { cursor:not-allowed; opacity:.55; }
 """
 
 
-@router.get("/week2", response_class=HTMLResponse)
+@router.get(
+    "/week2",
+    response_class=HTMLResponse,
+    responses={
+        200: documented_response(
+            "Patient-pinned Week 2 workspace.", private_no_store=True
+        ),
+        **documented_errors(401, 404, 422, 503, schema_only=True),
+    },
+)
 async def week2_page(
     request: Request,
     sid: Annotated[str, Query(min_length=1)],
@@ -609,11 +792,22 @@ async def week2_page(
             "write_path_attested": write_path_attested,
         }
     )
+    nonce = secrets.token_urlsafe(24)
+    page = _PAGE.replace("__W2_CONTEXT__", context).replace("__W2_NONCE__", nonce)
+    csp = (
+        "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
+        "form-action 'self'; img-src 'self' data:; connect-src 'self'; "
+        f"style-src 'nonce-{nonce}'; style-src-attr 'none'; "
+        f"script-src 'nonce-{nonce}'"
+    )
     return HTMLResponse(
-        content=_PAGE.replace("__W2_CONTEXT__", context),
+        content=page,
         headers={
             "Cache-Control": "private, no-store",
+            "Content-Security-Policy": csp,
+            "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
             "Referrer-Policy": "no-referrer",
             "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
         },
     )

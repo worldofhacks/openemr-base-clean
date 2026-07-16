@@ -62,6 +62,22 @@ def test_grounded_field_is_constructed_only_after_local_phrase_match():
     assert outcome.reason == "matched"
 
 
+def test_percent_unit_is_a_groundable_clinical_token():
+    from app.grounding.verifier import GroundingVerifier
+
+    outcome = GroundingVerifier().ground_value(
+        value="%",
+        words_boxes=_words("HbA1c", "6.5", "%"),
+        source_document_id="fixture:percent-unit",
+        field_id="results[0].unit",
+        page=1,
+    )
+
+    assert outcome.field.grounded is True
+    assert outcome.field.citation is not None
+    assert outcome.field.citation.quote_or_value == "%"
+
+
 def test_missing_value_is_unsupported_and_has_no_citation():
     from app.grounding.verifier import GroundingVerifier
 

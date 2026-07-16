@@ -92,6 +92,45 @@ def test_week2_launch_fails_closed_when_document_runtime_is_disabled() -> None:
 
 
 @pytest.mark.asyncio
+async def test_abandoned_oauth_state_expires_before_callback_exchange() -> None:
+    services = _services(enabled=True)
+    now = 1_000.0
+    services._launch_clock = lambda: now
+    services.begin_launch(destination="week2")
+    state = next(iter(services._pkce))
+
+    now += 301.0
+    with pytest.raises(ValueError, match="unknown or replayed OAuth state"):
+        await services.complete_callback_with_destination(
+            code="code-synthetic", state=state
+        )
+
+    assert state not in services._pkce
+
+
+def test_pending_oauth_state_store_evicts_oldest_entry_at_hard_cap() -> None:
+    services = _services(enabled=True)
+    services._pkce = {f"old-{index}": "legacy-verifier" for index in range(256)}
+
+    services.begin_launch(destination="week2")
+
+    assert len(services._pkce) == 256
+    assert "old-0" not in services._pkce
+
+
+def test_launch_rate_limit_bounds_one_serving_instance() -> None:
+    from app.service import LaunchRateLimited
+
+    services = _services(enabled=True)
+    services._launch_clock = lambda: 1_000.0
+    for _ in range(60):
+        services.begin_launch(destination="week2")
+
+    with pytest.raises(LaunchRateLimited):
+        services.begin_launch(destination="week2")
+
+
+@pytest.mark.asyncio
 async def test_callback_consumes_the_server_bound_week2_destination_once() -> None:
     token = TokenResponse(
         access_token="synthetic-token",

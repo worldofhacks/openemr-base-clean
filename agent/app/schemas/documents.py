@@ -65,7 +65,7 @@ class UploadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     patient_id: str = Field(min_length=1)
-    doc_type: Literal["lab_pdf", "intake_form"]
+    doc_type: Literal["lab_pdf", "intake_form", "medication_list"]
     filename: str = Field(min_length=1)
     content_hash: str = Field(min_length=1)
 

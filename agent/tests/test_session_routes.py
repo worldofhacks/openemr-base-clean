@@ -16,6 +16,13 @@ class _ScopeRejectingServices:
         )
 
 
+class _RateLimitedServices:
+    def begin_launch(self, **_kwargs):
+        from app.service import LaunchRateLimited
+
+        raise LaunchRateLimited("internal detail must not render")
+
+
 def test_callback_returns_sanitized_403_for_incomplete_scope_grant(complete_env):
     from app.main import create_app
 
@@ -43,3 +50,20 @@ def test_callback_returns_sanitized_403_for_incomplete_scope_grant(complete_env)
     assert "Observation.rs" not in rendered
     assert "authorization-code-must-not-render" not in rendered
     assert "oauth-state-must-not-render" not in rendered
+
+
+def test_launch_routes_return_content_free_rate_limit(complete_env):
+    from app.main import create_app
+
+    with TestClient(
+        create_app(services=_RateLimitedServices(), readiness_checks=[]),
+        raise_server_exceptions=False,
+    ) as client:
+        week1 = client.get("/launch", follow_redirects=False)
+        week2 = client.get("/week2/launch", follow_redirects=False)
+
+    for response in (week1, week2):
+        assert response.status_code == 429
+        assert response.headers["Retry-After"] == "60"
+        assert response.json() == {"detail": "SMART launch rate limit exceeded"}
+        assert "internal detail" not in response.text

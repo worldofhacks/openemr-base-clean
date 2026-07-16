@@ -1,8 +1,8 @@
 """Evidence-search request/response contracts (W2_ARCHITECTURE.md §2).
 
 ``POST /evidence/search`` uses these NAMED models, never an anonymous ``{query, k}``.
-``EvidenceSearchRequest`` bounds the fan-out: ``query`` is non-empty and ``1 ≤ k ≤
-K_MAX`` (``K_MAX`` is the named upper bound). ``EvidenceSearchResponse`` returns the
+``EvidenceSearchRequest`` bounds the fan-out: ``query`` is 1–180 characters and
+``1 ≤ k ≤ K_MAX`` (``K_MAX`` is the named upper bound). ``EvidenceSearchResponse`` returns the
 ranked ``EvidenceSnippet`` items pinned to a ``corpus_version`` and the request's
 ``correlation_id``.
 
@@ -25,11 +25,11 @@ K_MAX: int = 20
 
 
 class EvidenceSearchRequest(BaseModel):
-    """A bounded evidence-search request (§2). ``query`` non-empty; ``1 ≤ k ≤ K_MAX``."""
+    """A bounded evidence request (§2). ``query`` is 1–180 chars; ``1 ≤ k ≤ K_MAX``."""
 
     model_config = ConfigDict(extra="forbid")
 
-    query: str = Field(min_length=1)
+    query: str = Field(min_length=1, max_length=180)
     k: int = Field(ge=1, le=K_MAX)
 
 

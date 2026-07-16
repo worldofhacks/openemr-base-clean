@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import math
+import warnings
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import PurePath
@@ -15,6 +17,9 @@ from app.schemas.documents import FailureReason
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_PDF_PAGES = 20
+VALIDATION_RENDER_DPI = 200
+MAX_RENDER_DIMENSION_PIXELS = 10_000
+MAX_RENDER_PIXELS_PER_PAGE = 25_000_000
 
 _MAGIC = {
     "application/pdf": b"%PDF-",
@@ -24,6 +29,9 @@ _MAGIC = {
 _ALLOWED = {
     "lab_pdf": frozenset({"application/pdf"}),
     "intake_form": frozenset({"application/pdf", "image/png", "image/jpeg"}),
+    "medication_list": frozenset(
+        {"application/pdf", "image/png", "image/jpeg"}
+    ),
 }
 
 
@@ -38,7 +46,7 @@ class ValidatedUpload:
     filename: str
     content_type: str
     data: bytes
-    doc_type: Literal["lab_pdf", "intake_form"]
+    doc_type: Literal["lab_pdf", "intake_form", "medication_list"]
     content_hash: str
     page_count: int
 
@@ -59,9 +67,37 @@ def _pdf_page_count(data: bytes) -> int:
     try:
         document = pdfium.PdfDocument(data)
         try:
-            return len(document)
+            page_count = len(document)
+            for page_number in range(page_count):
+                page = document[page_number]
+                try:
+                    width_points, height_points = page.get_size()
+                finally:
+                    page.close()
+                width_pixels = math.ceil(
+                    width_points * VALIDATION_RENDER_DPI / 72
+                )
+                height_pixels = math.ceil(
+                    height_points * VALIDATION_RENDER_DPI / 72
+                )
+                if (
+                    not math.isfinite(width_points)
+                    or not math.isfinite(height_points)
+                    or width_pixels <= 0
+                    or height_pixels <= 0
+                    or width_pixels > MAX_RENDER_DIMENSION_PIXELS
+                    or height_pixels > MAX_RENDER_DIMENSION_PIXELS
+                    or width_pixels * height_pixels > MAX_RENDER_PIXELS_PER_PAGE
+                ):
+                    _reject(
+                        FailureReason.SIZE_OR_PAGE_CAP_EXCEEDED,
+                        "PDF page exceeds the render resource cap",
+                    )
+            return page_count
         finally:
             document.close()
+    except UploadValidationError:
+        raise
     except Exception as exc:  # noqa: BLE001 - parser failure is a controlled 4xx
         raise UploadValidationError(
             FailureReason.UPLOAD_REJECTED, "PDF could not be parsed"
@@ -70,8 +106,24 @@ def _pdf_page_count(data: bytes) -> int:
 
 def _validate_image(data: bytes) -> None:
     try:
-        with Image.open(BytesIO(data)) as image:
-            image.verify()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(data)) as image:
+                width, height = image.size
+                if (
+                    width <= 0
+                    or height <= 0
+                    or width > MAX_RENDER_DIMENSION_PIXELS
+                    or height > MAX_RENDER_DIMENSION_PIXELS
+                    or width * height > MAX_RENDER_PIXELS_PER_PAGE
+                ):
+                    _reject(
+                        FailureReason.SIZE_OR_PAGE_CAP_EXCEEDED,
+                        "image exceeds the decode resource cap",
+                    )
+                image.verify()
+    except UploadValidationError:
+        raise
     except Exception as exc:  # noqa: BLE001 - controlled boundary rejection
         raise UploadValidationError(
             FailureReason.UPLOAD_REJECTED, "image could not be decoded"

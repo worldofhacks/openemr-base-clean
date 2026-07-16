@@ -8,13 +8,13 @@ read stays pinned to the launched patient.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import re
 from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.schemas.documents import DocumentStatus
-from app.schemas.extraction import ExtractionArtifact, LabPdfExtraction
 from app.schemas.extraction_report import DocumentExtractionReport
 from app.session.store import Session
 
@@ -114,6 +114,30 @@ def test_week2_page_is_separate_and_embeds_only_server_pinned_context(complete_e
     assert '"patient_id":"patient-synthetic"' in response.text
     assert 'name="patient_id"' not in response.text
     assert "innerHTML" not in response.text
+    assert "Medication list" in response.text
+    assert "source + grounded artifact only" in response.text
+    assert 'selectType("medication_list")' in response.text
+    assert 'withSession("/documents/lab-trends")' in response.text
+    assert "createElementNS" in response.text
+    assert 'make("table", "trend-table")' in response.text
+
+
+def test_week2_page_uses_nonce_csp_and_browser_hardening(complete_env):
+    services = _LaunchServices()
+    with _app_client(complete_env, services) as client:
+        response = client.get("/week2", params={"sid": "session-synthetic"})
+
+    csp = response.headers["content-security-policy"]
+    match = re.search(r"script-src 'nonce-([^']+)'", csp)
+    assert match is not None
+    nonce = match.group(1)
+    assert response.text.count(f'nonce="{nonce}"') == 2
+    assert "script-src 'unsafe-inline'" not in csp
+    assert "frame-ancestors 'none'" in csp
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["permissions-policy"] == (
+        "camera=(), microphone=(), geolocation=()"
+    )
 
 
 def test_week2_page_disables_document_write_for_unattested_selected_patient():
@@ -251,6 +275,38 @@ def test_week2_page_contains_the_closed_document_workflow_and_overlay_math(compl
     assert "uploaded_document" in page
     assert "patient_record" in page
     assert "guideline" in page
-    assert "bbox.x0 * width" in page
-    assert "bbox.y0 * height" in page
+    assert 'overlay.setAttribute("x", String(bbox.x0))' in page
+    assert 'overlay.setAttribute("y", String(bbox.y0))' in page
+    assert 'viewBox="0 0 1 1"' in page
     assert "UNSUPPORTED" in page
+
+
+def test_week2_page_reuses_upload_correlation_across_the_async_workflow(
+    complete_env,
+):
+    services = _LaunchServices()
+    with _app_client(complete_env, services) as client:
+        response = client.get("/week2", params={"sid": "session-synthetic"})
+
+    page = response.text
+    assert "workflowCorrelationId = mintCorrelationId()" in page
+    assert 'headers["X-Copilot-Request-Id"] = workflowCorrelationId' in page
+    assert "retainAcceptedCorrelation(accepted)" in page
+    # One declaration plus upload and retry response retention calls.
+    assert page.count("retainAcceptedCorrelation(accepted)") == 3
+    assert (
+        'fetch(statusUrl, {headers:requestHeaders({"Accept":"application/json"})'
+        in page
+    )
+    assert (
+        'fetch("/documents", {method:"POST",headers:requestHeaders('
+        in page
+    )
+    assert '"/retry"), {method:"POST",headers:requestHeaders(' in page
+    assert 'fetch(reportUrl,{headers:headers,cache:"no-store"})' in page
+    assert 'fetch(readbackUrl,{headers:headers,cache:"no-store"})' in page
+    assert (
+        'withSession("/documents/lab-trends"), '
+        '{headers:requestHeaders({"Accept":"application/json"})' in page
+    )
+    assert 'fetch("/chat", {method:"POST",headers:requestHeaders(' in page

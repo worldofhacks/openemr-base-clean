@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import enum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CitationSourceType(enum.Enum):
@@ -51,11 +51,10 @@ class CitationV2(BaseModel):
     keeping the vocabulary closed.
 
     ``page_or_section`` is REQUIRED (the key must be present — an incomplete citation is
-    invalid) but NULLABLE: §2a's binding W1→CitationV2 migration maps every chart-fact
-    (``source_type=patient_record``) citation with ``page_or_section=null`` (a record id
-    has no page/section). Guideline/uploaded_document citations carry a real section/page;
-    the composer's render rule (incomplete citation = does not render) enforces that at
-    the surface, not this schema.
+    invalid) but conditionally nullable: chart facts require NULL because a record id has
+    no page/section; uploaded documents and guidelines require a non-blank page/section.
+    These source-specific rules hold at construction, before a citation can reach a
+    composer, API response, or UI renderer.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -65,6 +64,20 @@ class CitationV2(BaseModel):
     page_or_section: str | None
     field_or_chunk_id: str = Field(min_length=1)
     quote_or_value: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _source_location_is_valid(self) -> "CitationV2":
+        if self.source_type is CitationSourceType.PATIENT_RECORD:
+            if self.page_or_section is not None:
+                raise ValueError("patient-record citations require page_or_section=null")
+        elif (
+            self.page_or_section is None
+            or not self.page_or_section.strip()
+        ):
+            raise ValueError(
+                "uploaded-document and guideline citations require a page or section"
+            )
+        return self
 
 
 class EvidenceSnippet(BaseModel):

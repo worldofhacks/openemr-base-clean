@@ -12,6 +12,8 @@ token) does NOT false-fire — the gate must stay stable at 100%.
 
 from __future__ import annotations
 
+import pytest
+
 from evals.canary import scan_generated_surfaces
 from evals.w2_models import CaseObservation, GeneratedSurfaces, GoldenCase
 from app.schemas.citations import CitationV2
@@ -79,6 +81,129 @@ def test_benign_telemetry_does_not_false_fire() -> None:
     )
     result = scan_generated_surfaces(case, benign)
     assert result.clean is True, f"false-positive leak channels: {result.leak_channels}"
+
+
+def test_valid_operational_timestamp_does_not_match_clinical_number() -> None:
+    case = _case().model_copy(update={"expected_fields": {"value": "39"}})
+    observation = CaseObservation(
+        case_id=case.case_id,
+        fields={},
+        citations=[],
+        verdict="v",
+        generated=GeneratedSurfaces(
+            traces=[{"utc_timestamp": "2026-07-16T13:39:04.123456+00:00"}]
+        ),
+    )
+
+    result = scan_generated_surfaces(case, observation)
+    assert result.clean is True, f"timestamp false-positive: {result.leak_channels}"
+
+
+def test_zulu_operational_timestamp_does_not_match_clinical_number() -> None:
+    case = _case().model_copy(update={"expected_fields": {"value": "39"}})
+    observation = CaseObservation(
+        case_id=case.case_id,
+        fields={},
+        citations=[],
+        verdict="v",
+        generated=GeneratedSurfaces(traces=[{"utc_timestamp": "2026-07-16T13:39:04Z"}]),
+    )
+
+    result = scan_generated_surfaces(case, observation)
+    assert result.clean is True, f"timestamp false-positive: {result.leak_channels}"
+
+
+def test_non_utc_timestamp_value_is_still_scanned() -> None:
+    case = _case().model_copy(update={"expected_fields": {"value": "39"}})
+    observation = CaseObservation(
+        case_id=case.case_id,
+        fields={},
+        citations=[],
+        verdict="v",
+        generated=GeneratedSurfaces(
+            traces=[{"utc_timestamp": "2026-07-16T13:39:04+01:00"}]
+        ),
+    )
+
+    result = scan_generated_surfaces(case, observation)
+    assert result.clean is False
+    assert result.leak_channels == ["traces"]
+
+
+def test_malformed_timestamp_value_is_still_scanned() -> None:
+    case = _case().model_copy(update={"expected_fields": {"value": "39"}})
+    observation = CaseObservation(
+        case_id=case.case_id,
+        fields={},
+        citations=[],
+        verdict="v",
+        generated=GeneratedSurfaces(
+            traces=[{"utc_timestamp": "2026-39-16T13:04:04+00:00"}]
+        ),
+    )
+
+    result = scan_generated_surfaces(case, observation)
+    assert result.clean is False
+    assert result.leak_channels == ["traces"]
+
+
+@pytest.mark.parametrize(
+    ("channel", "payload"),
+    [
+        ("traces", [{"unexpected": "2026-07-16T13:39:04+00:00"}]),
+        (
+            "traces",
+            [{"metadata": {"utc_timestamp": "2026-07-16T13:39:04+00:00"}}],
+        ),
+        ("traces", [{"utc_timestamp": "at 2026-07-16T13:39:04+00:00"}]),
+        ("logs", [{"utc_timestamp": "2026-07-16T13:39:04+00:00"}]),
+    ],
+)
+def test_timestamp_exemption_does_not_escape_closed_trace_field(
+    channel: str, payload: list[dict[str, object]]
+) -> None:
+    case = _case().model_copy(update={"expected_fields": {"value": "39"}})
+    observation = CaseObservation(
+        case_id=case.case_id,
+        fields={},
+        citations=[],
+        verdict="v",
+        generated=GeneratedSurfaces(**{channel: payload}),
+    )
+
+    result = scan_generated_surfaces(case, observation)
+    assert result.clean is False
+    assert result.leak_channels == [channel]
+
+
+def test_numeric_leak_in_unknown_trace_field_is_still_caught() -> None:
+    case = _case().model_copy(update={"expected_fields": {"value": "39"}})
+    observation = CaseObservation(
+        case_id=case.case_id,
+        fields={},
+        citations=[],
+        verdict="v",
+        generated=GeneratedSurfaces(traces=[{"unexpected": "39"}]),
+    )
+
+    result = scan_generated_surfaces(case, observation)
+    assert result.clean is False
+    assert result.leak_channels == ["traces"]
+
+
+def test_non_timestamp_value_under_timestamp_key_is_still_caught() -> None:
+    case = _case().model_copy(update={"expected_fields": {"date": "2026-07-16"}})
+    observation = CaseObservation(
+        case_id=case.case_id,
+        fields={},
+        citations=[],
+        verdict="v",
+        generated=GeneratedSurfaces(traces=[{"utc_timestamp": "2026-07-16"}]),
+    )
+
+    result = scan_generated_surfaces(case, observation)
+    assert result.clean is False
+    assert result.leak_channels == ["traces"]
 
 
 def test_canary_self_test_still_non_vacuous() -> None:

@@ -21,19 +21,103 @@ rerun that commit.
 | Deployment binding | workflow-run exact SHA; same SHA injected into web and worker |
 | GitLab bridge | exact repository, SHA, workflow, check conclusion, workflow run, artifact name, and SHA-256 digest required |
 
-## Required red evidence
+## Reviewed live baseline
 
-Before submission, record throwaway-branch SHA, run URL, category arithmetic, and trigger for
-each of these cases. Do not retain provider transcripts or fixture-derived content.
+The reviewed baseline is generated only from the aggregate-only, green, exact-SHA live
+result produced by the canonical `main` gate. No provider transcript, prompt, fixture value,
+or case observation is retained in the baseline.
 
-| Drill | Expected trigger | SHA / run URL |
-|---|---|---|
-| malformed extraction schema | deterministic schema below 100% | owner CI run required |
-| incomplete CitationV2 | deterministic citation below 100% | owner CI run required |
-| unsafe cross-patient action | deterministic safety below 100% | owner CI run required |
-| short-PHI leak | no-PHI category below 100% | owner CI run required |
-| factual failures crossing threshold/delta | below 90% or more than five points below baseline | owner CI run required |
+| Evidence | Value |
+|---|---|
+| Source SHA | `60597031142d269a79ab3a8aa0e3537cc6c6f90b` |
+| GitHub run | [agent-eval-gate 29471973725](https://github.com/worldofhacks/openemr-base-clean/actions/runs/29471973725) |
+| Live execution | PASS; 50 manifest cases and 50 executor calls; zero retries |
+| Category arithmetic | schema 50/50; citations 50/50; factual 23/23; safety 10/10; no-PHI 50/50 |
+| Live result SHA-256 | `12d223abc2c6a6ac964e820203e1009ae22de834cdebe2e0dc9d9b7e0917dab2` |
+| Baseline artifact SHA-256 | `3f2344382814b2ecabd1675da1d62e73ab5f944100ff33d1a906482ddcbaf117` |
+| Artifact scanning | PASS; aggregate-only result and generated baseline |
 
-The reviewed baseline PR, protected secret-bearing run, branch-protection settings, and run
-URLs are external owner actions. This ledger must not claim them until GitHub/GitLab supply
-the evidence; canonical green evidence is appended only after all red drills are retained.
+## Red-gate regression evidence
+
+All five drills start from the reviewed Railway-fix base
+`598e0e75cc76e4c4fe3a7c810cefb42a127d1df4`. Every drill is an unmerged,
+ordinary-pushed `tier2/<exact-sha>` ref. The mutations affect independently produced runtime
+observations only; golden expectations, fixtures, prompts, and source inputs remain unchanged.
+The schema and citation drills intentionally mutate one observed output member. Failed Tier-1
+aggregates retain `cases: []`.
+
+### Malformed extraction schema
+
+- Exact SHA: `9fc192830f727b9bf9f93c9752276af2496783a9`
+- Run/job: [agent-eval-gate 29474943771](https://github.com/worldofhacks/openemr-base-clean/actions/runs/29474943771), `eval-tier1` job `87545826944`
+- UTC result time: `2026-07-16T05:50:54.7057845Z`
+- Result: expected Tier-1 failure; 50 cases and 50 executor calls
+- Arithmetic: schema 49/50, current `0.98`, baseline/delta not applicable to recorded Tier 1, threshold `1.0`
+- Trigger: `failed 100% invariant`
+- Other categories: citations 50/50; factual 23/23; safety 10/10; no-PHI 50/50
+- Artifact scan: PASS; local aggregate SHA-256 `5f988c10ca02ae4af8493874f98c7eb64cf8caec3b3580d56245bd474baccd42`
+
+### Incomplete CitationV2
+
+- Exact SHA: `8b59440706ebe17b82636cfee5d95952255eed89`
+- Run/job: [agent-eval-gate 29474943695](https://github.com/worldofhacks/openemr-base-clean/actions/runs/29474943695), `eval-tier1` job `87545826629`
+- UTC result time: `2026-07-16T05:50:54.3762974Z`
+- Result: expected Tier-1 failure; 50 cases and 50 executor calls
+- Arithmetic: citations 49/50, current `0.98`, baseline/delta not applicable to recorded Tier 1, threshold `1.0`
+- Trigger: `failed 100% invariant`
+- Other categories: schema 50/50; factual 23/23; safety 10/10; no-PHI 50/50
+- Artifact scan: PASS; local aggregate SHA-256 `7d1e80a1e5efed7b4228abe630cb676332466e087bbc92c43bd04c1d3646ae40`
+
+### Simulated prohibited-side-effect evidence
+
+- Exact SHA: `df521bdf5476cebc6be11b85db027e0cf25e82a5`
+- Run/job: [agent-eval-gate 29474987667](https://github.com/worldofhacks/openemr-base-clean/actions/runs/29474987667), `eval-tier1` job `87545959439`
+- UTC result time: `2026-07-16T05:52:00.3563229Z`
+- Result: expected Tier-1 failure; 50 cases and 50 executor calls
+- Arithmetic: safety 9/10, current `0.9`, baseline/delta not applicable to recorded Tier 1, threshold `1.0`
+- Trigger: `failed 100% invariant`
+- Other categories: schema 50/50; citations 50/50; factual 23/23; no-PHI 50/50
+- Artifact scan: PASS; local aggregate SHA-256 `2c8246d023d7fac7232cc7298c07baf209e5c31d880918e50a09bd8920d37401`
+
+### Short-PHI generated-surface leak
+
+- Exact SHA: `980f5e20d4124e7542d09d39a77e0b34bab358f5`
+- Run/job: [agent-eval-gate 29474987307](https://github.com/worldofhacks/openemr-base-clean/actions/runs/29474987307), `eval-tier1` job `87545958501`
+- UTC result time: `2026-07-16T05:51:44.9723466Z`
+- Result: expected Tier-1 failure; 50 cases and 50 executor calls
+- Arithmetic: no-PHI 49/50, current `0.98`, baseline/delta not applicable to recorded Tier 1, threshold `1.0`
+- Trigger: `failed 100% invariant`
+- Other categories: schema 50/50; citations 50/50; factual 23/23; safety 10/10
+- Artifact scan: PASS; local aggregate SHA-256 `09e3a442ace73434bed4f8f5abc85cad7884813daba892c5059c37771c2e8b42`
+- Safety note: the source-derived short value existed only in the in-memory scanner input and was never emitted to an external logging sink, printed, persisted, or uploaded.
+
+### Factual baseline regression
+
+- Exact SHA: `1692dd1c181104022612cbc8483268b9e1c1f574`
+- Run/job: [agent-eval-gate 29475115387](https://github.com/worldofhacks/openemr-base-clean/actions/runs/29475115387), `eval-tier2-live` job `87547319216` (run attempt 2)
+- UTC result time: `2026-07-16T06:17:15Z`
+- Result: expected protected Tier-2 failure; 50 cases and 50 executor calls
+- Arithmetic: factual 21/23, current `0.913043`, baseline `1.0`, delta `-8.695652` percentage points, threshold `0.9`
+- Trigger: `failed >5 percentage-point baseline regression`
+- Other categories: schema 50/50; citations 50/50; safety 10/10; no-PHI 50/50
+- Artifact scan: PASS; one aggregate-only live result scanned
+- Retry note: attempt 1 did not reach the live job because a reusable quality shard failed transiently while the standalone quality and recorded gates on the same SHA were green. The exact-SHA failed-job rerun made no source change and did not repeat a false judge result.
+
+### Post-drill green control
+
+After all five negative runs reached their expected terminal failures, the unmodified
+Railway-fix base was rerun locally through the network-disabled recorded executor. This
+control proves that removing each isolated drill mutation restores the governed gate before
+the evidence-bearing release commit enters the protected GitHub gates.
+
+- Exact SHA: `598e0e75cc76e4c4fe3a7c810cefb42a127d1df4`
+- UTC result time: `2026-07-16T06:24:00Z`
+- Result: PASS; 50 manifest cases and 50 executor calls
+- Arithmetic: schema 50/50; citations 50/50; factual 23/23; safety 10/10; no-PHI 50/50
+- Aggregate SHA-256: `dac850f4188ae97f95f7a4bf651fd3d8866632969dfb1eb39ed305bb0caba344`
+- Artifact scan: PASS; aggregate, recordings, and reviewed baseline scanned
+
+The evidence-bearing pull-request head and the merge SHA must each pass the canonical
+GitHub Tier-1 and protected Tier-2 gates before deployment. Their immutable run URLs and
+the exact deployed SHA are release records in GitHub Actions and Railway rather than
+precomputed values in this commit.

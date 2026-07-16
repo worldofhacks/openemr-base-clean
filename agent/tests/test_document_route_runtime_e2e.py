@@ -404,10 +404,32 @@ class _RuntimeServices:
         async def run_brief_pinned() -> BriefResult:
             return await self.run_brief(session, message, request_url=request_url)
 
-        async def run_brief_with_context(_answer_context) -> BriefResult:
-            # This deterministic fake selects no guideline chunk. Production uses
-            # the typed answer tool; unselected retrieved snippets must not render.
-            return await self.run_brief(session, message, request_url=request_url)
+        async def run_brief_with_context(answer_context) -> BriefResult:
+            # Mirror the production typed answer selector: only exact canonical document
+            # claims relevant to this query are selected. Unselected document/guideline
+            # context must not be appended as an unscoped evidence dump.
+            if "blood pressure" in message.lower():
+                selected = tuple(
+                    claim
+                    for claim in answer_context.document_claims
+                    if claim.citation.field_or_chunk_id == "vitals.bpd.value"
+                )
+            else:
+                selected = tuple(
+                    claim
+                    for claim in answer_context.document_claims
+                    if claim.citation.field_or_chunk_id.startswith("results[0].")
+                )
+            return BriefResult(
+                text="Verified uploaded-document evidence is provided below.",
+                source="llm",
+                degraded=False,
+                usage=Usage(),
+                iterations=1,
+                verdicts=[],
+                verified_claims=selected,
+                answer_reason_code="verified",
+            )
 
         result = await run_graph_turn(
             run_brief=run_brief_pinned,
@@ -482,7 +504,7 @@ def test_mounted_document_runtime_uploads_processes_and_serves_cited_answer(
             "/chat",
             json={
                 "session_id": services.session.session_id,
-                "message": "type 2 diabetes; HbA1c",
+                "message": "Glucose",
             },
             headers={"X-Copilot-Request-Id": "corr-route-chat"},
         )

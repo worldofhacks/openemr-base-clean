@@ -170,6 +170,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
 .viewer { width:min(980px,96vw); max-height:94vh; overflow:auto; background:var(--surface); border:1px solid #71818b; border-radius:6px; }
 .viewer-head { position:sticky; top:0; z-index:3; display:flex; align-items:center; gap:8px; padding:10px 12px; background:var(--surface); border-bottom:1px solid var(--line); }
 .viewer-head button { margin-left:auto; }
+.viewer-error { margin:12px 16px 0; }
 .page-wrap { position:relative; width:max-content; max-width:100%; margin:16px auto; }
 .page-wrap img { display:block; max-width:min(880px,calc(96vw - 64px)); height:auto; border:1px solid var(--line); }
 .overlay-svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
@@ -280,7 +281,8 @@ button:disabled { cursor:not-allowed; opacity:.55; }
 <div class="modal" id="modal" role="dialog" aria-modal="true" aria-label="Source page">
   <div class="viewer">
     <div class="viewer-head"><strong id="viewerTitle">Source page</strong><span class="subtle" id="viewerNote"></span><button class="secondary" id="closeViewer" type="button">Close</button></div>
-    <div class="page-wrap" id="pageWrap"><img id="pageImage" alt="Uploaded document source page"><svg class="overlay-svg" id="overlaySvg" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true" hidden><rect class="box" id="overlay"></rect></svg></div>
+    <div class="viewer-error errorbox" id="viewerError" role="alert" hidden></div>
+    <div class="page-wrap" id="pageWrap" hidden><img id="pageImage" alt="Uploaded document source page"><svg class="overlay-svg" id="overlaySvg" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true" hidden><rect class="box" id="overlay"></rect></svg></div>
   </div>
 </div>
 <script nonce="__W2_NONCE__">
@@ -297,6 +299,9 @@ button:disabled { cursor:not-allowed; opacity:.55; }
   let currentStatus = null;
   let pollGeneration = 0;
   let workflowCorrelationId = null;
+  let pageLoadGeneration = 0;
+  let pageObjectUrl = null;
+  let pageAbortController = null;
   const terminal = new Set(["complete", "failed"]);
   const stages = ["storing", "reconciling", "queued", "extracting", "grounding", "writing", "complete"];
   const correlationPattern = /^[A-Za-z0-9_.:-]{1,128}$/;
@@ -507,7 +512,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
     const chip = make("button", "chip " + source, label);
     chip.type = "button";
     chip.addEventListener("click", function () {
-      if (bbox && page !== null && page !== undefined) openPage(documentId, page, bbox, unsupported);
+      if (bbox && page !== null && page !== undefined) void openPage(documentId, page, bbox, unsupported);
       else if (citation) alert([citation.source_id, citation.page_or_section || "chart record", citation.field_or_chunk_id, citation.quote_or_value].join("\n"));
     });
     return chip;
@@ -545,7 +550,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
   }
   function openTrendPoint(point) {
     if (!point || !point.document_id || !point.bbox || !Number.isInteger(point.page)) return;
-    openPage(point.document_id, point.page, point.bbox, false);
+    void openPage(point.document_id, point.page, point.bbox, false);
   }
   function renderTrendChart(series) {
     const width = 720, height = 190, left = 52, right = 18, top = 18, bottom = 34;
@@ -650,25 +655,105 @@ button:disabled { cursor:not-allowed; opacity:.55; }
     overlay.setAttribute("width", String(bbox.x1 - bbox.x0));
     overlay.setAttribute("height", String(bbox.y1 - bbox.y0));
   }
-  function openPage(documentId, page, bbox, unsupported) {
+  function releasePageObjectUrl() {
+    if (pageObjectUrl) URL.revokeObjectURL(pageObjectUrl);
+    pageObjectUrl = null;
+  }
+  function resetPageImage() {
+    const image = byId("pageImage");
+    image.onload = null;
+    image.onerror = null;
+    image.removeAttribute("src");
+    releasePageObjectUrl();
+    byId("pageWrap").hidden = true;
+    byId("overlaySvg").hidden = true;
+  }
+  function showPageError(error) {
+    const target = byId("viewerError");
+    target.textContent = error instanceof Error ? error.message : "Source page unavailable";
+    target.hidden = false;
+    byId("viewerNote").textContent = "source preview failed";
+  }
+  async function openPage(documentId, page, bbox, unsupported) {
+    const generation = ++pageLoadGeneration;
+    if (pageAbortController) pageAbortController.abort();
+    pageAbortController = new AbortController();
+    const controller = pageAbortController;
     const image = byId("pageImage");
     const overlay = byId("overlay");
     const overlaySvg = byId("overlaySvg");
-    overlay.className = "box" + (unsupported ? " unsupported" : "");
+    const pageWrap = byId("pageWrap");
+    resetPageImage();
+    byId("viewerError").hidden = true;
+    byId("viewerError").textContent = "";
+    overlay.setAttribute("class", "box" + (unsupported ? " unsupported" : ""));
     byId("viewerTitle").textContent = "Uploaded document · page " + page;
-    byId("viewerNote").textContent = unsupported ? "UNSUPPORTED review region" : "verified grounded field";
+    byId("viewerNote").textContent = "Loading source page…";
     positionOverlay(bbox);
     overlaySvg.hidden = true;
-    image.onload = function () { overlaySvg.hidden = false; };
-    image.onerror = function () { byId("viewerNote").textContent = "Source page unavailable; use the citation quote."; overlaySvg.hidden = true; };
-    image.src = withSession("/documents/" + encodeURIComponent(documentId) + "/pages/" + encodeURIComponent(page)).toString();
     byId("modal").classList.add("open");
+    try {
+      const response = await fetch(
+        withSession("/documents/" + encodeURIComponent(documentId) + "/pages/" + encodeURIComponent(page)),
+        {headers:requestHeaders({"Accept":"image/png"}),cache:"no-store",signal:controller.signal}
+      );
+      if (!response.ok) throw await apiError(response);
+      const contentType = (response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
+      if (contentType !== "image/png") throw new Error("Source page returned an invalid image response");
+      const blob = await response.blob();
+      if (generation !== pageLoadGeneration) return;
+      if (!blob.size) throw new Error("Source page returned an empty image");
+      pageObjectUrl = URL.createObjectURL(blob);
+      await new Promise(function (resolve, reject) {
+        let settled = false;
+        function cleanup() {
+          image.onload = null;
+          image.onerror = null;
+          controller.signal.removeEventListener("abort", aborted);
+        }
+        function succeeded() {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve();
+        }
+        function failed(error) {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(error);
+        }
+        function aborted() { failed(new DOMException("Source page load cancelled", "AbortError")); }
+        image.onload = succeeded;
+        image.onerror = function () { failed(new Error("Source page image could not be decoded")); };
+        controller.signal.addEventListener("abort", aborted, {once:true});
+        if (controller.signal.aborted) aborted();
+        else {
+          try { image.src = pageObjectUrl; }
+          catch (error) { failed(error); }
+        }
+      });
+      if (generation !== pageLoadGeneration) return;
+      pageWrap.hidden = false;
+      overlaySvg.hidden = false;
+      byId("viewerNote").textContent = unsupported ? "UNSUPPORTED review region" : "verified grounded field";
+    } catch (error) {
+      if (generation !== pageLoadGeneration) return;
+      resetPageImage();
+      showPageError(error);
+    } finally {
+      if (pageAbortController === controller) pageAbortController = null;
+    }
   }
   function closePage() {
+    pageLoadGeneration += 1;
+    if (pageAbortController) pageAbortController.abort();
+    pageAbortController = null;
     const modal = byId("modal");
     modal.classList.remove("open");
-    byId("overlaySvg").hidden = true;
-    byId("pageImage").removeAttribute("src");
+    resetPageImage();
+    byId("viewerError").hidden = true;
+    byId("viewerError").textContent = "";
   }
   byId("closeViewer").addEventListener("click", closePage);
   byId("modal").addEventListener("click", function (event) { if (event.target === byId("modal")) closePage(); });
@@ -796,7 +881,7 @@ async def week2_page(
     page = _PAGE.replace("__W2_CONTEXT__", context).replace("__W2_NONCE__", nonce)
     csp = (
         "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
-        "form-action 'self'; img-src 'self' data:; connect-src 'self'; "
+        "form-action 'self'; img-src 'self' data: blob:; connect-src 'self'; "
         f"style-src 'nonce-{nonce}'; style-src-attr 'none'; "
         f"script-src 'nonce-{nonce}'"
     )

@@ -150,6 +150,8 @@ class _FakeDocumentOperations:
         self.admission_duplicate = False
         self.outstanding_jobs = 0
         self.submission_duplicate = False
+        self.page_error: Exception | None = None
+        self.page_result: object = _DEFAULT_PAGE_RESULT
 
     async def admission_snapshot(self, session, content_hash):
         from app.ingestion.service import DocumentAdmissionSnapshot
@@ -204,7 +206,11 @@ class _FakeDocumentOperations:
             from app.ingestion.service import DocumentAccessError
 
             raise DocumentAccessError(document_id)
+        if self.page_error is not None:
+            raise self.page_error
         assert page_number == 1
+        if self.page_result is not _DEFAULT_PAGE_RESULT:
+            return self.page_result
         return RenderedPage(content=b"\x89PNG\r\n\x1a\nsynthetic")
 
     async def verify_readback(self, session, document_id):
@@ -229,6 +235,9 @@ class _FakeDocumentOperations:
                 verified=True,
             ),
         )
+
+
+_DEFAULT_PAGE_RESULT = object()
 
 
 class _PatientRouteMismatchOperations(_FakeDocumentOperations):
@@ -266,9 +275,12 @@ class _FakeServices:
             turn_cap=20,
         )
         self.documents = _FakeDocumentOperations()
+        self.resolve_error: Exception | None = None
 
     async def resolve_session(self, session_id):
         assert session_id == "session-synthetic"
+        if self.resolve_error is not None:
+            raise self.resolve_error
         return self.session
 
 
@@ -536,6 +548,120 @@ def test_document_page_endpoint_is_patient_pinned_png_only():
     )
     assert denied.status_code == 403
     assert denied.json()["detail"]["reason"] == "patient_mismatch"
+
+
+def test_document_page_endpoint_integrates_real_pinned_image_renderer():
+    import asyncio
+    import hashlib
+
+    from app.ingestion.pages import EphemeralPageRenderer
+    from app.ingestion.repository import InMemoryDocumentRepository, NewDocument
+
+    source = _synthetic_png()
+    repository = InMemoryDocumentRepository()
+    record, _created = asyncio.run(
+        repository.get_or_create(
+            NewDocument(
+                patient_id="patient-synthetic-a",
+                content_hash=hashlib.sha256(source).hexdigest(),
+                doc_type="intake_form",
+                filename="synthetic-intake.png",
+                content_type="image/png",
+                encounter_id=None,
+                correlation_id="corr-page-preview",
+                credential_ref="credential-page-preview",
+            )
+        )
+    )
+
+    async def fetch_source(_record):
+        return source
+
+    services = _FakeServices()
+    services.documents = EphemeralPageRenderer(
+        repository,
+        fetch_source=fetch_source,
+    )
+    response = _documents_client(services).get(
+        f"/documents/{record.document_id}/pages/1",
+        params={"session_id": "session-synthetic"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_document_page_endpoint_maps_expired_missing_and_unavailable_failures():
+    from app.ingestion.pages import PageNotFound
+    from app.session.store import SessionExpiredError
+    from app.writeback.live_gateway import EncounterRouteMismatch, PatientRouteMismatch
+    from app.writeback.source_loader import SourceDocumentUnavailable
+
+    expired = _FakeServices()
+    expired.resolve_error = SessionExpiredError("session-synthetic")
+    expired_response = _documents_client(expired).get(
+        "/documents/doc-synthetic-1/pages/1",
+        params={"session_id": "session-synthetic"},
+    )
+    assert expired_response.status_code == 401
+    assert expired_response.json() == {"detail": "session expired"}
+
+    missing = _FakeServices()
+    missing.documents.page_error = PageNotFound(1)
+    missing_response = _documents_client(missing).get(
+        "/documents/doc-synthetic-1/pages/1",
+        params={"session_id": "session-synthetic"},
+    )
+    assert missing_response.status_code == 404
+    assert missing_response.json() == {"detail": "page not found"}
+
+    patient_mismatch = _FakeServices()
+    patient_mismatch.documents.page_error = PatientRouteMismatch("patient-synthetic-a")
+    patient_mismatch_response = _documents_client(patient_mismatch).get(
+        "/documents/doc-synthetic-1/pages/1",
+        params={"session_id": "session-synthetic"},
+    )
+    assert patient_mismatch_response.status_code == 403
+    assert patient_mismatch_response.json()["detail"] == {
+        "reason": "patient_mismatch",
+        "message": "selected patient is not attested for the document write path",
+    }
+
+    encounter_mismatch = _FakeServices()
+    encounter_mismatch.documents.page_error = EncounterRouteMismatch(
+        "encounter-synthetic-a"
+    )
+    encounter_mismatch_response = _documents_client(encounter_mismatch).get(
+        "/documents/doc-synthetic-1/pages/1",
+        params={"session_id": "session-synthetic"},
+    )
+    assert encounter_mismatch_response.status_code == 403
+    assert encounter_mismatch_response.json()["detail"] == {
+        "reason": "encounter_mismatch",
+        "message": "encounter is not attested for the pinned patient",
+    }
+
+    unavailable = _FakeServices()
+    unavailable.documents.page_error = SourceDocumentUnavailable("doc-synthetic-1")
+    unavailable_response = _documents_client(unavailable).get(
+        "/documents/doc-synthetic-1/pages/1",
+        params={"session_id": "session-synthetic"},
+    )
+    assert unavailable_response.status_code == 503
+    assert unavailable_response.json() == {
+        "detail": "source document is unavailable for rendering"
+    }
+
+    invalid_renderer = _FakeServices()
+    invalid_renderer.documents.page_result = object()
+    invalid_response = _documents_client(invalid_renderer).get(
+        "/documents/doc-synthetic-1/pages/1",
+        params={"session_id": "session-synthetic"},
+    )
+    assert invalid_response.status_code == 503
+    assert invalid_response.json() == {"detail": "page renderer unavailable"}
 
 
 def test_document_readback_verification_is_patient_pinned_and_digest_only():

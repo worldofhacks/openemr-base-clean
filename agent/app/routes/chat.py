@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
+from app.logging import get_logger
 from app.middleware.correlation import correlation_id_var
 
 # Module-attribute access (not `from ... import run_graph_turn`): the graph entrypoint
@@ -42,6 +43,7 @@ from app.session.store import (
 )
 
 router = APIRouter()
+_log = get_logger("agent.routes.chat")
 
 MAX_CHAT_MESSAGE_CHARS = 4_000
 MAX_CHAT_MESSAGE_BYTES = 12_000
@@ -301,17 +303,29 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse | StreamingRe
     try:
         session = await services.resolve_session(req.session_id)
     except SessionNotFound:
+        _log.warning("chat_pin_refusal", extra={"reason_code": "pin_not_found"})
         raise HTTPException(
             status_code=404, detail="session not found — start a SMART launch"
         )
     except SessionExpiredError:
+        _log.warning("chat_pin_refusal", extra={"reason_code": "pin_expired"})
         raise HTTPException(
             status_code=401, detail="session expired — re-launch the co-pilot"
         )
     except SessionStoreUnavailable:
         # Fail-closed (§6): never serve unpinned when the pin store is unreachable.
+        _log.warning(
+            "chat_pin_refusal", extra={"reason_code": "pin_store_unavailable"}
+        )
         raise HTTPException(
             status_code=503, detail="session store unavailable — refusing to serve"
+        )
+
+    if not isinstance(session.patient_id, str) or not session.patient_id.strip():
+        _log.warning("chat_pin_refusal", extra={"reason_code": "pin_missing"})
+        raise HTTPException(
+            status_code=401,
+            detail="session has no pinned patient — start a fresh SMART launch",
         )
 
     # The session IS the patient (the pin). A caller naming a different patient is refused (F-S.2).
@@ -319,6 +333,7 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse | StreamingRe
         try:
             session.authorize_patient(req.patient_id)
         except CrossPatientError:
+            _log.warning("chat_pin_refusal", extra={"reason_code": "pin_mismatch"})
             raise HTTPException(
                 status_code=403,
                 detail="cross-patient request refused — a patient switch needs a fresh launch",

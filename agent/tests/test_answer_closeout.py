@@ -16,10 +16,15 @@ from app.llm.provider import LLMResponse, ToolUseBlock, Usage
 from app.orchestrator.composer import (
     build_grounded_answer_context,
     citation_for_guideline,
+    compose_answer,
 )
-from app.orchestrator.graph import GraphTurnResult
+from app.orchestrator.graph import GraphTurnResult, run_graph_turn
 from app.orchestrator.loop import BriefResult, Orchestrator, ToolRegistry
+from app.orchestrator.refs import TurnRefRegistry
+from app.schemas.answers import VerifiedClinicalClaim
 from app.schemas.citations import CitationSourceType, CitationV2, EvidenceSnippet
+from app.schemas.extraction import NormBBox
+from app.schemas.workers import WorkerInput, WorkerOutput
 from app.session.store import Session
 
 
@@ -122,6 +127,341 @@ async def test_answer_model_gets_only_ranked_top_five_and_resolves_canonical_chu
     ]
     assert all(claim.citation.source_type is CitationSourceType.GUIDELINE for claim in claims)
     assert "Altered model quote" not in repr(result)
+
+
+def _document_claim() -> VerifiedClinicalClaim:
+    citation = CitationV2(
+        source_type=CitationSourceType.UPLOADED_DOCUMENT,
+        source_id="document:synthetic-magnesium-lab",
+        page_or_section="1",
+        field_or_chunk_id="results[0].value",
+        quote_or_value="1.6",
+    )
+    return VerifiedClinicalClaim(
+        text="results.0.value: 1.6",
+        citation=citation,
+        page=1,
+        bbox=NormBBox(x0=0.42, y0=0.31, x1=0.51, y1=0.35),
+    )
+
+
+def _magnesium_claims() -> tuple[VerifiedClinicalClaim, ...]:
+    source_id = "document:synthetic-magnesium-lab"
+    name = VerifiedClinicalClaim(
+        text="results.0.test_name: Magnesium",
+        citation=CitationV2(
+            source_type=CitationSourceType.UPLOADED_DOCUMENT,
+            source_id=source_id,
+            page_or_section="1",
+            field_or_chunk_id="results[0].test_name",
+            quote_or_value="Magnesium",
+        ),
+        page=1,
+        bbox=NormBBox(x0=0.12, y0=0.31, x1=0.28, y1=0.35),
+    )
+    unit = VerifiedClinicalClaim(
+        text="results.0.unit: mg/dL",
+        citation=CitationV2(
+            source_type=CitationSourceType.UPLOADED_DOCUMENT,
+            source_id=source_id,
+            page_or_section="1",
+            field_or_chunk_id="results[0].unit",
+            quote_or_value="mg/dL",
+        ),
+        page=1,
+        bbox=NormBBox(x0=0.53, y0=0.31, x1=0.62, y1=0.35),
+    )
+    return name, _document_claim(), unit
+
+
+def _chart_claim() -> VerifiedClinicalClaim:
+    citation = CitationV2(
+        source_type=CitationSourceType.PATIENT_RECORD,
+        source_id="Observation/synthetic-unrelated",
+        page_or_section=None,
+        field_or_chunk_id="Observation:synthetic-unrelated:12345678",
+        quote_or_value="7.7",
+    )
+    return VerifiedClinicalClaim(text="Unrelated synthetic chart value: 7.7", citation=citation)
+
+
+def _selected_chart_claim() -> VerifiedClinicalClaim:
+    citation = CitationV2(
+        source_type=CitationSourceType.PATIENT_RECORD,
+        source_id="Observation/synthetic-selected",
+        page_or_section=None,
+        field_or_chunk_id="Observation:synthetic-selected:87654321",
+        quote_or_value="6.5",
+    )
+    return VerifiedClinicalClaim(text="Selected synthetic chart value: 6.5", citation=citation)
+
+
+class _CapturingDocumentProvider:
+    model = "claude-sonnet-4-6"
+
+    def __init__(self, claims: list[dict]) -> None:
+        self.claims = claims
+        self.requests: list[dict] = []
+
+    async def complete(self, *, system, messages, tools):
+        self.requests.append({"system": system, "messages": messages, "tools": tools})
+        return LLMResponse(
+            content=[
+                ToolUseBlock(
+                    id="tool-document",
+                    name="submit_claims",
+                    input={"claims": self.claims},
+                )
+            ],
+            stop_reason="tool_use",
+            usage=Usage(input_tokens=9, output_tokens=4),
+            model=self.model,
+        )
+
+
+async def test_answer_model_resolves_only_exact_canonical_document_selection() -> None:
+    document_claim = _document_claim()
+    context = build_grounded_answer_context(
+        verified_facts=(document_claim,),
+        evidence_snippets=(),
+        citations=(document_claim.citation,),
+    )
+    provider = _CapturingDocumentProvider(
+        [
+            {
+                "type": "document",
+                "claim_id": "document-claim-1",
+                "field_id": "results[0].value",
+                "evidence_ids": [],
+            },
+            # A model-authored value is an embellished selector, so it cannot resolve.
+            {
+                "type": "document",
+                "claim_id": "document-claim-1",
+                "field_id": "results[0].value",
+                "evidence_ids": [],
+                "text": "1.7",
+            },
+            {
+                "type": "document",
+                "claim_id": "document-claim-404",
+                "field_id": "results[0].value",
+                "evidence_ids": [],
+            },
+        ]
+    )
+
+    result = await Orchestrator(provider).run_previsit_brief(
+        build_evidence_packet("synthetic-patient", {}),
+        "Magnesium",
+        tools=ToolRegistry([]),
+        answer_context=context,
+    )
+
+    grounded_block = provider.requests[0]["messages"][0]["content"][0]["text"]
+    assert '"claim_id":"document-claim-1"' in grounded_block
+    assert '"field_id":"results[0].value"' in grounded_block
+    assert "document:synthetic-magnesium-lab" not in grounded_block
+    assert '"page"' not in grounded_block
+    assert '"bbox"' not in grounded_block
+    assert result.source == "llm"
+    assert result.answer_reason_code == "verified"
+    assert result.verified_claims == (document_claim,)
+    assert result.verified_claims[0].citation.quote_or_value == "1.6"
+    assert result.verified_claims[0].bbox == document_claim.bbox
+
+
+async def _run_document_graph(
+    provider: _CapturingDocumentProvider,
+    verified_facts: tuple[VerifiedClinicalClaim, ...],
+    *,
+    question: str = "Magnesium",
+) -> GraphTurnResult:
+    correlation_id = "corr-document-answer"
+    refs = TurnRefRegistry(correlation_id)
+    fact_refs = [refs.put(fact, kind="verified-fact") for fact in verified_facts]
+    citation_refs = [
+        refs.put(fact.citation, kind="citation") for fact in verified_facts
+    ]
+
+    async def extractor(payload: WorkerInput) -> WorkerOutput:
+        return WorkerOutput(
+            correlation_id=payload.correlation_id,
+            worker="intake_extractor",
+            status="complete",
+            artifact_refs=fact_refs,
+            citation_refs=citation_refs,
+        )
+
+    async def retriever(payload: WorkerInput) -> WorkerOutput:
+        return WorkerOutput(
+            correlation_id=payload.correlation_id,
+            worker="evidence_retriever",
+            status="complete",
+        )
+
+    orchestrator = Orchestrator(provider)
+
+    async def run_brief() -> BriefResult:
+        raise AssertionError("the context-aware production answer path must be used")
+
+    async def run_brief_with_context(context) -> BriefResult:
+        return await orchestrator.run_previsit_brief(
+            build_evidence_packet("synthetic-patient", {}),
+            question,
+            tools=ToolRegistry([]),
+            answer_context=context,
+        )
+
+    return await run_graph_turn(
+        run_brief=run_brief,
+        run_brief_with_context=run_brief_with_context,
+        correlation_id=correlation_id,
+        worker_input=WorkerInput(
+            correlation_id=correlation_id,
+            turn=0,
+            patient_ref="session:synthetic-pinned-patient",
+            document_refs=["document:synthetic-magnesium-lab"],
+            evidence_refs=[],
+            request_kind="clinical_question",
+        ),
+        extraction_worker=extractor,
+        retrieval_worker=retriever,
+        ref_registry=refs,
+    )
+
+
+async def test_grounded_uploaded_lab_term_returns_verified_citation_v2_answer() -> None:
+    document_claims = _magnesium_claims()
+    provider = _CapturingDocumentProvider(
+        [
+            {
+                "type": "document",
+                "claim_id": "document-claim-1",
+                "field_id": "results[0].test_name",
+                "evidence_ids": [],
+            },
+            {
+                "type": "document",
+                "claim_id": "document-claim-2",
+                "field_id": "results[0].value",
+                "evidence_ids": [],
+            },
+            {
+                "type": "document",
+                "claim_id": "document-claim-3",
+                "field_id": "results[0].unit",
+                "evidence_ids": [],
+            },
+        ]
+    )
+
+    result = await _run_document_graph(provider, (*document_claims, _chart_claim()))
+
+    assert result.critic_approved is True
+    assert result.brief.source == "llm"
+    assert result.brief.answer_reason_code == "verified"
+    rendered = result.composition.for_source(CitationSourceType.UPLOADED_DOCUMENT)
+    assert len(rendered) == 3
+    assert " ".join(claim.citation.quote_or_value for claim in rendered) == (
+        "Magnesium 1.6 mg/dL"
+    )
+    assert [claim.citation.field_or_chunk_id for claim in rendered] == [
+        "results[0].test_name",
+        "results[0].value",
+        "results[0].unit",
+    ]
+    assert all(isinstance(claim.citation, CitationV2) for claim in rendered)
+    assert all(claim.overlay is not None for claim in rendered)
+    assert [claim.overlay.bbox for claim in rendered if claim.overlay is not None] == [
+        document_claim.bbox for document_claim in document_claims
+    ]
+    assert result.composition.for_source(CitationSourceType.PATIENT_RECORD) == ()
+    assert "7.7" not in " ".join(claim.text for claim in result.composition.claims)
+
+
+async def test_context_composer_keeps_only_explicitly_selected_chart_claim() -> None:
+    selected = _selected_chart_claim()
+    unrelated = _chart_claim()
+
+    async def unsupported_legacy_path() -> BriefResult:
+        raise AssertionError("the context-aware production answer path must be used")
+
+    async def run_with_context(_context) -> BriefResult:
+        return BriefResult(
+            text="Verified chart evidence is provided below.",
+            source="llm",
+            degraded=False,
+            usage=Usage(),
+            iterations=1,
+            verified_claims=(selected,),
+            answer_reason_code="verified",
+        )
+
+    result = await compose_answer(
+        verified_facts=(selected, unrelated),
+        evidence_snippets=(),
+        citations=(selected.citation, unrelated.citation),
+        run_brief=unsupported_legacy_path,
+        run_brief_with_context=run_with_context,
+    )
+
+    rendered = result.composition.for_source(CitationSourceType.PATIENT_RECORD)
+    assert [claim.text for claim in rendered] == [selected.text]
+    assert unrelated.text not in " ".join(
+        claim.text for claim in result.composition.claims
+    )
+
+
+async def test_unmatched_document_query_refuses_without_unrelated_evidence_dump(
+    caplog,
+) -> None:
+    # The answer model found no claim relevant to the out-of-scope query. An explicit empty
+    # typed selection must become a helpful refusal, never an unscoped evidence dump.
+    provider = _CapturingDocumentProvider([])
+    caplog.set_level("INFO")
+
+    result = await _run_document_graph(
+        provider,
+        (_document_claim(), _chart_claim()),
+        question="What will the weather be tomorrow?",
+    )
+
+    assert result.critic_approved is True
+    assert result.brief.source == "deterministic_refusal"
+    assert result.brief.answer_reason_code == "no_claim"
+    assert result.brief.verdicts == ["refused:no_claim"]
+    assert "Ask about a condition or test" in result.brief.text
+    assert "Magnesium" in result.brief.text
+    assert "1.6" not in result.brief.text
+    assert "7.7" not in result.brief.text
+    assert result.brief.citations == []
+    assert result.brief.verified_claims == ()
+    assert result.composition.claims == ()
+    assert any(
+        record.getMessage() == "answer_outcome"
+        and getattr(record, "reason_code", None) == "all_blocked"
+        for record in caplog.records
+    )
+    assert any(
+        record.getMessage() == "graph_answer_outcome"
+        and getattr(record, "reason_code", None) == "no_claim"
+        for record in caplog.records
+    )
+
+
+async def test_empty_answer_context_refuses_with_no_evidence_reason() -> None:
+    provider = _CapturingDocumentProvider([])
+
+    result = await _run_document_graph(provider, ())
+
+    assert result.critic_approved is True
+    assert result.brief.source == "deterministic_refusal"
+    assert result.brief.answer_reason_code == "no_evidence"
+    assert result.brief.verdicts == ["refused:no_evidence"]
+    assert "Confirm that a patient is pinned" in result.brief.text
+    assert result.brief.citations == []
+    assert result.composition.claims == ()
 
 
 def _chart_citation() -> CitationV2:

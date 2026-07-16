@@ -35,6 +35,7 @@ from typing import TypeVar
 
 from langgraph.graph import END, START, StateGraph
 
+from app.logging import get_logger
 from app.llm.provider import Usage
 from app.llm.cost import estimate_cost
 from app.observability.events import (
@@ -68,6 +69,24 @@ from app.schemas.extraction import ExtractionArtifact
 from app.schemas.workers import WorkerInput, WorkerOutput
 
 FLAG_ENV = "W2_GRAPH_ENABLED"
+
+_log = get_logger("agent.orchestrator.graph")
+_ANSWER_OUTCOME_CODES = frozenset(
+    {
+        "verified",
+        "no_evidence",
+        "no_claim",
+        "all_blocked",
+        "critic_rejected",
+        "step_budget_exceeded",
+        "transient",
+        "client_error",
+        "request_too_large",
+        "cost_cap",
+        "no_convergence",
+        "policy_refusal",
+    }
+)
 
 # Per-turn step budget — §2 working value 8: bounds the hop counter, so at most 8 hops
 # are routed before the supervisor refuses with reason_code=step_budget_exceeded.
@@ -138,6 +157,7 @@ def _refusal_brief() -> BriefResult:
         iterations=0,
         tool_calls=[],
         verdicts=[f"refused:{ReasonCode.STEP_BUDGET_EXCEEDED.value}"],
+        answer_reason_code="step_budget_exceeded",
     )
 
 
@@ -150,6 +170,7 @@ def _critic_refusal_brief(original: BriefResult | None = None) -> BriefResult:
         iterations=0,
         tool_calls=[],
         verdicts=[f"refused:{ReasonCode.CRITIC_REJECTED.value}"],
+        answer_reason_code="critic_rejected",
     )
     if original is None:
         return refusal
@@ -165,6 +186,7 @@ def _critic_refusal_brief(original: BriefResult | None = None) -> BriefResult:
         verdicts=refusal.verdicts,
         citations=[],
         verified_claims=(),
+        answer_reason_code="critic_rejected",
     )
 
 
@@ -628,6 +650,22 @@ async def run_graph_turn(
             else composer.VerifiedComposition()
         ),
         critic_approved=approved,
+    )
+
+    raw_reason = result.brief.answer_reason_code or result.brief.fallback_kind
+    if raw_reason in _ANSWER_OUTCOME_CODES:
+        reason_code = raw_reason
+    elif result.critic_approved and result.brief.source == "deterministic_refusal":
+        reason_code = "policy_refusal"
+    else:
+        reason_code = "verified" if result.critic_approved else "critic_rejected"
+    log = _log.info if reason_code == "verified" else _log.warning
+    log(
+        "graph_answer_outcome",
+        extra={
+            "reason_code": reason_code,
+            "critic_approved": result.critic_approved,
+        },
     )
 
     if tracer is not None and accountability is not None:

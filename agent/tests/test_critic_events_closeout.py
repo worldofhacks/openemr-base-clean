@@ -82,9 +82,12 @@ def test_critic_approves_only_resolved_policy_safe_claims() -> None:
     ).reason is CriticReason.MIXED_SOURCE
 
 
-async def test_graph_critic_discards_rejected_bytes_and_emits_complete_summary() -> None:
+async def test_graph_critic_discards_rejected_bytes_and_emits_complete_summary(
+    caplog,
+) -> None:
     sink = InMemoryEventSink()
     events = EventEmitter(sink)
+    caplog.set_level("WARNING", logger="agent.orchestrator.graph")
 
     async def unsafe_brief() -> BriefResult:
         return _brief("Start synthetic medicine at 10 mg.")
@@ -97,6 +100,7 @@ async def test_graph_critic_discards_rejected_bytes_and_emits_complete_summary()
 
     assert result.critic_approved is False
     assert result.brief.text == _DEFAULT_REFUSAL_TEXT
+    assert result.brief.answer_reason_code == "critic_rejected"
     assert "10 mg" not in result.brief.text
     assert result.brief.citations == []
     assert result.composition.claims == ()
@@ -116,6 +120,13 @@ async def test_graph_critic_discards_rejected_bytes_and_emits_complete_summary()
         summary.attributes["step_latencies_ms"]
     )
     assert "10 mg" not in repr(sink.events)
+    outcome = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "graph_answer_outcome"
+    )
+    assert getattr(outcome, "reason_code", None) == "critic_rejected"
+    assert not hasattr(outcome, "critic_reason")
 
 
 async def test_critic_exception_is_fail_closed(monkeypatch) -> None:

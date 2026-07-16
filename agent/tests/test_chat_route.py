@@ -111,6 +111,28 @@ def test_chat_cross_patient_request_refused_403(complete_env):
     assert resp.status_code == 403  # the session pin refuses a different patient (F-S.2)
 
 
+def test_chat_session_without_patient_pin_refuses_explicitly(complete_env, caplog):
+    client = _client(_FakeServices(session=_session(patient_id="")), complete_env)
+    caplog.set_level("WARNING", logger="agent.routes.chat")
+
+    resp = client.post(
+        "/chat",
+        json={"session_id": "sess-1", "message": "Magnesium"},
+        headers={"X-Copilot-Request-Id": "corr-missing-pin"},
+    )
+
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == (
+        "session has no pinned patient — start a fresh SMART launch"
+    )
+    assert resp.headers["X-Copilot-Request-Id"] == "corr-missing-pin"
+    assert any(
+        record.getMessage() == "chat_pin_refusal"
+        and getattr(record, "reason_code", None) == "pin_missing"
+        for record in caplog.records
+    )
+
+
 def test_chat_rejects_oversized_character_input_before_session_or_model(complete_env):
     client = _client(_FakeServices(session=_session()), complete_env)
 

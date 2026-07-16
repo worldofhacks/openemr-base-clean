@@ -329,6 +329,8 @@ class _FakeLiveProvider:
                 usage=Usage(input_tokens=2, output_tokens=1),
                 iterations=1,
                 tool_calls=["submit_claims"],
+                verified_claims=context.document_claims,
+                answer_reason_code="verified",
             ),
             Usage(input_tokens=2, output_tokens=1),
             "claude-sonnet-4-6",

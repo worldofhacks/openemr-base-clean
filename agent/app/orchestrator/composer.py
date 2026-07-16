@@ -12,7 +12,8 @@ Traceability: W2-D2/W2-D3/W2-D6; W2_ARCHITECTURE.md §2/§2a/§3/§5.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -80,6 +81,36 @@ class ComposerResult:
 
     brief: BriefResult
     composition: VerifiedComposition
+
+
+_NO_EVIDENCE_TEXT = (
+    "No verified chart or uploaded-document evidence is available for this question. "
+    "Confirm that a patient is pinned and the expected source is available."
+)
+_NO_CLAIM_TEXT = (
+    "No verified evidence matched this question. Ask about a condition or test, "
+    "for example Magnesium."
+)
+
+
+def _answer_refusal(
+    brief: BriefResult, *, reason_code: Literal["no_evidence", "no_claim"]
+) -> BriefResult:
+    """Replace an all-blocked render with a specific, citation-free safe refusal."""
+
+    text = _NO_EVIDENCE_TEXT if reason_code == "no_evidence" else _NO_CLAIM_TEXT
+    return replace(
+        brief,
+        text=text,
+        source="deterministic_refusal",
+        degraded=False,
+        fallback_reason=None,
+        fallback_kind=None,
+        verdicts=[f"refused:{reason_code}"],
+        citations=[],
+        verified_claims=(),
+        answer_reason_code=reason_code,
+    )
 
 
 def _has_required_location(citation: CitationV2) -> bool:
@@ -378,11 +409,22 @@ async def compose_answer(
         citations=citations,
     )
     if run_brief_with_context is not None:
-        # In the production context-aware path, guideline text is rendered only when the
-        # typed answer selected an allowed chunk id.  The canonical stored snippet supplies
-        # all metadata and quote bytes; model-authored quote/source fields are never used.
-        selected = {
-            claim.citation.field_or_chunk_id
+        # In the production context-aware path, document and guideline text render only when
+        # the typed answer selected an exact allowed claim/chunk. Canonical persisted objects
+        # supply every clinical/citation byte; model-authored values and source metadata are
+        # never used. This also prevents an uploaded artifact from becoming an unscoped dump.
+        selected_chart = {
+            _citation_key(claim.citation)
+            for claim in brief.verified_claims
+            if claim.citation.source_type is CitationSourceType.PATIENT_RECORD
+        }
+        selected_documents = {
+            _citation_key(claim.citation)
+            for claim in brief.verified_claims
+            if claim.citation.source_type is CitationSourceType.UPLOADED_DOCUMENT
+        }
+        selected_guidelines = {
+            _citation_key(claim.citation)
             for claim in brief.verified_claims
             if claim.citation.source_type is CitationSourceType.GUIDELINE
         }
@@ -390,10 +432,35 @@ async def compose_answer(
             claim
             for claim in candidates
             if claim.citation is None
-            or claim.citation.source_type is not CitationSourceType.GUIDELINE
-            or claim.citation.field_or_chunk_id in selected
+            or (
+                claim.citation.source_type is CitationSourceType.PATIENT_RECORD
+                and _citation_key(claim.citation) in selected_chart
+            )
+            or (
+                claim.citation.source_type is CitationSourceType.UPLOADED_DOCUMENT
+                and _citation_key(claim.citation) in selected_documents
+            )
+            or (
+                claim.citation.source_type is CitationSourceType.GUIDELINE
+                and _citation_key(claim.citation) in selected_guidelines
+            )
         )
-    return ComposerResult(brief=brief, composition=verify_then_render(candidates))
+    composition = verify_then_render(candidates)
+    if run_brief_with_context is not None and brief.answer_reason_code == "all_blocked":
+        evidence_available = bool(
+            brief.verified_claims
+            or context.document_claims
+            or context.guideline_snippets
+        )
+        brief = _answer_refusal(
+            brief,
+            reason_code="no_claim" if evidence_available else "no_evidence",
+        )
+        # ``_grounded_supersede`` is intentionally broad for the pre-visit fallback, but a
+        # question-answer turn must not append unrelated chart/document candidates after every
+        # submitted claim was blocked. The refusal is therefore the whole answer.
+        composition = VerifiedComposition()
+    return ComposerResult(brief=brief, composition=composition)
 
 
 async def compose_answer_shell(

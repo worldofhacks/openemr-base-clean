@@ -7,6 +7,11 @@ from typing import Annotated, Literal, Protocol
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
 
+from app.auth.job_credentials import (
+    JobCredentialAuthExpired,
+    JobCredentialBindingError,
+    JobCredentialUnavailable,
+)
 from app.ingestion.admission import (
     UploadAdmissionController,
     UploadCapacityExceeded,
@@ -22,12 +27,14 @@ from app.ingestion.service import (
     RetryConflict,
 )
 from app.ingestion.pages import PageNotFound, RenderedPage
+from app.ingestion.repository import DocumentNotFound
 from app.ingestion.readback import DocumentReadbackVerification
 from app.ingestion.uploads import (
     MAX_UPLOAD_BYTES,
     UploadValidationError,
     validate_upload,
 )
+from app.logging import get_logger
 from app.middleware.correlation import correlation_id_var
 from app.routes.openapi_contract import documented_errors, documented_response
 from app.schemas.documents import (
@@ -47,10 +54,16 @@ from app.session.store import (
     SessionNotFound,
     SessionStoreUnavailable,
 )
-from app.writeback.live_gateway import EncounterRouteMismatch, PatientRouteMismatch
+from app.writeback.live_gateway import (
+    EncounterRouteMismatch,
+    LiveGatewayError,
+    PatientRouteMismatch,
+)
 from app.writeback.route_attestations import RouteAttestationUnavailable
+from app.writeback.source_loader import SourceDocumentUnavailable
 
 router = APIRouter()
+_log = get_logger("agent.documents")
 
 _UPLOAD_READ_CHUNK_BYTES = 64 * 1024
 _UPLOAD_ADMISSION_INIT_LOCK = Lock()
@@ -419,15 +432,51 @@ async def document_page(
         )
     except DocumentAccessError as exc:
         raise _map_operation_error(exc)
-    except PageNotFound:
+    except JobCredentialBindingError:
+        raise _typed_http(
+            FailureReason.PATIENT_MISMATCH,
+            status_code=403,
+            message="document credential does not match the pinned patient",
+        ) from None
+    except JobCredentialAuthExpired:
+        raise HTTPException(
+            status_code=401,
+            detail="document authorization expired; launch Week 2 again",
+        ) from None
+    except (PageNotFound, DocumentNotFound):
         raise HTTPException(status_code=404, detail="page not found")
-    except (
-        RouteAttestationUnavailable,
-        PatientRouteMismatch,
-        EncounterRouteMismatch,
-    ):
+    except (PatientRouteMismatch, EncounterRouteMismatch) as exc:
+        raise _map_operation_error(exc)
+    except RouteAttestationUnavailable:
         raise _route_registry_unavailable() from None
-    if not isinstance(rendered, RenderedPage):
+    except (
+        JobCredentialUnavailable,
+        SourceDocumentUnavailable,
+        LiveGatewayError,
+    ) as exc:
+        _log.warning(
+            "document_page_unavailable",
+            extra={"failure_code": type(exc).__name__},
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="source document is unavailable for rendering",
+        ) from None
+    except Exception as exc:  # noqa: BLE001 - fail closed at the render boundary
+        _log.error(
+            "document_page_render_failed",
+            extra={"failure_code": type(exc).__name__},
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="page renderer unavailable",
+        ) from None
+    if (
+        not isinstance(rendered, RenderedPage)
+        or rendered.media_type != "image/png"
+        or not isinstance(rendered.content, bytes)
+        or not rendered.content.startswith(b"\x89PNG\r\n\x1a\n")
+    ):
         raise HTTPException(status_code=503, detail="page renderer unavailable")
     return Response(
         content=rendered.content,

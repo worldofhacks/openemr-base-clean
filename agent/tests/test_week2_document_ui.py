@@ -277,7 +277,16 @@ def test_week2_page_contains_the_closed_document_workflow_and_overlay_math(compl
     assert "guideline" in page
     assert 'overlay.setAttribute("x", String(bbox.x0))' in page
     assert 'overlay.setAttribute("y", String(bbox.y0))' in page
+    assert 'overlay.setAttribute("class", "box"' in page
     assert 'viewBox="0 0 1 1"' in page
+    assert 'headers:requestHeaders({"Accept":"image/png"})' in page
+    assert "if (!response.ok) throw await apiError(response)" in page
+    assert 'contentType !== "image/png"' in page
+    assert "URL.createObjectURL(blob)" in page
+    assert "URL.revokeObjectURL(pageObjectUrl)" in page
+    assert 'controller.signal.addEventListener("abort", aborted' in page
+    assert 'id="viewerError" role="alert" hidden' in page
+    assert "showPageError(error)" in page
     assert "UNSUPPORTED" in page
 
 

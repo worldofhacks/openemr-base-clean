@@ -4,12 +4,15 @@ import asyncio
 import json
 import socket
 import uuid
+from collections import Counter
 from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
 from app.llm.provider import Usage
+from app.orchestrator.loop import BriefResult
+from app.schemas.answers import GroundedAnswerContext
 from evals.artifact_scan import ArtifactScanError, scan_paths
 from evals.execution import _lab, _lines
 from evals.golden_loader import DEFAULT_MANIFEST, load_golden_cases
@@ -277,22 +280,53 @@ async def test_recorded_gate_executes_every_manifest_case_green() -> None:
 
 
 class _FakeLiveProvider:
-    def __init__(self, judgements: list[object]) -> None:
+    def __init__(
+        self,
+        judgements: list[object],
+        *,
+        extraction_failures: list[Exception] | None = None,
+        answer_failures: list[Exception] | None = None,
+    ) -> None:
         self.judgements = list(judgements)
+        self.extraction_failures = list(extraction_failures or [])
+        self.answer_failures = list(answer_failures or [])
+        self.extract_calls = 0
+        self.answer_calls = 0
         self.judge_calls = 0
-        self.answer_contexts: list[dict[str, object]] = []
+        self.answer_contexts: list[GroundedAnswerContext] = []
 
     async def extract(self, *, doc_type, source, words_boxes, source_document_id):
+        self.extract_calls += 1
+        if self.extraction_failures:
+            raise self.extraction_failures.pop(0)
         assert doc_type == "lab_pdf"
         extraction, _ = _lab(_lines(words_boxes), words_boxes, source_document_id)
         return LiveCall(extraction.model_dump(), Usage(), "claude-sonnet-4-6", 1.0)
 
     async def answer(self, *, context):
-        assert context["citations"]
+        self.answer_calls += 1
+        if self.answer_failures:
+            raise self.answer_failures.pop(0)
+        assert isinstance(context, GroundedAnswerContext)
+        assert context.document_claims
         self.answer_contexts.append(context)
-        return LiveCall("candidate", Usage(input_tokens=2, output_tokens=1), "claude-sonnet-4-6", 1.0)
+        return LiveCall(
+            BriefResult(
+                text="Verified synthetic answer.",
+                source="llm",
+                degraded=False,
+                usage=Usage(input_tokens=2, output_tokens=1),
+                iterations=1,
+                tool_calls=["submit_claims"],
+            ),
+            Usage(input_tokens=2, output_tokens=1),
+            "claude-sonnet-4-6",
+            1.0,
+        )
 
     async def judge(self, *, context, answer):
+        assert isinstance(context, GroundedAnswerContext)
+        assert answer
         self.judge_calls += 1
         value = self.judgements.pop(0)
         if isinstance(value, Exception):
@@ -304,22 +338,65 @@ class _FakeLiveProvider:
 async def test_live_judge_false_is_final_and_never_retried() -> None:
     provider = _FakeLiveProvider([False, True])
     executor = LiveExecutor(provider, config=load_judge_config())
-    observation = await executor(load_golden_cases()[0])
+    case = load_golden_cases()[0]
+    observation = await executor(case)
     assert observation.factual_judgement is False
+    assert Counter(item.model_dump_json() for item in observation.citations) == Counter(
+        item.model_dump_json() for item in case.expected_citations
+    )
     assert provider.judge_calls == 1
     assert executor.retries == 0
     assert len(executor.grounding_rates) == 1
     assert 0.0 < executor.grounding_rates[0] <= 1.0
-    snippets = provider.answer_contexts[0]["guideline_snippets"]
-    assert isinstance(snippets, list)
+    context = provider.answer_contexts[0]
+    snippets = context.guideline_snippets
+    assert context.document_claims
     assert 0 < len(snippets) <= 5
     assert executor.retrieval_hit_count == len(snippets)
     assert all(
-        isinstance(snippet, dict)
-        and set(snippet) == {"chunk_id", "quote"}
-        and all(isinstance(value, str) and value for value in snippet.values())
+        isinstance(snippet.chunk_id, str)
+        and bool(snippet.chunk_id)
+        and isinstance(snippet.quote, str)
+        and bool(snippet.quote)
         for snippet in snippets
     )
+
+
+@pytest.mark.asyncio
+async def test_live_extraction_parse_error_gets_exactly_one_retry() -> None:
+    provider = _FakeLiveProvider(
+        [True], extraction_failures=[LiveParseError("bad extraction")]
+    )
+    executor = LiveExecutor(provider, config=load_judge_config())
+    observation = await executor(load_golden_cases()[0])
+    assert observation.factual_judgement is True
+    assert provider.extract_calls == 2
+    assert executor.retries == 1
+
+
+@pytest.mark.asyncio
+async def test_live_answer_parse_error_gets_exactly_one_retry() -> None:
+    provider = _FakeLiveProvider(
+        [True], answer_failures=[LiveParseError("bad typed answer")]
+    )
+    executor = LiveExecutor(provider, config=load_judge_config())
+    observation = await executor(load_golden_cases()[0])
+    assert observation.factual_judgement is True
+    assert provider.answer_calls == 2
+    assert executor.retries == 1
+
+
+@pytest.mark.asyncio
+async def test_live_local_pipeline_defect_is_a_hard_failure(monkeypatch) -> None:
+    def fail_local_pipeline(*_args, **_kwargs):
+        raise RuntimeError("synthetic deterministic defect")
+
+    monkeypatch.setattr(
+        "evals.live_executor.finalize_typed_extraction", fail_local_pipeline
+    )
+    executor = LiveExecutor(_FakeLiveProvider([True]), config=load_judge_config())
+    with pytest.raises(RuntimeError, match="synthetic deterministic defect"):
+        await executor(load_golden_cases()[0])
 
 
 @pytest.mark.asyncio

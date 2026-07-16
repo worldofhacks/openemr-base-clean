@@ -316,6 +316,17 @@ def claims_from_inputs(
         if isinstance(fact, CandidateClaim):
             if is_allowed(fact.citation):
                 candidates.append(fact)
+        elif isinstance(fact, VerifiedClinicalClaim):
+            if is_allowed(fact.citation):
+                candidates.append(
+                    CandidateClaim(
+                        text=fact.text,
+                        citation=fact.citation,
+                        verified=True,
+                        page=fact.page,
+                        bbox=fact.bbox,
+                    )
+                )
         elif isinstance(fact, ExtractionArtifact):
             candidates.extend(
                 claim

@@ -36,6 +36,35 @@ def _words(*tokens: str, unreadable: bool = False) -> WordsBoxes:
     )
 
 
+def _pages(
+    *page_tokens: tuple[str, ...], unreadable_pages: frozenset[int] = frozenset()
+) -> WordsBoxes:
+    return WordsBoxes(
+        pages=[
+            PageWords(
+                page_index=page_index,
+                source="text_layer",
+                render_dpi=200,
+                page_pixel_dims=(1700, 2200),
+                words=[
+                    Word(
+                        text=token,
+                        bbox=NormBBox(
+                            x0=0.05 + index * 0.12,
+                            y0=0.10,
+                            x1=0.14 + index * 0.12,
+                            y1=0.14,
+                        ),
+                    )
+                    for index, token in enumerate(tokens)
+                ],
+                unreadable=page_index in unreadable_pages,
+            )
+            for page_index, tokens in enumerate(page_tokens)
+        ]
+    )
+
+
 def test_grounded_field_is_constructed_only_after_local_phrase_match():
     from app.grounding.verifier import GroundingVerifier
 
@@ -137,6 +166,88 @@ def test_vlm_claimed_grounding_and_fake_citation_are_discarded():
     assert outcome.field.citation is None
     assert outcome.field.bbox is None
     assert outcome.reason == "not_found"
+
+
+def test_reground_candidate_ignores_poisoned_unreadable_page_claim():
+    from app.grounding.verifier import GroundingVerifier
+
+    untrusted = GroundedField[str](
+        value="trusted phrase",
+        page=2,
+        bbox=None,
+        grounded=False,
+        citation=None,
+    )
+
+    outcome = GroundingVerifier().reground_candidate(
+        untrusted,
+        words_boxes=_pages(
+            ("trusted", "phrase"),
+            ("unreadable",),
+            unreadable_pages=frozenset({1}),
+        ),
+        source_document_id="doc-synthetic-1",
+        field_id="chief_concern",
+    )
+
+    assert outcome.field.grounded is True
+    assert outcome.field.page == 1
+    assert outcome.field.citation is not None
+    assert outcome.field.citation.page_or_section == "1"
+    assert outcome.field.citation.quote_or_value == "trusted phrase"
+    assert outcome.reason == "matched"
+
+
+def test_reground_candidate_ignores_wrong_page_claim_and_searches_all_pages():
+    from app.grounding.verifier import GroundingVerifier
+
+    untrusted = GroundedField[str](
+        value="trusted phrase",
+        page=1,
+        bbox=None,
+        grounded=False,
+        citation=None,
+    )
+
+    outcome = GroundingVerifier().reground_candidate(
+        untrusted,
+        words_boxes=_pages(("other", "text"), ("trusted", "phrase")),
+        source_document_id="doc-synthetic-1",
+        field_id="chief_concern",
+    )
+
+    assert outcome.field.grounded is True
+    assert outcome.field.page == 2
+    assert outcome.field.citation is not None
+    assert outcome.field.citation.page_or_section == "2"
+    assert outcome.field.citation.quote_or_value == "trusted phrase"
+    assert outcome.reason == "matched"
+
+
+def test_reground_candidate_ignores_zero_page_claim():
+    from app.grounding.verifier import GroundingVerifier
+
+    untrusted = GroundedField[str](
+        value="trusted phrase",
+        page=0,
+        bbox=None,
+        grounded=False,
+        citation=None,
+    )
+
+    outcome = GroundingVerifier().reground_candidate(
+        untrusted,
+        words_boxes=_pages(("trusted", "phrase"),),
+        source_document_id="doc-synthetic-1",
+        field_id="chief_concern",
+    )
+
+    assert outcome.field.grounded is True
+    assert outcome.field.page == 1
+    assert outcome.field.citation is not None
+    assert outcome.field.citation.page_or_section == "1"
+    assert outcome.field.citation.quote_or_value == "trusted phrase"
+    assert outcome.reason == "matched"
 
 
 def test_datetime_grounding_accepts_utc_z_without_changing_non_utc_offsets():

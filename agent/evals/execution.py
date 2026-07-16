@@ -22,8 +22,9 @@ from app.grounding.verifier import GroundingVerifier
 from app.ingestion.pipeline import _reground
 from app.ingestion.reader import Word, WordsBoxes, read_pdf_bytes_words_and_boxes
 from app.llm.provider import LLMResponse, ToolUseBlock, Usage
-from app.llm.vlm import AnthropicVlmExtractor
+from app.llm.vlm import AnthropicVlmExtractor, VLM_PROMPT_HASH, VLM_PROMPT_VERSION
 from app.orchestrator.composer import CandidateClaim, citation_for_guideline, verify_then_render
+from app.schemas.answers import VerifiedClinicalClaim
 from app.schemas.citations import CitationV2, EvidenceSnippet
 from app.schemas.extraction import (
     Demographics,
@@ -45,7 +46,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PARSER_VERSION = "labeled-provider-tool-v2"
 SANITIZER_VERSION = "metadata-only-v1"
 RECORDED_MODEL = "claude-sonnet-4-6"
-PROMPT_VERSION = "w2-extract-untrusted-data-v1"
+PROMPT_VERSION = VLM_PROMPT_VERSION
 
 _NULL_MARKERS = {
     "",
@@ -101,7 +102,7 @@ class ExecutionOutput:
     retrieval_hit_count: int
     rendered_claim_count: int
     grounding_rate: float
-    verified_facts: tuple[CandidateClaim, ...]
+    verified_facts: tuple[VerifiedClinicalClaim, ...]
     evidence_snippets: tuple[EvidenceSnippet, ...]
     answer_citations: tuple[CitationV2, ...]
 
@@ -177,7 +178,7 @@ def _proposal_without_grounding(value: object) -> object:
 
     if isinstance(value, GroundedField):
         return value.model_copy(
-            update={"grounded": False, "citation": None, "bbox": None}
+            update={"page": None, "bbox": None, "grounded": False, "citation": None}
         )
     if isinstance(value, BaseModel):
         return value.model_copy(
@@ -271,7 +272,7 @@ def fixture_sha256(path: str) -> str:
 
 
 def prompt_hash() -> str:
-    return hashlib.sha256(PROMPT_VERSION.encode("utf-8")).hexdigest()
+    return VLM_PROMPT_HASH
 
 
 def schema_hash(doc_type: str) -> str:
@@ -994,6 +995,20 @@ def finalize_typed_extraction(
         for field in grounded_fields
         if (citation := field.citation) is not None
     ]
+    verified_document_claims = [
+        VerifiedClinicalClaim(
+            text=f"{citation.field_or_chunk_id}: {citation.quote_or_value}",
+            citation=citation,
+            page=field.page,
+            bbox=field.bbox,
+        )
+        for field in grounded_fields
+        if (
+            (citation := field.citation) is not None
+            and field.page is not None
+            and field.bbox is not None
+        )
+    ]
     guideline_claims = [
         CandidateClaim(
             text=snippet.quote,
@@ -1056,13 +1071,12 @@ def finalize_typed_extraction(
         retrieval_hit_count=len(snippets),
         rendered_claim_count=len(rendered.claims),
         grounding_rate=grounding_rate,
-        verified_facts=tuple(document_claims),
+        verified_facts=tuple(verified_document_claims),
         evidence_snippets=tuple(snippets),
         answer_citations=tuple(
             [
-                candidate.citation
-                for candidate in document_claims
-                if candidate.citation is not None
+                claim.citation
+                for claim in verified_document_claims
             ]
             + [
                 candidate.citation

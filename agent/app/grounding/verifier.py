@@ -182,7 +182,6 @@ class GroundingVerifier:
 
         return self.ground_value(
             value=candidate.value,
-            page=candidate.page,
             words_boxes=words_boxes,
             source_document_id=source_document_id,
             field_id=field_id,

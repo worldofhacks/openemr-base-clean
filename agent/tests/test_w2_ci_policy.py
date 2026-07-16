@@ -21,6 +21,8 @@ def test_eval_workflow_is_fork_safe_scanned_and_quality_gated() -> None:
     assert "W2_EVAL_NETWORK: disabled" in workflow
     assert "COHERE_API_KEY: ''" in workflow
     assert "needs: [quality, eval-tier1]" in workflow
+    assert workflow.count("SOURCE_SHA:") == 2
+    assert workflow.count("github.event.pull_request.head.sha") >= 3
     assert workflow.count("python -m evals.artifact_scan") == 2
     assert workflow.count("if: success()") == 2
     assert workflow.index("python -m evals.artifact_scan evals/results-tier1.json") < (
@@ -96,6 +98,13 @@ def test_gitlab_gate_scans_before_success_only_artifact_retention() -> None:
     bridge = pipeline.split("github-exact-sha-bridge:", maxsplit=1)[1]
     assert "before_script: []" in bridge
     assert bridge.index("before_script: []") < bridge.index("verify_github_gate.py")
+
+
+def test_quality_recorded_gate_binds_pr_head_sha_explicitly() -> None:
+    workflow = _read(".github/workflows/agent-quality.yml")
+
+    assert workflow.count("SOURCE_SHA:") == 1
+    assert "SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}" in workflow
 
 
 def test_all_ci_pytest_commands_suppress_clinical_failure_details() -> None:

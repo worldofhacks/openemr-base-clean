@@ -38,6 +38,17 @@ from evals.w2_runner import LiveGateLimits, baseline_from_result, main, run_gate
 import evals.w2_runner as w2_runner
 
 
+def test_explicit_source_sha_wins_pull_request_merge_sha(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exact_head = "a" * 40
+    monkeypatch.setenv("SOURCE_SHA", exact_head)
+    monkeypatch.setenv("GITHUB_SHA", "b" * 40)
+    monkeypatch.setenv("CI_COMMIT_SHA", "c" * 40)
+
+    assert w2_runner._source_sha() == exact_head
+
+
 def test_manifest_repairs_all_four_adversarial_intake_shapes() -> None:
     cases = {
         case.case_id: case

@@ -83,7 +83,7 @@ def _source_sha() -> str:
     return next(
         (
             value
-            for name in ("GITHUB_SHA", "CI_COMMIT_SHA", "SOURCE_SHA")
+            for name in ("SOURCE_SHA", "GITHUB_SHA", "CI_COMMIT_SHA")
             if (value := os.environ.get(name))
         ),
         "local-uncommitted",

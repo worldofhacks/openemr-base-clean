@@ -47,6 +47,7 @@ jobs:
           python -m pip install --disable-pip-version-check -e '.[dev]'
       - name: Full offline 50-case gate
         env:
+          SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.exact_sha || github.event.pull_request.head.sha || github.sha }}
           RUN_LIVE: '0'
           W2_EVAL_NETWORK: disabled
           RERANKER: local
@@ -124,6 +125,7 @@ jobs:
         run: test -n "$ANTHROPIC_API_KEY"
       - name: Full live 50-case gate
         env:
+          SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.exact_sha || github.event.pull_request.head.sha || github.sha }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           RUN_LIVE: '1'
           RERANKER: local

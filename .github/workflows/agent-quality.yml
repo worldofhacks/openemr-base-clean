@@ -141,6 +141,7 @@ jobs:
           python -m pytest tests/test_w2_openapi_and_bruno.py bruno/tests --tb=no --show-capture=no -q
       - name: Generate aggregate Tier-1 result and scan generated artifacts
         env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           RUN_LIVE: '0'
           W2_EVAL_NETWORK: disabled
           RERANKER: local

@@ -8,7 +8,8 @@ from collections.abc import Callable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.schemas.citations import CitationV2
+from app.schemas.citations import CitationSourceType, CitationV2
+from app.schemas.extraction import NormBBox
 from evals.canary import scan_generated_surfaces
 from evals.w2_models import (
     CaseObservation,
@@ -93,8 +94,76 @@ def _citation_key(citation: CitationV2) -> str:
     return json.dumps(citation.model_dump(mode="json"), sort_keys=True)
 
 
+def _bbox_key(value: object) -> dict[str, float]:
+    """Validate canonical bbox shape without accepting Boolean/string coercions."""
+
+    raw = value.model_dump() if isinstance(value, NormBBox) else value
+    if not isinstance(raw, dict) or set(raw) != {"x0", "y0", "x1", "y1"}:
+        raise ValueError("bbox shape is invalid")
+    if any(type(raw[name]) not in {int, float} for name in raw):
+        raise ValueError("bbox coordinates must be numeric")
+    bbox = NormBBox.model_validate(raw)
+    return bbox.model_dump(mode="json")
+
+
+def _surface_key(value: object) -> tuple[str, CitationV2]:
+    """Return an exact citation/source/overlay key for one answer-surface item."""
+
+    citation = CitationV2.model_validate(getattr(value, "citation", None))
+    source_class = CitationSourceType(getattr(value, "source_class", None))
+    if source_class is not citation.source_type or not all(
+        item.strip()
+        for item in (
+            citation.source_id,
+            citation.field_or_chunk_id,
+            citation.quote_or_value,
+        )
+    ):
+        raise ValueError("citation source metadata is invalid")
+
+    overlay_source_id = getattr(value, "overlay_source_id", None)
+    overlay_page = getattr(value, "overlay_page", None)
+    overlay_bbox = getattr(value, "overlay_bbox", None)
+    overlay: dict[str, object] | None = None
+    if citation.source_type is CitationSourceType.UPLOADED_DOCUMENT:
+        if (
+            not isinstance(overlay_page, int)
+            or isinstance(overlay_page, bool)
+            or overlay_page < 1
+            or overlay_source_id != citation.source_id
+            or citation.page_or_section != str(overlay_page)
+        ):
+            raise ValueError("document overlay metadata is invalid")
+        overlay = {
+            "source_id": overlay_source_id,
+            "page": overlay_page,
+            "bbox": _bbox_key(overlay_bbox),
+        }
+    elif any(
+        item is not None
+        for item in (overlay_source_id, overlay_page, overlay_bbox)
+    ):
+        raise ValueError("non-document evidence cannot carry an overlay")
+
+    key = json.dumps(
+        {
+            "citation": citation.model_dump(mode="json"),
+            "source_class": source_class.value,
+            "overlay": overlay,
+        },
+        sort_keys=True,
+    )
+    return key, citation
+
+
 def citation_present(case: GoldenCase, observation: CaseObservation) -> bool:
-    """Require complete CitationV2 records resolving exactly to the expected leaves."""
+    """Require complete extraction citations and citations on every rendered claim.
+
+    The golden citation multiset describes extraction coverage. A cited answer may select
+    a narrow subset of those leaves, so rendered claims are checked as an exact submultiset
+    of the canonical bounded answer evidence (including document overlay geometry) instead
+    of requiring the answer to dump every extracted fact.
+    """
 
     try:
         observed = [CitationV2.model_validate(value) for value in observation.citations]
@@ -102,7 +171,40 @@ def citation_present(case: GoldenCase, observation: CaseObservation) -> bool:
         return False
     expected_keys = Counter(_citation_key(value) for value in case.expected_citations)
     observed_keys = Counter(_citation_key(value) for value in observed)
-    return bool(observed) and observed_keys == expected_keys
+    if not observed or observed_keys != expected_keys:
+        return False
+
+    if not observation.canonical_answer_evidence or not observation.rendered_claims:
+        return False
+
+    allowed_surface_keys: Counter[str] = Counter()
+    canonical_document_keys: Counter[str] = Counter()
+    rendered_surface_keys: Counter[str] = Counter()
+    try:
+        for evidence in observation.canonical_answer_evidence:
+            key, citation = _surface_key(evidence)
+            allowed_surface_keys[key] += 1
+            if citation.source_type is CitationSourceType.UPLOADED_DOCUMENT:
+                page = getattr(evidence, "overlay_page")
+                normalized = citation.model_copy(
+                    update={"page_or_section": f"page {page}"}
+                )
+                canonical_document_keys[_citation_key(normalized)] += 1
+        for claim in observation.rendered_claims:
+            key, _citation = _surface_key(claim)
+            rendered_surface_keys[key] += 1
+    except (AttributeError, TypeError, ValueError, ValidationError):
+        return False
+
+    if any(
+        count > observed_keys[key]
+        for key, count in canonical_document_keys.items()
+    ) or any(
+        count > allowed_surface_keys[key]
+        for key, count in rendered_surface_keys.items()
+    ):
+        return False
+    return True
 
 
 def factually_consistent(case: GoldenCase, observation: CaseObservation) -> bool:

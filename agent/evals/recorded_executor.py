@@ -19,22 +19,39 @@ from app.llm.provider import LLMResponse, ToolUseBlock, Usage
 from app.observability.langfuse import InMemoryTraceSink, RequestTracer
 from app.observability.trace import AccountabilityContext
 from app.orchestrator.composer import compose_answer
-from app.orchestrator.loop import BriefResult, Orchestrator, ToolRegistry
+from app.orchestrator.loop import (
+    SUBMIT_CLAIMS_TOOL,
+    SYSTEM_PROMPT,
+    BriefResult,
+    Orchestrator,
+    ToolRegistry,
+)
 from app.schemas.answers import GroundedAnswerContext
+from app.schemas.citations import CitationSourceType
 from evals.execution import (
+    EVAL_ANSWER_QUESTION,
     ExecutionOutput,
     PARSER_VERSION,
     RECORDED_MODEL,
     SANITIZER_VERSION,
     execute_source,
     fixture_sha256,
+    observe_canonical_answer_evidence,
+    observe_rendered_claims,
     prompt_hash,
     schema_hash,
 )
-from evals.w2_models import CaseObservation, GeneratedSurfaces, GoldenCase
+from evals.w2_models import (
+    CanonicalAnswerEvidenceObservation,
+    CaseObservation,
+    GeneratedSurfaces,
+    GoldenCase,
+    RenderedClaimObservation,
+)
 
 
 DEFAULT_RECORDINGS = Path(__file__).parent / "recordings" / "index.json"
+ANSWER_REPLAY_VERSION = "first-document-first-guideline-v1"
 
 
 class RecordingIntegrityError(RuntimeError):
@@ -50,6 +67,11 @@ class RecordedProviderAnchor(BaseModel):
     fixture_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     prompt_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     tool_schema_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    answer_prompt_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    answer_question_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    answer_context_schema_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    answer_tool_schema_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    answer_replay_version: str = Field(min_length=1)
     model: str = Field(min_length=1)
     sanitizer_version: str = Field(min_length=1)
     parser_version: str = Field(min_length=1)
@@ -65,13 +87,49 @@ def _recording_digest(data: dict[str, object]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def answer_prompt_hash() -> str:
+    """Bind recordings to the exact context-aware answer instruction contract."""
+
+    return hashlib.sha256(SYSTEM_PROMPT.encode("utf-8")).hexdigest()
+
+
+def answer_question_hash() -> str:
+    """Bind recordings to the exact question shared with the live executor."""
+
+    return hashlib.sha256(EVAL_ANSWER_QUESTION.encode("utf-8")).hexdigest()
+
+
+def answer_context_schema_hash() -> str:
+    """Bind recordings to the closed verified-evidence context schema."""
+
+    canonical = json.dumps(
+        GroundedAnswerContext.model_json_schema(),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def answer_tool_schema_hash() -> str:
+    """Bind recordings to the exact forced typed-claim tool contract."""
+
+    canonical = json.dumps(
+        SUBMIT_CLAIMS_TOOL,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def load_recordings(path: str | Path = DEFAULT_RECORDINGS) -> dict[str, RecordedProviderAnchor]:
     source = Path(path)
     if not source.is_file():
         raise RecordingIntegrityError("recording index is missing")
     try:
         raw = json.loads(source.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict) or raw.get("version") != 1:
+        if not isinstance(raw, dict) or raw.get("version") != 2:
             raise ValueError("unsupported recording index")
         entries = raw.get("recordings")
         if not isinstance(entries, list):
@@ -156,6 +214,20 @@ class RecordedExecutor:
             "fixture": recording.fixture_sha256 == fixture_sha256(case.fixture_path),
             "prompt": recording.prompt_hash == prompt_hash(),
             "schema": recording.tool_schema_hash == schema_hash(case.doc_type),
+            "answer_prompt": recording.answer_prompt_hash == answer_prompt_hash(),
+            "answer_question": (
+                recording.answer_question_hash == answer_question_hash()
+            ),
+            "answer_context_schema": (
+                recording.answer_context_schema_hash
+                == answer_context_schema_hash()
+            ),
+            "answer_schema": (
+                recording.answer_tool_schema_hash == answer_tool_schema_hash()
+            ),
+            "answer_replay": (
+                recording.answer_replay_version == ANSWER_REPLAY_VERSION
+            ),
             "model": recording.model == RECORDED_MODEL,
             "sanitizer": recording.sanitizer_version == SANITIZER_VERSION,
             "parser": recording.parser_version == PARSER_VERSION,
@@ -178,11 +250,11 @@ class RecordedExecutor:
                 source_path=case.fixture_path,
                 source_document_id=recording.source_document_anchor,
             )
-            rendered_claim_count, traces = await _run_recorded_answer(
+            canonical_answer_evidence, rendered_claims, traces = await _run_recorded_answer(
                 case_id=case.case_id,
                 result=result,
             )
-        result = replace(result, rendered_claim_count=rendered_claim_count)
+        result = replace(result, rendered_claim_count=len(rendered_claims))
         content_hash = recording.fixture_sha256
         if content_hash in self._seen_content_hashes:
             result = replace(result, verdict="duplicate_noop", refusal=None)
@@ -202,6 +274,8 @@ class RecordedExecutor:
             case_id=case.case_id,
             fields=result.fields,
             citations=result.citations,
+            canonical_answer_evidence=canonical_answer_evidence,
+            rendered_claims=rendered_claims,
             verdict=result.verdict,
             refusal=result.refusal,
             safety_events=result.safety_events,
@@ -214,7 +288,13 @@ class _RecordedAnswerProvider:
 
     model = RECORDED_MODEL
 
-    def __init__(self, *, selected_chunk_id: str | None) -> None:
+    def __init__(
+        self,
+        *,
+        selected_document_field_id: str | None,
+        selected_chunk_id: str | None,
+    ) -> None:
+        self._selected_document_field_id = selected_document_field_id
         self._selected_chunk_id = selected_chunk_id
         self.calls = 0
 
@@ -232,7 +312,32 @@ class _RecordedAnswerProvider:
         )
         if not system or not messages or answer_tool is None:
             raise ValueError("recorded answer request contract drifted")
+        if self._selected_document_field_id is not None:
+            context_blocks = (
+                messages[0].get("content", [])
+                if messages and isinstance(messages[0], dict)
+                else []
+            )
+            context_text = "\n".join(
+                str(block.get("text", ""))
+                for block in context_blocks
+                if isinstance(block, dict)
+            )
+            if (
+                "document-claim-1" not in context_text
+                or self._selected_document_field_id not in context_text
+            ):
+                raise ValueError("recorded document selector was absent from answer context")
         claims: list[dict[str, object]] = []
+        if self._selected_document_field_id is not None:
+            claims.append(
+                {
+                    "type": "document",
+                    "claim_id": "document-claim-1",
+                    "field_id": self._selected_document_field_id,
+                    "evidence_ids": [],
+                }
+            )
         if self._selected_chunk_id is not None:
             claims.append(
                 {
@@ -257,14 +362,24 @@ class _RecordedAnswerProvider:
 
 async def _run_recorded_answer(
     *, case_id: str, result: ExecutionOutput
-) -> tuple[int, list[dict[str, object]]]:
+) -> tuple[
+    list[CanonicalAnswerEvidenceObservation],
+    list[RenderedClaimObservation],
+    list[dict[str, object]],
+]:
     """Run the real context-aware answer/composer path and retain sanitized trace output."""
 
     verified_facts = result.verified_facts
     snippets = result.evidence_snippets
     citations = result.answer_citations
+    selected_document_field_id = (
+        verified_facts[0].citation.field_or_chunk_id if verified_facts else None
+    )
     selected = snippets[0].chunk_id if snippets else None
-    provider = _RecordedAnswerProvider(selected_chunk_id=selected)
+    provider = _RecordedAnswerProvider(
+        selected_document_field_id=selected_document_field_id,
+        selected_chunk_id=selected,
+    )
     trace_sink = InMemoryTraceSink()
     tracer = RequestTracer(trace_sink)
     correlation = f"eval-{hashlib.sha256(case_id.encode()).hexdigest()[:16]}"
@@ -278,14 +393,17 @@ async def _run_recorded_answer(
         utc_timestamp=datetime.now(timezone.utc).isoformat(),
     )
     packet = build_evidence_packet("synthetic-patient", {})
+    canonical_answer_evidence: list[CanonicalAnswerEvidenceObservation] | None = None
 
     async def unsupported_legacy_path() -> BriefResult:
         raise AssertionError("recorded evaluation requires grounded answer context")
 
     async def run_with_context(context: GroundedAnswerContext) -> BriefResult:
+        nonlocal canonical_answer_evidence
+        canonical_answer_evidence = observe_canonical_answer_evidence(context)
         return await Orchestrator(provider).run_previsit_brief(
             packet,
-            "Summarize the verified evidence.",
+            EVAL_ANSWER_QUESTION,
             tools=ToolRegistry([]),
             tracer=tracer,
             accountability=accountability,
@@ -301,7 +419,25 @@ async def _run_recorded_answer(
     )
     if provider.calls != 1:
         raise ValueError("recorded answer provider call count drifted")
-    return len(composed.composition.claims), [
+    if canonical_answer_evidence is None:
+        raise RecordingIntegrityError("recorded answer context was not observed")
+    rendered_claims = observe_rendered_claims(composed.composition.claims)
+    if selected_document_field_id is not None and not any(
+        claim.citation is not None
+        and claim.source_class is CitationSourceType.UPLOADED_DOCUMENT
+        and getattr(claim.citation, "field_or_chunk_id", None)
+        == selected_document_field_id
+        for claim in rendered_claims
+    ):
+        raise RecordingIntegrityError("recorded document selector did not resolve")
+    if selected is not None and not any(
+        claim.citation is not None
+        and claim.source_class is CitationSourceType.GUIDELINE
+        and getattr(claim.citation, "field_or_chunk_id", None) == selected
+        for claim in rendered_claims
+    ):
+        raise RecordingIntegrityError("recorded guideline selector did not resolve")
+    return canonical_answer_evidence, rendered_claims, [
         asdict(trace) for trace in trace_sink.traces
     ]
 

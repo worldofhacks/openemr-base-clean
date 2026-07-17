@@ -13,6 +13,8 @@ on:
         required: true
 
 permissions:
+  actions: read
+  checks: read
   contents: read
 
 concurrency:
@@ -55,7 +57,9 @@ jobs:
         run: python -m evals.w2_runner run --tier recorded
       - name: Scan aggregate result and recording metadata
         if: always()
-        run: python -m evals.artifact_scan evals/results-tier1.json evals/recordings
+        run: >-
+          python -m evals.artifact_scan
+          --eval-result evals/results-tier1.json evals/recordings
       - name: Existing regression suite
         env:
           RUN_LIVE: '0'
@@ -78,9 +82,7 @@ jobs:
       (
         github.event_name == 'workflow_dispatch' ||
         (github.event_name == 'push' &&
-         (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/tier2/'))) ||
-        (github.event_name == 'pull_request' &&
-         github.event.pull_request.head.repo.full_name == github.repository)
+         (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/tier2/')))
       )
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -119,27 +121,67 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng
           python -m pip install --disable-pip-version-check -e '.[dev]'
+      - name: Reuse the exact-SHA green full-live result on main
+        id: reuse-live
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVALUATED_SHA: ${{ github.sha }}
+        run: >-
+          python ../.github/scripts/reuse_live_eval.py
+          --sha "$EVALUATED_SHA"
+          --output "$RUNNER_TEMP/results-tier2.json"
       - name: Require protected provider key
+        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: test -n "$ANTHROPIC_API_KEY"
       - name: Full live 50-case gate
+        id: live-gate
+        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.exact_sha || github.event.pull_request.head.sha || github.sha }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           RUN_LIVE: '1'
           RERANKER: local
           COHERE_API_KEY: ''
-        run: python -m evals.w2_runner run --tier live
+        run: >-
+          python -m evals.w2_runner run --tier live
+          --output "$RUNNER_TEMP/results-tier2.json"
       - name: Scan aggregate-only live result
+        id: live-scan
         if: always()
-        run: python -m evals.artifact_scan evals/results-tier2.json
+        run: >-
+          python -m evals.artifact_scan
+          --eval-result "$RUNNER_TEMP/results-tier2.json"
       - name: Upload aggregate-only Tier-2 result
         id: tier2-artifact
-        if: success()
+        if: always() && steps.live-scan.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: eval-results-tier2-live
-          path: agent/evals/results-tier2.json
+          path: ${{ runner.temp }}/results-tier2.json
           if-no-files-found: error
           retention-days: 14
+      - name: Enforce live gate, scan, and retention outcomes
+        if: always()
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GIT_REF: ${{ github.ref }}
+          LIVE_OUTCOME: ${{ steps.live-gate.outcome }}
+          REUSED: ${{ steps.reuse-live.outputs.reuse }}
+          REUSE_OUTCOME: ${{ steps.reuse-live.outcome }}
+          SCAN_OUTCOME: ${{ steps.live-scan.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.tier2-artifact.outcome }}
+        run: |
+          test "$SCAN_OUTCOME" = success
+          test "$UPLOAD_OUTCOME" = success
+          if [[ "$EVENT_NAME" == push && "$GIT_REF" == refs/heads/main ]]; then
+            test "$REUSE_OUTCOME" = success
+            test "$REUSED" = true
+            test "$LIVE_OUTCOME" = skipped
+          else
+            test "$REUSE_OUTCOME" = skipped
+            test "$LIVE_OUTCOME" = success
+          fi

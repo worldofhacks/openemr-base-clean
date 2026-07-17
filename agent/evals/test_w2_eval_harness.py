@@ -26,6 +26,7 @@ from evals.scorers import (
 )
 from evals.w2_models import (
     BaselineCategory,
+    CanonicalAnswerEvidenceObservation,
     CaseObservation,
     CaseRubricResult,
     EvalBaseline,
@@ -33,6 +34,7 @@ from evals.w2_models import (
     GeneratedSurfaces,
     GoldenCase,
     RefusalObservation,
+    RenderedClaimObservation,
     Rubric,
     RunStatus,
 )
@@ -49,6 +51,27 @@ def _citation(*, value: str = "92") -> dict[str, object]:
         "field_or_chunk_id": "results[0].value",
         "quote_or_value": value,
     }
+
+
+def _rendered_document_claim(
+    *, citation: dict[str, object] | None = None
+) -> RenderedClaimObservation:
+    rendered_citation = deepcopy(citation or _citation())
+    rendered_citation["page_or_section"] = "1"
+    return RenderedClaimObservation(
+        citation=rendered_citation,
+        source_class="uploaded_document",
+        overlay_source_id=rendered_citation["source_id"],
+        overlay_page=1,
+        overlay_bbox={"x0": 0.1, "y0": 0.1, "x1": 0.2, "y1": 0.2},
+    )
+
+
+def _canonical_document_evidence(
+    *, citation: dict[str, object] | None = None
+) -> CanonicalAnswerEvidenceObservation:
+    rendered = _rendered_document_claim(citation=citation)
+    return CanonicalAnswerEvidenceObservation(**rendered.model_dump())
 
 
 def _case(*, maps_to: Rubric = Rubric.FACTUALLY_CONSISTENT) -> GoldenCase:
@@ -84,6 +107,8 @@ def _observation(case: GoldenCase | None = None) -> CaseObservation:
         case_id=case.case_id,
         fields=deepcopy(case.expected_fields),
         citations=deepcopy(case.expected_citations),
+        canonical_answer_evidence=[_canonical_document_evidence()],
+        rendered_claims=[_rendered_document_claim()],
         verdict=case.expected_verdict,
     )
 
@@ -153,6 +178,182 @@ def test_citation_present_known_fail():
     del bad_citation["quote_or_value"]
     bad = _observation(case).model_copy(update={"citations": [bad_citation]})
     assert citation_present(case, bad) is False
+
+
+def test_citation_present_allows_a_fully_cited_narrow_answer_subset():
+    # guards: W2-D6 — answer selectivity is not citation incompleteness.
+    case = _case()
+    second = case.expected_citations[0].model_copy(
+        update={
+            "field_or_chunk_id": "results[1].value",
+            "quote_or_value": "93",
+        }
+    )
+    case = case.model_copy(
+        update={"expected_citations": [*case.expected_citations, second]}
+    )
+    observation = _observation(case).model_copy(
+        update={"rendered_claims": [_rendered_document_claim()]}
+    )
+
+    assert citation_present(case, observation) is True
+
+
+def test_citation_present_rejects_an_empty_rendered_answer_lane():
+    # guards: W2-D6 — the answer-path check cannot pass vacuously.
+    case = _case()
+    observation = _observation(case).model_copy(update={"rendered_claims": []})
+
+    assert citation_present(case, observation) is False
+
+
+def test_citation_present_rejects_an_absent_canonical_answer_lane():
+    # guards: W2-D6 — a rendered citation cannot become self-authenticating.
+    case = _case()
+    observation = _observation(case).model_copy(
+        update={"canonical_answer_evidence": []}
+    )
+
+    assert citation_present(case, observation) is False
+
+
+def test_citation_present_rejects_incomplete_rendered_claim_citation():
+    # guards: W2-D6 — every rendered clinical claim owns all five CitationV2 fields.
+    case = _case()
+    rendered = _rendered_document_claim().model_dump()
+    del rendered["citation"]["quote_or_value"]
+    observation = _observation(case).model_copy(
+        update={"rendered_claims": [RenderedClaimObservation(**rendered)]}
+    )
+
+    assert citation_present(case, observation) is False
+
+
+@pytest.mark.parametrize(
+    ("update", "citation_update"),
+    [
+        ({"overlay_bbox": None}, {}),
+        ({"overlay_page": 2}, {}),
+        ({"overlay_source_id": "fixture:other"}, {}),
+        ({}, {"page_or_section": "page 1"}),
+    ],
+)
+def test_citation_present_rejects_invalid_document_overlay(
+    update: dict[str, object], citation_update: dict[str, object]
+):
+    # guards: W2-D3/W2-D6 — a document citation must resolve to its exact page+bbox.
+    case = _case()
+    rendered = _rendered_document_claim().model_dump()
+    rendered.update(update)
+    rendered["citation"].update(citation_update)
+    observation = _observation(case).model_copy(
+        update={"rendered_claims": [RenderedClaimObservation(**rendered)]}
+    )
+
+    assert citation_present(case, observation) is False
+
+
+def test_citation_present_rejects_rendered_document_claim_outside_extraction_lane():
+    # guards: W2-D3/W2-D6 — a self-consistent invented document citation cannot render.
+    case = _case()
+    invented = _citation(value="invented")
+    invented["field_or_chunk_id"] = "results[99].value"
+    observation = _observation(case).model_copy(
+        update={"rendered_claims": [_rendered_document_claim(citation=invented)]}
+    )
+
+    assert citation_present(case, observation) is False
+
+
+def test_citation_present_rejects_a_valid_but_wrong_document_bbox():
+    # guards: W2-D3 — structural bbox validity is not source resolution.
+    case = _case()
+    wrong = _rendered_document_claim().model_copy(
+        update={"overlay_bbox": {"x0": 0.7, "y0": 0.7, "x1": 0.8, "y1": 0.8}}
+    )
+    observation = _observation(case).model_copy(update={"rendered_claims": [wrong]})
+
+    assert citation_present(case, observation) is False
+
+
+@pytest.mark.parametrize("source_type", ["guideline", "patient_record"])
+def test_citation_present_rejects_fabricated_non_document_evidence(
+    source_type: str,
+):
+    # guards: W2-D6 — a complete citation cannot self-authenticate outside the context.
+    case = _case()
+    fabricated = RenderedClaimObservation(
+        citation={
+            "source_type": source_type,
+            "source_id": "fabricated-source",
+            "page_or_section": None if source_type == "patient_record" else "Section X",
+            "field_or_chunk_id": "fabricated-evidence",
+            "quote_or_value": "Fabricated value",
+        },
+        source_class=source_type,
+    )
+    observation = _observation(case).model_copy(
+        update={"rendered_claims": [fabricated]}
+    )
+
+    assert citation_present(case, observation) is False
+
+
+def test_citation_present_accepts_guideline_without_document_overlay():
+    # guards: W2-D6 — source classes stay separate and guideline claims use sections.
+    case = _case()
+    guideline = RenderedClaimObservation(
+        citation={
+            "source_type": "guideline",
+            "source_id": "guideline@manifest",
+            "page_or_section": "Recommendation 1",
+            "field_or_chunk_id": "chunk-1",
+            "quote_or_value": "Verified guideline evidence.",
+        },
+        source_class="guideline",
+    )
+    canonical = CanonicalAnswerEvidenceObservation(**guideline.model_dump())
+    observation = _observation(case).model_copy(
+        update={
+            "canonical_answer_evidence": [canonical],
+            "rendered_claims": [guideline],
+        }
+    )
+
+    assert citation_present(case, observation) is True
+    with_overlay = guideline.model_copy(update={"overlay_page": 1})
+    assert citation_present(
+        case,
+        observation.model_copy(update={"rendered_claims": [with_overlay]}),
+    ) is False
+
+
+def test_citation_present_enforces_answer_evidence_duplicate_multiplicity():
+    # guards: W2-D6 — one canonical claim cannot authorize duplicate rendered claims.
+    case = _case()
+    observation = _observation(case)
+    rendered = observation.rendered_claims[0]
+
+    assert citation_present(
+        case,
+        observation.model_copy(update={"rendered_claims": [rendered, rendered]}),
+    ) is False
+    duplicate_case = case.model_copy(
+        update={"expected_citations": [*case.expected_citations, *case.expected_citations]}
+    )
+    duplicate_observation = _observation(duplicate_case).model_copy(
+        update={
+            "canonical_answer_evidence": [
+                *observation.canonical_answer_evidence,
+                *observation.canonical_answer_evidence,
+            ],
+            "rendered_claims": [rendered, rendered],
+        }
+    )
+    assert citation_present(
+        duplicate_case,
+        duplicate_observation,
+    ) is True
 
 
 def test_factually_consistent_known_fail():

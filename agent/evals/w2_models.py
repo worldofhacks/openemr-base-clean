@@ -102,17 +102,52 @@ class RefusalObservation(_ClosedModel):
     message: str = Field(min_length=1)
 
 
+class _CitationSurfaceObservation(_ClosedModel):
+    """Citation/overlay metadata without claim text or model prose."""
+
+    citation: Any = None
+    source_class: Any = None
+    overlay_source_id: Any = None
+    overlay_page: Any = None
+    overlay_bbox: Any = None
+
+
+class RenderedClaimObservation(_CitationSurfaceObservation):
+    """PHI-minimized evidence that one clinical claim reached the render boundary.
+
+    The fields stay permissive so an incomplete citation or malformed overlay reaches the
+    deterministic scorer as ``False`` instead of being mistaken for executor success. Claim
+    text and model prose are intentionally absent from this observation lane.
+    """
+
+
+class CanonicalAnswerEvidenceObservation(_CitationSurfaceObservation):
+    """One canonical claim source exposed through the bounded answer context.
+
+    This lane is captured before answer selection. It lets the scorer prove that every
+    rendered citation and document overlay resolves to canonical evidence without retaining
+    the clinical claim text in eval telemetry.
+    """
+
+
 class CaseObservation(_ClosedModel):
     """Executor-produced result plus generated telemetry/artifact surfaces.
 
-    ``fields`` and ``citations`` are intentionally permissive at this boundary so a
-    malformed executor result can reach the boolean schema/citation scorers and be
-    reported as a rubric failure rather than being mistaken for harness success.
+    ``fields``, extraction ``citations``, canonical answer evidence, and
+    ``rendered_claims`` are intentionally permissive at this boundary so malformed
+    executor output can reach the boolean scorers and be reported as a rubric failure
+    rather than being mistaken for harness success. Extraction coverage and rendered-answer
+    completeness are separate lanes: a narrow answer need not re-render every grounded
+    extraction leaf, but every rendered item must resolve to the bounded evidence lane.
     """
 
     case_id: str = Field(min_length=1)
     fields: dict[str, Any]
     citations: list[Any]
+    canonical_answer_evidence: list[CanonicalAnswerEvidenceObservation] = Field(
+        default_factory=list
+    )
+    rendered_claims: list[RenderedClaimObservation] = Field(default_factory=list)
     verdict: str = Field(min_length=1)
     refusal: RefusalObservation | None = None
     output: Any = None

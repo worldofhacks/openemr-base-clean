@@ -47,8 +47,11 @@ from evals.w2_models import (
 
 DEFAULT_BASELINE = Path(__file__).parent / "w2_baseline.json"
 MIN_GRADED_CASES = 50
+MAX_DIAGNOSTIC_CASES = 20
 DEFAULT_LIVE_MAX_COST_USD = 10.0
 DEFAULT_LIVE_MAX_SECONDS = 1_800.0
+DEFAULT_DIAGNOSTIC_MAX_COST_USD = 5.0
+DEFAULT_DIAGNOSTIC_MAX_SECONDS = 1_200.0
 _BUDGET_POLL_SECONDS = 0.05
 
 
@@ -169,6 +172,7 @@ def _aggregate_result(
     case_count: int,
     executor: RecordedExecutor | LiveExecutor | None,
     elapsed_seconds: float,
+    recordings_path: Path | None = None,
     live_limits: LiveGateLimits | None = None,
     inconclusive_reason: str | None = None,
 ) -> dict[str, object]:
@@ -205,10 +209,16 @@ def _aggregate_result(
             }
             for item in report.cases
         ]
-        if tier == "live"
+        if tier in {"live", "live_subset"}
         else []
     )
-    recordings_sha = _sha256(DEFAULT_RECORDINGS) if tier == "recorded" else None
+    if tier == "recorded" and recordings_path is None:
+        raise ValueError("recorded aggregate requires its exact recording index path")
+    recordings_sha = (
+        _sha256(recordings_path)
+        if tier == "recorded" and recordings_path is not None
+        else None
+    )
     return {
         "schema_version": 1,
         "status": report.status.value,
@@ -265,6 +275,8 @@ async def _run_live_harness_bounded(
     manifest_path: Path,
     baseline: EvalBaseline | None,
     limits: LiveGateLimits,
+    required_min_cases: int = MIN_GRADED_CASES,
+    case_ids: frozenset[str] | None = None,
 ) -> HarnessReport:
     """Run the harness while independently enforcing wall-clock and spend ceilings."""
 
@@ -274,7 +286,8 @@ async def _run_live_harness_bounded(
             executor=executor,
             manifest_path=manifest_path,
             baseline=baseline,
-            required_min_cases=MIN_GRADED_CASES,
+            required_min_cases=required_min_cases,
+            case_ids=case_ids,
         )
     )
     try:
@@ -375,7 +388,65 @@ async def run_gate(
         case_count=len(cases),
         executor=executor,
         elapsed_seconds=elapsed,
+        recordings_path=recordings_path if tier == "recorded" else None,
         live_limits=limits if tier == "live" else None,
+        inconclusive_reason=inconclusive_reason,
+    )
+    return report, result
+
+
+async def run_live_subset(
+    *,
+    case_ids: Sequence[str],
+    manifest_path: Path,
+    live_limits: LiveGateLimits | None = None,
+) -> tuple[HarnessReport, dict[str, object]]:
+    """Run a bounded diagnostic subset that cannot satisfy the full Tier-2 gate."""
+
+    requested = tuple(case_ids)
+    unique = frozenset(requested)
+    if (
+        not requested
+        or len(unique) != len(requested)
+        or len(unique) > MAX_DIAGNOSTIC_CASES
+    ):
+        raise ValueError(
+            f"diagnostic live subsets require 1-{MAX_DIAGNOSTIC_CASES} unique case IDs"
+        )
+    available = {case.case_id for case in load_golden_cases(manifest_path)}
+    if not unique <= available:
+        raise ValueError("diagnostic live subset contains an unknown case ID")
+
+    executor: LiveExecutor | None = None
+    limits = live_limits or LiveGateLimits()
+    inconclusive_reason: str | None = None
+    started = time.perf_counter()
+    try:
+        executor = make_live_executor()
+        report = await _run_live_harness_bounded(
+            executor=executor,
+            manifest_path=manifest_path,
+            baseline=None,
+            limits=limits,
+            required_min_cases=len(unique),
+            case_ids=unique,
+        )
+    except EvalInconclusiveError:
+        report = _inconclusive_report()
+        inconclusive_reason = "provider_or_parse_exhaustion"
+    except _LiveGateInconclusive as exc:
+        report = _inconclusive_report()
+        inconclusive_reason = exc.reason
+    if report.status is RunStatus.INCONCLUSIVE and inconclusive_reason is None:
+        inconclusive_reason = "case_infrastructure_exhaustion"
+    result = _aggregate_result(
+        tier="live_subset",
+        report=report,
+        manifest_path=manifest_path,
+        case_count=len(unique),
+        executor=executor,
+        elapsed_seconds=time.perf_counter() - started,
+        live_limits=limits,
         inconclusive_reason=inconclusive_reason,
     )
     return report, result
@@ -392,7 +463,7 @@ def baseline_from_result(result: dict[str, object]) -> EvalBaseline:
         result.get("status") != RunStatus.PASS.value
         or result.get("tier") != "live"
         or not isinstance(raw_case_count, int)
-        or raw_case_count < MIN_GRADED_CASES
+        or raw_case_count != MIN_GRADED_CASES
         or result.get("executor_call_count") != raw_case_count
         or result.get("inconclusive_reason") is not None
     ):
@@ -400,12 +471,19 @@ def baseline_from_result(result: dict[str, object]) -> EvalBaseline:
     source_sha = result.get("source_sha")
     if not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", source_sha):
         raise ValueError("baseline requires a result bound to an exact reviewed SHA")
+    if result.get("manifest_sha256") != _sha256(DEFAULT_MANIFEST):
+        raise ValueError("baseline requires the canonical Week 2 manifest")
     raw_cases = result.get("cases")
+    canonical_case_ids = {case.case_id for case in load_golden_cases(DEFAULT_MANIFEST)}
     if (
         not isinstance(raw_cases, list)
         or len(raw_cases) != raw_case_count
-        or len({case.get("case_id") for case in raw_cases if isinstance(case, dict)})
-        != raw_case_count
+        or {
+            case.get("case_id")
+            for case in raw_cases
+            if isinstance(case, dict)
+        }
+        != canonical_case_ids
         or any(
             not isinstance(case, dict)
             or case.get("status") != RunStatus.PASS.value
@@ -498,6 +576,16 @@ def _parser() -> argparse.ArgumentParser:
         help="live-tier wall-clock ceiling; exhaustion is INCONCLUSIVE",
     )
     run.add_argument("--output", type=Path)
+    diagnose = commands.add_parser("diagnose-live")
+    diagnose.add_argument("--case-id", action="append", required=True)
+    diagnose.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+    diagnose.add_argument(
+        "--max-cost-usd", type=float, default=DEFAULT_DIAGNOSTIC_MAX_COST_USD
+    )
+    diagnose.add_argument(
+        "--max-seconds", type=float, default=DEFAULT_DIAGNOSTIC_MAX_SECONDS
+    )
+    diagnose.add_argument("--output", type=Path, required=True)
     baseline = commands.add_parser("baseline")
     baseline.add_argument("--results", type=Path, required=True)
     baseline.add_argument("--output", type=Path, default=DEFAULT_BASELINE)
@@ -521,6 +609,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"baseline=FAIL error={type(exc).__name__}", file=sys.stderr)
             return 1
         return 0
+
+    if args.command == "diagnose-live":
+        try:
+            report, result = asyncio.run(
+                run_live_subset(
+                    case_ids=args.case_id,
+                    manifest_path=args.manifest,
+                    live_limits=LiveGateLimits(
+                        max_cost_usd=args.max_cost_usd,
+                        max_seconds=args.max_seconds,
+                    ),
+                )
+            )
+        except Exception as exc:
+            failure = {
+                "schema_version": 1,
+                "status": RunStatus.FAIL.value,
+                "tier": "live_subset",
+                "source_sha": _source_sha(),
+                "error_type": type(exc).__name__,
+            }
+            write_aggregate(failure, args.output)
+            print(f"diagnostic=FAIL error={type(exc).__name__}", file=sys.stderr)
+            return 1
+        write_aggregate(result, args.output)
+        print(render_report(report))
+        if report.status is RunStatus.PASS:
+            return 0
+        return 2 if report.status is RunStatus.INCONCLUSIVE else 1
 
     output = args.output or Path(
         "evals/results-tier1.json" if args.tier == "recorded" else "evals/results-tier2.json"

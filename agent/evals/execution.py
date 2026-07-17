@@ -23,9 +23,14 @@ from app.ingestion.pipeline import _reground
 from app.ingestion.reader import Word, WordsBoxes, read_pdf_bytes_words_and_boxes
 from app.llm.provider import LLMResponse, ToolUseBlock, Usage
 from app.llm.vlm import AnthropicVlmExtractor, VLM_PROMPT_HASH, VLM_PROMPT_VERSION
-from app.orchestrator.composer import CandidateClaim, citation_for_guideline, verify_then_render
-from app.schemas.answers import VerifiedClinicalClaim
-from app.schemas.citations import CitationV2, EvidenceSnippet
+from app.orchestrator.composer import (
+    CandidateClaim,
+    RenderedClaim,
+    citation_for_guideline,
+    verify_then_render,
+)
+from app.schemas.answers import GroundedAnswerContext, VerifiedClinicalClaim
+from app.schemas.citations import CitationSourceType, CitationV2, EvidenceSnippet
 from app.schemas.extraction import (
     Demographics,
     GroundedField,
@@ -39,7 +44,13 @@ from app.schemas.extraction import (
 from pydantic import BaseModel
 from app.writeback.ranges import _BOUNDS, build_vital_writes
 from corpus.retrieval import build_clinical_query, reciprocal_rank_fusion, screen_phi
-from evals.w2_models import RefusalObservation, SafetyCode, SafetyEvent
+from evals.w2_models import (
+    CanonicalAnswerEvidenceObservation,
+    RefusalObservation,
+    RenderedClaimObservation,
+    SafetyCode,
+    SafetyEvent,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -47,6 +58,9 @@ PARSER_VERSION = "labeled-provider-tool-v2"
 SANITIZER_VERSION = "metadata-only-v1"
 RECORDED_MODEL = "claude-sonnet-4-6"
 PROMPT_VERSION = VLM_PROMPT_VERSION
+EVAL_ANSWER_QUESTION = (
+    "Summarize only the verified document and guideline evidence."
+)
 
 _NULL_MARKERS = {
     "",
@@ -105,6 +119,66 @@ class ExecutionOutput:
     verified_facts: tuple[VerifiedClinicalClaim, ...]
     evidence_snippets: tuple[EvidenceSnippet, ...]
     answer_citations: tuple[CitationV2, ...]
+
+
+def observe_rendered_claims(
+    claims: Sequence[RenderedClaim],
+) -> list[RenderedClaimObservation]:
+    """Capture citation/overlay metadata for every rendered claim, never its text.
+
+    Both eval tiers use this one adapter so Tier 1 cannot silently score extraction
+    citations while Tier 2 scores the cited-answer surface.
+    """
+
+    observed: list[RenderedClaimObservation] = []
+    for claim in claims:
+        overlay = claim.overlay
+        observed.append(
+            RenderedClaimObservation(
+                citation=claim.citation,
+                source_class=claim.source_class,
+                overlay_source_id=overlay.source_id if overlay is not None else None,
+                overlay_page=overlay.page if overlay is not None else None,
+                overlay_bbox=overlay.bbox if overlay is not None else None,
+            )
+        )
+    return observed
+
+
+def observe_canonical_answer_evidence(
+    context: GroundedAnswerContext,
+) -> list[CanonicalAnswerEvidenceObservation]:
+    """Capture the exact bounded evidence available before answer selection.
+
+    The production composer has already filtered this context to canonical citations. Only
+    citation/source/overlay metadata crosses into the observation; clinical claim text and
+    guideline prose are deliberately omitted.
+    """
+
+    observed: list[CanonicalAnswerEvidenceObservation] = []
+    for claim in (*context.chart_claims, *context.document_claims):
+        citation = claim.citation
+        is_document = (
+            citation.source_type is CitationSourceType.UPLOADED_DOCUMENT
+        )
+        observed.append(
+            CanonicalAnswerEvidenceObservation(
+                citation=citation,
+                source_class=citation.source_type,
+                overlay_source_id=citation.source_id if is_document else None,
+                overlay_page=claim.page if is_document else None,
+                overlay_bbox=claim.bbox if is_document else None,
+            )
+        )
+    for snippet in context.guideline_snippets:
+        citation = citation_for_guideline(snippet)
+        observed.append(
+            CanonicalAnswerEvidenceObservation(
+                citation=citation,
+                source_class=citation.source_type,
+            )
+        )
+    return observed
 
 
 @dataclass

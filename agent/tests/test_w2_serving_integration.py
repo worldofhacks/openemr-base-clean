@@ -8,6 +8,7 @@ runtime image carries the corpus plus the native ONNX runtime library.
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -31,6 +32,29 @@ from app.schemas.retrieval import EvidenceSearchRequest
 from app.schemas.workers import WorkerInput
 from app.session.store import Session
 from corpus.retrieval import EvidenceHit, RetrievalOutcome, RetrievalUnavailableError
+
+
+_CITATION_V2_KEYS = {
+    "source_type",
+    "source_id",
+    "page_or_section",
+    "field_or_chunk_id",
+    "quote_or_value",
+}
+
+
+def _sse_data_events(payload: str) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
+    for frame in payload.strip().split("\n\n"):
+        data_line = next(
+            (line for line in frame.splitlines() if line.startswith("data: ")),
+            None,
+        )
+        if data_line is not None:
+            decoded = json.loads(data_line.removeprefix("data: "))
+            assert isinstance(decoded, dict)
+            events.append(decoded)
+    return events
 
 
 def _session() -> Session:
@@ -192,6 +216,8 @@ def test_graph_serving_renders_verified_source_classes_and_document_overlay(
         isinstance(citation, dict) and citation["source_type"] == "uploaded_document"
         for citation in body["citations"]
     )
+    assert body["citations"]
+    assert all(set(citation) == _CITATION_V2_KEYS for citation in body["citations"])
 
     stream = client.post(
         "/chat",
@@ -202,6 +228,15 @@ def test_graph_serving_renders_verified_source_classes_and_document_overlay(
     assert '"source_class": "uploaded_document"' in stream.text
     assert '"page": 1' in stream.text
     assert '"bbox"' in stream.text
+    rendered_events = [
+        event for event in _sse_data_events(stream.text) if "source_class" in event
+    ]
+    assert len(rendered_events) == len(composition.claims)
+    for event in rendered_events:
+        citations = event["citations"]
+        assert isinstance(citations, list) and len(citations) == 1
+        assert isinstance(citations[0], dict)
+        assert set(citations[0]) == _CITATION_V2_KEYS
 
 
 class _FixtureRetriever:

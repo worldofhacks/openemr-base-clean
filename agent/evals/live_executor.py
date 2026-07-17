@@ -28,13 +28,15 @@ from app.llm.vlm import (
 from app.orchestrator.composer import compose_answer
 from app.orchestrator.loop import BriefResult, Orchestrator, ToolRegistry
 from app.schemas.answers import GroundedAnswerContext
-from app.schemas.citations import CitationSourceType
 from app.schemas.extraction import IntakeFormExtraction, LabPdfExtraction
 from evals.execution import (
+    EVAL_ANSWER_QUESTION,
     _HEADINGS,
     _lines,
     finalize_typed_extraction,
     fixture_path,
+    observe_canonical_answer_evidence,
+    observe_rendered_claims,
     SideEffectCapture,
 )
 from evals.harness import EvalInconclusiveError
@@ -220,7 +222,7 @@ class AnthropicLiveProvider:
         packet = build_evidence_packet("session-pinned-patient", {})
         brief = await Orchestrator(self).run_previsit_brief(
             packet,
-            "Summarize only the verified document and guideline evidence.",
+            EVAL_ANSWER_QUESTION,
             tools=ToolRegistry([]),
             answer_context=context,
             emit_summary=False,
@@ -447,16 +449,8 @@ class LiveExecutor:
         ).strip()
         if not served_answer:
             served_answer = composed.brief.text
-        served_citations = [
-            claim.citation.model_copy(
-                update={"page_or_section": f"page {claim.overlay.page}"}
-            )
-            for claim in composed.composition.claims
-            if (
-                claim.source_class is CitationSourceType.UPLOADED_DOCUMENT
-                and claim.overlay is not None
-            )
-        ]
+        canonical_answer_evidence = observe_canonical_answer_evidence(answer_context)
+        rendered_claims = observe_rendered_claims(composed.composition.claims)
 
         judgement: LiveCall | None = None
         for attempt in range(2):
@@ -476,7 +470,9 @@ class LiveExecutor:
         return CaseObservation(
             case_id=case.case_id,
             fields=result.fields,
-            citations=served_citations,
+            citations=result.citations,
+            canonical_answer_evidence=canonical_answer_evidence,
+            rendered_claims=rendered_claims,
             verdict=result.verdict,
             refusal=result.refusal,
             factual_judgement=bool(judgement.value),

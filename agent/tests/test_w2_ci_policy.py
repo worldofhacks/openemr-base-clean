@@ -18,19 +18,34 @@ def test_eval_workflow_is_fork_safe_scanned_and_quality_gated() -> None:
     workflow = _read(".github/workflows/agent-eval-gate.yml")
 
     assert "pull_request_target" not in workflow
+    assert "  actions: read" in workflow
+    assert "  checks: read" in workflow
+    assert "  contents: read" in workflow
     assert "W2_EVAL_NETWORK: disabled" in workflow
     assert "COHERE_API_KEY: ''" in workflow
     assert "needs: [quality, eval-tier1]" in workflow
     assert workflow.count("SOURCE_SHA:") == 2
     assert workflow.count("github.event.pull_request.head.sha") >= 3
     assert workflow.count("python -m evals.artifact_scan") == 2
-    assert workflow.count("if: success()") == 2
-    assert workflow.index("python -m evals.artifact_scan evals/results-tier1.json") < (
+    assert workflow.count("if: success()") == 1
+    assert workflow.index("--eval-result evals/results-tier1.json") < (
         workflow.index("name: eval-results-tier1")
     )
-    assert workflow.index("python -m evals.artifact_scan evals/results-tier2.json") < (
+    assert workflow.index('--eval-result "$RUNNER_TEMP/results-tier2.json"') < (
         workflow.index("name: eval-results-tier2-live")
     )
+    live_job = workflow.split("  eval-tier2-live:", maxsplit=1)[1]
+    live_condition = live_job.split("    runs-on:", maxsplit=1)[0]
+    assert "github.event_name == 'pull_request'" not in live_condition
+    assert "github.event_name == 'push'" in live_condition
+    assert "github.ref == 'refs/heads/main'" in live_condition
+    assert "id: live-gate" in live_job
+    assert "continue-on-error: true" in live_job
+    assert "if: always() && steps.live-scan.outcome == 'success'" in live_job
+    assert "Enforce live gate, scan, and retention outcomes" in live_job
+    assert 'test "$LIVE_OUTCOME" = success' in live_job
+    assert 'test "$SCAN_OUTCOME" = success' in live_job
+    assert 'test "$UPLOAD_OUTCOME" = success' in live_job
     regression = next(
         line for line in workflow.splitlines() if "pytest tests evals" in line
     )
@@ -38,9 +53,30 @@ def test_eval_workflow_is_fork_safe_scanned_and_quality_gated() -> None:
     assert "--show-capture=no" in regression
 
 
+def test_main_reuses_exact_sha_live_attestation_without_a_second_provider_call() -> None:
+    workflow = _read(".github/workflows/agent-eval-gate.yml")
+    live_job = workflow.split("  eval-tier2-live:", maxsplit=1)[1]
+    reuse = live_job.index("Reuse the exact-SHA green full-live result on main")
+    require_key = live_job.index("Require protected provider key")
+    full_live = live_job.index("Full live 50-case gate")
+
+    assert reuse < require_key < full_live
+    assert "python ../.github/scripts/reuse_live_eval.py" in live_job
+    assert '--sha "$EVALUATED_SHA"' in live_job
+    assert "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in live_job
+    main_only = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+    paid_only = "github.event_name != 'push' || github.ref != 'refs/heads/main'"
+    assert live_job.count(main_only) == 1
+    assert live_job.count(paid_only) == 2
+    assert 'test "$REUSED" = true' in live_job
+    assert 'test "$LIVE_OUTCOME" = skipped' in live_job
+    assert 'test "$LIVE_OUTCOME" = success' in live_job
+
+
 def test_new_agent_workflows_pin_third_party_actions_to_commits() -> None:
     for relative in (
         ".github/workflows/agent-eval-gate.yml",
+        ".github/workflows/agent-eval-live-subset.yml",
         ".github/workflows/agent-quality.yml",
         ".github/workflows/agent-deploy.yml",
     ):
@@ -139,7 +175,7 @@ def test_gitlab_gate_scans_before_success_only_artifact_retention() -> None:
     pipeline = _read(".gitlab-ci.yml")
 
     assert "python -m evals.w2_runner run --tier recorded" in pipeline
-    assert "python -m evals.artifact_scan evals/results-tier1.json" in pipeline
+    assert "--eval-result evals/results-tier1.json" in pipeline
     assert "when: on_success" in pipeline
     assert "when: always" not in pipeline
     bridge = pipeline.split("github-exact-sha-bridge:", maxsplit=1)[1]
@@ -152,6 +188,35 @@ def test_quality_recorded_gate_binds_pr_head_sha_explicitly() -> None:
 
     assert workflow.count("SOURCE_SHA:") == 1
     assert "SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}" in workflow
+
+
+def test_live_subset_workflow_is_exact_sha_bounded_and_non_gating() -> None:
+    workflow = _read(".github/workflows/agent-eval-live-subset.yml")
+    candidates = (_ROOT / "agent/evals/citation-regression-candidates.txt").read_text(
+        encoding="utf-8"
+    ).splitlines()
+    golden = json.loads(_read("agent/evals/golden/cases.json"))
+    high_citation_cases = [
+        case["case_id"] for case in golden if len(case["expected_citations"]) >= 8
+    ]
+
+    assert workflow.startswith("name: agent-eval-live-subset\n")
+    assert "'tier2-subset/**'" in workflow
+    assert "environment: eval-tier2-live" in workflow
+    assert "name: diagnostic-live-subset" in workflow
+    assert "name: eval-tier2-live" not in workflow
+    assert "python -m evals.w2_runner diagnose-live" in workflow
+    assert "run --tier live" not in workflow
+    assert "--max-cost-usd 5" in workflow
+    assert "--max-seconds 1200" in workflow
+    assert '--eval-result "$RUNNER_TEMP/results-live-subset.json"' in workflow
+    assert "eval-results-tier2-live-subset" in workflow
+    assert "name: eval-results-tier2-live\n" not in workflow
+    assert 'test "${#selected[@]}" -le 20' in workflow
+    assert 'test "$expected" = "$GITHUB_SHA"' in workflow
+    assert 'test "$expected" = "$actual"' in workflow
+    assert candidates == high_citation_cases
+    assert len(candidates) == len(set(candidates)) == 19
 
 
 def test_all_ci_pytest_commands_suppress_clinical_failure_details() -> None:

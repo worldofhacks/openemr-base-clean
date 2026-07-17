@@ -20,7 +20,7 @@ eval-tier1:
   script:
     - cd agent
     - python -m evals.w2_runner run --tier recorded
-    - python -m evals.artifact_scan evals/results-tier1.json evals/recordings
+    - python -m evals.artifact_scan --eval-result evals/results-tier1.json evals/recordings
   artifacts:
     when: on_success
     expire_in: 14 days

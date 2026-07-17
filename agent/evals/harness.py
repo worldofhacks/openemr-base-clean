@@ -125,6 +125,7 @@ async def run_harness(
     manifest_path: str | Path = DEFAULT_MANIFEST,
     baseline: EvalBaseline | None = None,
     required_min_cases: int = 0,
+    case_ids: frozenset[str] | None = None,
 ) -> HarnessReport:
     """Execute every manifest entry; errors become applicable rubric failures.
 
@@ -134,6 +135,11 @@ async def run_harness(
     """
 
     cases = load_golden_cases(manifest_path)
+    if case_ids is not None:
+        available = {case.case_id for case in cases}
+        if not case_ids or not case_ids <= available:
+            raise ValueError("requested eval case IDs must exactly resolve in the manifest")
+        cases = [case for case in cases if case.case_id in case_ids]
     if len(cases) < required_min_cases:
         raise ValueError(
             f"graded manifest requires at least {required_min_cases} cases; loaded {len(cases)}"

@@ -13,7 +13,8 @@ import pytest
 from app.llm.provider import Usage
 from app.orchestrator.loop import BriefResult
 from app.schemas.answers import GroundedAnswerContext
-from evals.artifact_scan import ArtifactScanError, scan_paths
+from app.schemas.citations import CitationSourceType
+from evals.artifact_scan import ArtifactScanError, scan_eval_result_paths, scan_paths
 from evals.execution import _lab, _lines
 from evals.golden_loader import DEFAULT_MANIFEST, load_golden_cases
 from evals.live_executor import LiveCall, LiveExecutor, LiveParseError, load_judge_config
@@ -25,7 +26,8 @@ from evals.recorded_executor import (
     make_recorded_executor,
     network_disabled,
 )
-from evals.scorers import safe_refusal
+from evals.refresh_recordings import build_recording_index, main as refresh_recordings
+from evals.scorers import citation_present, safe_refusal
 from evals.w2_models import (
     CaseObservation,
     RunStatus,
@@ -135,6 +137,22 @@ def test_recordings_are_metadata_only_and_hash_bound() -> None:
     for recording in recordings.values():
         assert forbidden.isdisjoint(recording.model_dump())
         assert recording.parser_version == "labeled-provider-tool-v2"
+        assert recording.answer_replay_version == "first-document-first-guideline-v1"
+
+
+def test_committed_recordings_equal_deterministic_refresh_output() -> None:
+    assert json.loads(DEFAULT_RECORDINGS.read_text(encoding="utf-8")) == build_recording_index()
+
+
+def test_recording_refresh_cli_checks_and_writes_metadata_only(tmp_path: Path) -> None:
+    output = tmp_path / "recordings.json"
+    assert refresh_recordings(["--write", "--output", str(output)]) == 0
+    assert refresh_recordings(["--check", "--output", str(output)]) == 0
+    serialized = output.read_text(encoding="utf-8").casefold()
+    assert all(
+        marker not in serialized
+        for marker in ("transcript", "raw_completion", "quote_or_value")
+    )
 
 
 def test_recording_corruption_fails_closed(tmp_path: Path) -> None:
@@ -144,6 +162,34 @@ def test_recording_corruption_fails_closed(tmp_path: Path) -> None:
     path.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(RecordingIntegrityError, match="corrupt"):
         load_recordings(path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "failure_name"),
+    [
+        ("answer_prompt_hash", "answer_prompt"),
+        ("answer_question_hash", "answer_question"),
+        ("answer_context_schema_hash", "answer_context_schema"),
+        ("answer_tool_schema_hash", "answer_schema"),
+    ],
+)
+async def test_recorded_gate_rejects_stale_answer_contract_binding(
+    tmp_path: Path,
+    field: str,
+    failure_name: str,
+) -> None:
+    raw = json.loads(DEFAULT_RECORDINGS.read_text(encoding="utf-8"))
+    raw["recordings"][0][field] = "0" * 64
+    raw["recordings"][0]["recording_sha256"] = _recording_digest(
+        raw["recordings"][0]
+    )
+    path = tmp_path / "recordings-stale-answer.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    case = load_golden_cases()[0]
+
+    with pytest.raises(RecordingIntegrityError, match=failure_name):
+        await make_recorded_executor(recordings_path=path)(case)
 
 
 @pytest.mark.asyncio
@@ -276,18 +322,64 @@ async def test_recorded_safety_evidence_is_non_vacuous_and_traces_are_content_fr
 
 
 @pytest.mark.asyncio
-async def test_recorded_gate_executes_every_manifest_case_green() -> None:
+async def test_recorded_gate_executes_every_manifest_case_green(
+    tmp_path: Path,
+) -> None:
+    # Preserve the valid bindings with a different byte serialization so provenance
+    # cannot silently fall back to the canonical default path.
+    recordings_path = tmp_path / "recordings.json"
+    recordings_path.write_text(
+        json.dumps(json.loads(DEFAULT_RECORDINGS.read_text(encoding="utf-8"))),
+        encoding="utf-8",
+    )
     report, result = await run_gate(
         tier="recorded",
         manifest_path=DEFAULT_MANIFEST,
-        recordings_path=DEFAULT_RECORDINGS,
+        recordings_path=recordings_path,
         baseline_path=Path("does-not-exist.json"),
     )
     assert report.status is RunStatus.PASS
     assert result["case_count"] == 50
     assert result["executor_call_count"] == 50
     assert result["cases"] == []
+    assert result["recordings_sha256"] == w2_runner._sha256(recordings_path)
+    assert result["recordings_sha256"] != w2_runner._sha256(DEFAULT_RECORDINGS)
     assert all(category["passed"] is True for category in result["categories"])
+
+
+@pytest.mark.asyncio
+async def test_recorded_gate_exercises_exact_document_selector_and_rendered_citation() -> None:
+    case = load_golden_cases()[0]
+    observation = await make_recorded_executor()(case)
+    document_claims = [
+        claim
+        for claim in observation.rendered_claims
+        if claim.source_class is CitationSourceType.UPLOADED_DOCUMENT
+    ]
+    guideline_claims = [
+        claim
+        for claim in observation.rendered_claims
+        if claim.source_class is CitationSourceType.GUIDELINE
+    ]
+
+    assert len(document_claims) == 1
+    assert len(guideline_claims) == 1
+    assert observation.canonical_answer_evidence
+    assert citation_present(case, observation) is True
+
+
+@pytest.mark.asyncio
+async def test_recorded_gate_fails_when_selected_guideline_does_not_resolve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # guards: W2-D6 — Tier 1 must exercise both answer evidence classes it selects.
+    monkeypatch.setattr(
+        "app.orchestrator.loop._resolve_guideline_claims",
+        lambda _raw_items, _context: (),
+    )
+
+    with pytest.raises(RecordingIntegrityError, match="guideline selector did not resolve"):
+        await make_recorded_executor()(load_golden_cases()[0])
 
 
 class _FakeLiveProvider:
@@ -345,6 +437,45 @@ class _FakeLiveProvider:
         if isinstance(value, Exception):
             raise value
         return LiveCall(value, Usage(input_tokens=1, output_tokens=1), "claude-sonnet-4-6", 1.0)
+
+
+class _SelectiveFakeLiveProvider(_FakeLiveProvider):
+    async def answer(self, *, context):
+        self.answer_calls += 1
+        assert isinstance(context, GroundedAnswerContext)
+        assert len(context.document_claims) > 1
+        self.answer_contexts.append(context)
+        return LiveCall(
+            BriefResult(
+                text="Verified synthetic selection.",
+                source="llm",
+                degraded=False,
+                usage=Usage(input_tokens=2, output_tokens=1),
+                iterations=1,
+                tool_calls=["submit_claims"],
+                verified_claims=context.document_claims[:1],
+                answer_reason_code="verified",
+            ),
+            Usage(input_tokens=2, output_tokens=1),
+            "claude-sonnet-4-6",
+            1.0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_live_narrow_answer_keeps_extraction_and_rendered_citation_lanes_separate() -> None:
+    provider = _SelectiveFakeLiveProvider([True])
+    case = load_golden_cases()[0]
+    observation = await LiveExecutor(provider, config=load_judge_config())(case)
+
+    assert len(case.expected_citations) > len(observation.rendered_claims) == 1
+    assert len(observation.canonical_answer_evidence) > len(
+        observation.rendered_claims
+    )
+    assert Counter(item.model_dump_json() for item in observation.citations) == Counter(
+        item.model_dump_json() for item in case.expected_citations
+    )
+    assert citation_present(case, observation) is True
 
 
 @pytest.mark.asyncio
@@ -424,23 +555,24 @@ async def test_live_judge_parse_error_gets_exactly_one_retry() -> None:
 
 def _green_live_result() -> dict[str, object]:
     rubric_names = [item.value for item in w2_runner.Rubric]
+    case_ids = [case.case_id for case in load_golden_cases(DEFAULT_MANIFEST)]
     return {
         "status": "PASS",
         "tier": "live",
         "case_count": 50,
         "executor_call_count": 50,
         "inconclusive_reason": None,
-        "manifest_sha256": "a" * 64,
+        "manifest_sha256": w2_runner._sha256(DEFAULT_MANIFEST),
         "source_sha": "b" * 40,
         "limits": {"max_cost_usd": 10.0, "max_seconds": 1_800.0},
         "metrics": {"cost_usd": 1.25, "elapsed_seconds": 120.0},
         "cases": [
             {
-                "case_id": f"case-{index:02d}",
+                "case_id": case_id,
                 "status": "PASS",
                 "rubrics": {rubric: True for rubric in rubric_names},
             }
-            for index in range(50)
+            for case_id in case_ids
         ],
         "categories": [
             {
@@ -655,3 +787,26 @@ def test_artifact_scanner_excludes_inputs_and_catches_generated_leak(tmp_path: P
 
     with pytest.raises(ArtifactScanError, match="missing"):
         scan_paths([tmp_path / "missing"])
+
+
+def test_artifact_scanner_exempts_only_explicit_closed_result_operational_numbers(
+    tmp_path: Path,
+) -> None:
+    source = Path(__file__).parent / "results-tier1.json"
+    aggregate = json.loads(source.read_text(encoding="utf-8"))
+    aggregate["metrics"]["retrieval_hit_count"] = 92
+    generated = tmp_path / "result.json"
+    generated.write_text(json.dumps(aggregate), encoding="utf-8")
+
+    assert scan_paths([generated]) == (False, 1, 1)
+    assert scan_eval_result_paths([generated]) == (True, 1, 0)
+
+    aggregate["categories"][0]["trigger"] = "92"
+    generated.write_text(json.dumps(aggregate), encoding="utf-8")
+    assert scan_eval_result_paths([generated]) == (False, 1, 1)
+
+    aggregate["categories"][0]["trigger"] = "met 100% invariant"
+    aggregate["unexpected"] = "92"
+    generated.write_text(json.dumps(aggregate), encoding="utf-8")
+    with pytest.raises(ArtifactScanError, match="closed-schema"):
+        scan_eval_result_paths([generated])

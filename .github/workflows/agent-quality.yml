@@ -148,6 +148,6 @@ jobs:
           COHERE_API_KEY: ''
         run: |
           python -m evals.w2_runner run --tier recorded
-          python -m evals.artifact_scan evals/results-tier1.json evals/recordings
+          python -m evals.artifact_scan --eval-result evals/results-tier1.json evals/recordings
       - name: Verify committed corpus integrity and dependency bans
         run: python -m pytest corpus/tests tests/test_reader_geometry.py tests/test_app_boot.py --tb=no --show-capture=no -q

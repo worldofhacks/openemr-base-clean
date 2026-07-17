@@ -20,6 +20,13 @@ from urllib.request import Request, urlopen
 
 _SHA = re.compile(r"[0-9a-f]{40}")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_REPOSITORY = "worldofhacks/openemr-base-clean"
+_WORKFLOW_NAME = "agent-eval-gate"
+_WORKFLOW_PATH = ".github/workflows/agent-eval-gate.yml"
+_CHECK_NAME = "eval-tier2-live"
+_ARTIFACT_NAME = "eval-results-tier2-live"
+_MAIN_BRANCH = "main"
+_TRUSTED_EVENTS = frozenset({"push", "workflow_dispatch"})
 
 
 class BridgeVerificationError(RuntimeError):
@@ -36,23 +43,70 @@ class BridgeExpectation:
     artifact_digest: str
 
     def __post_init__(self) -> None:
-        if self.repository != "worldofhacks/openemr-base-clean":
+        if self.repository != _REPOSITORY:
             raise BridgeVerificationError("repository_mismatch")
         if _SHA.fullmatch(self.sha) is None:
             raise BridgeVerificationError("sha_invalid")
-        if self.workflow_name != "agent-eval-gate":
+        if self.workflow_name != _WORKFLOW_NAME:
             raise BridgeVerificationError("workflow_mismatch")
-        if not self.check_name or not self.artifact_name:
-            raise BridgeVerificationError("name_invalid")
+        if self.check_name != _CHECK_NAME:
+            raise BridgeVerificationError("check_name_mismatch")
+        if self.artifact_name != _ARTIFACT_NAME:
+            raise BridgeVerificationError("artifact_name_mismatch")
         if _DIGEST.fullmatch(self.artifact_digest) is None:
             raise BridgeVerificationError("artifact_digest_invalid")
 
 
 def _objects(payload: Mapping[str, Any], key: str) -> list[Mapping[str, Any]]:
     values = payload.get(key)
-    if not isinstance(values, list):
+    if not isinstance(values, list) or any(
+        not isinstance(item, Mapping) for item in values
+    ):
         raise BridgeVerificationError("response_shape_invalid")
-    return [item for item in values if isinstance(item, Mapping)]
+    total_count = payload.get("total_count")
+    if total_count is not None:
+        if (
+            not isinstance(total_count, int)
+            or isinstance(total_count, bool)
+            or total_count < 0
+        ):
+            raise BridgeVerificationError("response_shape_invalid")
+        if total_count != len(values):
+            raise BridgeVerificationError("response_incomplete")
+    return values
+
+
+def _positive_id(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _select_workflow_run(
+    expectation: BridgeExpectation,
+    workflow_payload: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], int, int]:
+    """Select the only complete trusted main run and return its run/suite ids."""
+
+    runs = [
+        run
+        for run in _objects(workflow_payload, "workflow_runs")
+        if run.get("name") == expectation.workflow_name
+        and run.get("path") == _WORKFLOW_PATH
+        and run.get("head_sha") == expectation.sha
+        and run.get("head_branch") == _MAIN_BRANCH
+        and run.get("status") == "completed"
+        and run.get("conclusion") == "success"
+        and run.get("event") in _TRUSTED_EVENTS
+    ]
+    if not runs:
+        raise BridgeVerificationError("workflow_not_green")
+    if len(runs) != 1:
+        raise BridgeVerificationError("workflow_not_unique")
+    selected = runs[0]
+    run_id = selected.get("id")
+    check_suite_id = selected.get("check_suite_id")
+    if not _positive_id(run_id) or not _positive_id(check_suite_id):
+        raise BridgeVerificationError("workflow_identity_invalid")
+    return selected, run_id, check_suite_id
 
 
 def validate_bridge_payloads(
@@ -66,17 +120,9 @@ def validate_bridge_payloads(
     if repository_payload.get("full_name") != expectation.repository:
         raise BridgeVerificationError("repository_mismatch")
 
-    runs = [
-        run
-        for run in _objects(workflow_payload, "workflow_runs")
-        if run.get("name") == expectation.workflow_name
-        and run.get("head_sha") == expectation.sha
-        and run.get("conclusion") == "success"
-        and run.get("event") in {"push", "workflow_dispatch"}
-    ]
-    if len(runs) != 1:
-        raise BridgeVerificationError("workflow_not_green")
-    run_id = runs[0].get("id")
+    _run, run_id, check_suite_id = _select_workflow_run(
+        expectation, workflow_payload
+    )
 
     checks = [
         check
@@ -85,9 +131,15 @@ def validate_bridge_payloads(
         and check.get("head_sha") == expectation.sha
         and check.get("status") == "completed"
         and check.get("conclusion") == "success"
+        and isinstance(check.get("check_suite"), Mapping)
+        and check["check_suite"].get("id") == check_suite_id
     ]
-    if len(checks) != 1:
+    if not checks:
         raise BridgeVerificationError("check_not_green")
+    if len(checks) != 1:
+        raise BridgeVerificationError("check_not_unique")
+    if not _positive_id(checks[0].get("id")):
+        raise BridgeVerificationError("check_identity_invalid")
 
     artifacts = [
         artifact
@@ -98,9 +150,14 @@ def validate_bridge_payloads(
         and isinstance(artifact.get("workflow_run"), Mapping)
         and artifact["workflow_run"].get("id") == run_id
         and artifact["workflow_run"].get("head_sha") == expectation.sha
+        and artifact["workflow_run"].get("head_branch") == _MAIN_BRANCH
     ]
-    if len(artifacts) != 1:
+    if not artifacts:
         raise BridgeVerificationError("artifact_not_attested")
+    if len(artifacts) != 1:
+        raise BridgeVerificationError("artifact_not_unique")
+    if not _positive_id(artifacts[0].get("id")):
+        raise BridgeVerificationError("artifact_identity_invalid")
 
 
 def _get_json(path: str, token: str) -> Mapping[str, Any]:
@@ -145,16 +202,23 @@ def main(argv: list[str] | None = None) -> int:
         repository_payload = _get_json(f"/repos/{repo}", token)
         workflow_payload = _get_json(
             f"/repos/{repo}/actions/workflows/agent-eval-gate.yml/runs"
-            f"?head_sha={expected.sha}&status=completed&per_page=10",
+            f"?head_sha={expected.sha}&branch=main&status=completed&per_page=100",
             token,
         )
+        if repository_payload.get("full_name") != expected.repository:
+            raise BridgeVerificationError("repository_mismatch")
+        _run, run_id, check_suite_id = _select_workflow_run(
+            expected, workflow_payload
+        )
         checks_payload = _get_json(
-            f"/repos/{repo}/commits/{expected.sha}/check-runs?per_page=100",
+            f"/repos/{repo}/check-suites/{check_suite_id}/check-runs"
+            f"?check_name={quote(expected.check_name, safe='')}"
+            "&filter=all&per_page=100",
             token,
         )
         artifacts_payload = _get_json(
-            f"/repos/{repo}/actions/artifacts?name="
-            f"{quote(expected.artifact_name, safe='')}&per_page=20",
+            f"/repos/{repo}/actions/runs/{run_id}/artifacts?name="
+            f"{quote(expected.artifact_name, safe='')}&per_page=100",
             token,
         )
         validate_bridge_payloads(

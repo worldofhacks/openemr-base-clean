@@ -55,6 +55,10 @@ EVIDENCE_MAX_REQUESTS_PER_WINDOW = 12
 EVIDENCE_MAX_CONCURRENT_PER_SESSION = 2
 EVIDENCE_LIMITER_MAX_SESSIONS = 10_000
 EVIDENCE_LIMITER_IDLE_TTL_SECONDS = 600.0
+# Sessionless access is intentionally one shared, content-free budget.  Do not key this
+# lane by a query or an IP address: the former would retain clinical input and the latter
+# would turn a public-guideline endpoint into a source of client-identifying state.
+ANONYMOUS_EVIDENCE_LIMITER_KEY = "public-guideline-evidence:anonymous:v1"
 
 
 class EvidenceRetriever(Protocol):
@@ -68,7 +72,7 @@ class EvidenceRouteServices(Protocol):
 
 
 class EvidenceRequestLimitExceeded(RuntimeError):
-    """A session exhausted its content-free retrieval admission budget."""
+    """A caller budget exhausted its content-free retrieval admission window."""
 
     def __init__(self, *, retry_after_seconds: int) -> None:
         super().__init__("evidence request limit exceeded")
@@ -83,7 +87,7 @@ class _SessionBudget:
 
 
 class EvidenceRequestLimiter:
-    """Bounded per-process rate and concurrency admission keyed by opaque session hash.
+    """Bounded per-process admission keyed by an opaque session or anonymous-lane hash.
 
     The deployed demo has one web process. The state map is capped and idle entries are
     evicted, so attacking the limiter cannot replace retrieval abuse with unbounded memory.
@@ -300,20 +304,30 @@ async def search_evidence(
     payload: EvidenceSearchRequest,
     request: Request,
     session_id: Annotated[
-        str,
+        str | None,
         Header(
             alias="X-Copilot-Session-Id",
             min_length=1,
             max_length=128,
         ),
-    ],
+    ] = None,
 ) -> EvidenceSearchResponse:
-    services: EvidenceRouteServices = request.app.state.services
-    session = await _resolve_session(services, session_id)
+    # Guideline retrieval is the one Week 2 route that is intrinsically PHI-free: its
+    # bounded query contract accepts condition/test terms only and it never reads chart or
+    # document data.  A supplied session still gets the original fail-closed resolution and
+    # demographic egress screen; an absent session must not touch either patient surface.
+    if session_id is None:
+        limiter_key = ANONYMOUS_EVIDENCE_LIMITER_KEY
+        demographic_strings: tuple[str, ...] = ()
+    else:
+        services: EvidenceRouteServices = request.app.state.services
+        session = await _resolve_session(services, session_id)
+        limiter_key = session.session_id
+        demographic_strings = _request_demographic_strings(request)
+
     limiter = _get_limiter(request)
     try:
-        async with limiter.slot(session.session_id):
-            demographic_strings = _request_demographic_strings(request)
+        async with limiter.slot(limiter_key):
             query = build_clinical_query(
                 re.split(r"[,;|]+", payload.query),
                 demographic_strings=demographic_strings,

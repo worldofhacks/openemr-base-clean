@@ -254,7 +254,7 @@ def test_spec_locks_status_media_redirect_correlation_and_session_only_trends() 
     assert [(item["name"].casefold(), item["in"]) for item in evidence_parameters] == [
         ("x-copilot-session-id", "header")
     ]
-    assert evidence_parameters[0]["required"] is True
+    assert evidence_parameters[0]["required"] is False
     evidence_request = spec["components"]["schemas"]["EvidenceSearchRequest"]
     assert "session_id" not in evidence_request["properties"]
     assert "patient_id" not in evidence_request["properties"]
@@ -479,7 +479,8 @@ def test_bruno_has_all_ten_grader_flows_and_a_real_bounded_poll() -> None:
     assert "expect(res.getStatus()).to.equal(200)" in duplicate
     assert 'bru.getVar("intake_document_id")' in duplicate
     evidence = (_BRUNO / "evidence-search.bru").read_text(encoding="utf-8")
-    assert "x-copilot-session-id: {{session_id}}" in evidence.casefold()
+    assert "x-copilot-session-id" not in evidence.casefold()
+    assert "{{session_id}}" not in evidence
 
     combined = "\n".join(path.read_text(encoding="utf-8") for path in request_files)
     for forbidden in ("access_token", "bearer ", "authorization:", "patient_id:"):

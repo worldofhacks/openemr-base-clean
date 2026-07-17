@@ -9,6 +9,7 @@ environment (§7, D14).
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import getpass
 import os
 import re
@@ -173,6 +174,51 @@ def write_runtime_environment(output: Path, agent_base_url: str, session_id: str
             temporary_path.unlink()
 
 
+def mint_manual_session(
+    *,
+    agent_base_url: str,
+    flow: Flow,
+    browser_opener: Callable[[str], object] | None = None,
+    final_url_reader: Callable[[str], str] | None = None,
+) -> SessionPayload:
+    """Capture a Week 2 SMART session through the user's ordinary browser.
+
+    This path deliberately does not automate login, inspect the page, or receive a
+    credential.  The only pasted value is read without terminal echo, validated against
+    the exact trusted agent origin and ``/week2?sid=`` shape, and then reduced to the
+    same opaque session envelope used by the Selenium compatibility path.
+    """
+
+    if flow != "week2":
+        raise MintError("manual session capture is available only for the Week 2 flow")
+    base_url = _normalize_agent_base_url(agent_base_url)
+    launch_url = f"{base_url}/week2/launch"
+    if browser_opener is None:
+        import webbrowser
+
+        browser_opener = webbrowser.open
+    if final_url_reader is None:
+        final_url_reader = getpass.getpass
+
+    try:
+        opened = browser_opener(launch_url)
+    except Exception:  # noqa: BLE001 - never expose browser integration details
+        raise MintError("the Week 2 launch could not be opened in a browser") from None
+    if opened is False:
+        raise MintError("the Week 2 launch could not be opened in a browser")
+
+    try:
+        final_url = final_url_reader(
+            "Complete the synthetic SMART launch, then paste the final "
+            "/week2?sid= URL (input hidden): "
+        ).strip()
+    except (EOFError, KeyboardInterrupt):
+        raise MintError("manual Week 2 session capture was cancelled") from None
+    if not final_url:
+        raise MintError("the final Week 2 URL is required")
+    return parse_session_redirect(final_url, base_url, flow="week2")
+
+
 def mint_session(
     *,
     agent_base_url: str,
@@ -309,6 +355,14 @@ def _argument_parser() -> argparse.ArgumentParser:
         help="SMART destination flow (default: week1)",
     )
     parser.add_argument(
+        "--manual",
+        action="store_true",
+        help=(
+            "open the Week 2 SMART launch in the ordinary browser and capture its final "
+            "trusted URL without Selenium (Week 2 only)"
+        ),
+    )
+    parser.add_argument(
         "--timeout",
         type=int,
         default=60,
@@ -319,23 +373,32 @@ def _argument_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _argument_parser().parse_args(argv)
-    password = os.environ.get("OE_ADMIN_PASS") or getpass.getpass(
-        "Synthetic-demo OpenEMR password: "
-    )
-    if not password:
-        print("dev-mint failed: a synthetic-demo OpenEMR password is required", file=sys.stderr)
-        return 2
     try:
-        session = mint_session(
-            agent_base_url=args.agent_base_url,
-            openemr_base_url=args.openemr_base_url,
-            selenium_url=args.selenium_url,
-            username=args.username,
-            password=password,
-            patient_index=args.patient_index,
-            timeout_seconds=args.timeout,
-            flow=args.flow,
-        )
+        if args.manual:
+            session = mint_manual_session(
+                agent_base_url=args.agent_base_url,
+                flow=args.flow,
+            )
+        else:
+            password = os.environ.get("OE_ADMIN_PASS") or getpass.getpass(
+                "Synthetic-demo OpenEMR password: "
+            )
+            if not password:
+                print(
+                    "dev-mint failed: a synthetic-demo OpenEMR password is required",
+                    file=sys.stderr,
+                )
+                return 2
+            session = mint_session(
+                agent_base_url=args.agent_base_url,
+                openemr_base_url=args.openemr_base_url,
+                selenium_url=args.selenium_url,
+                username=args.username,
+                password=password,
+                patient_index=args.patient_index,
+                timeout_seconds=args.timeout,
+                flow=args.flow,
+            )
         write_runtime_environment(DEFAULT_OUTPUT, args.agent_base_url, session.session_id)
     except MintError as exc:
         print(f"dev-mint failed: {exc}", file=sys.stderr)

@@ -13,7 +13,7 @@ import pytest
 from app.llm.provider import Usage
 from app.orchestrator.loop import BriefResult
 from app.schemas.answers import GroundedAnswerContext
-from app.schemas.citations import CitationSourceType
+from app.schemas.citations import CitationSourceType, CitationV2
 from evals.artifact_scan import ArtifactScanError, scan_eval_result_paths, scan_paths
 from evals.execution import _lab, _lines
 from evals.golden_loader import DEFAULT_MANIFEST, load_golden_cases
@@ -468,7 +468,43 @@ async def test_live_narrow_answer_keeps_extraction_and_rendered_citation_lanes_s
     case = load_golden_cases()[0]
     observation = await LiveExecutor(provider, config=load_judge_config())(case)
 
-    assert len(case.expected_citations) > len(observation.rendered_claims) == 1
+    document_claims = [
+        claim
+        for claim in observation.rendered_claims
+        if claim.source_class is CitationSourceType.UPLOADED_DOCUMENT
+    ]
+    guideline_claims = [
+        claim
+        for claim in observation.rendered_claims
+        if claim.source_class is CitationSourceType.GUIDELINE
+    ]
+    canonical_guidelines = [
+        item
+        for item in observation.canonical_answer_evidence
+        if item.source_class is CitationSourceType.GUIDELINE
+    ]
+
+    assert len(case.expected_citations) > len(observation.rendered_claims) == 2
+    assert len(document_claims) == 1
+    assert len(guideline_claims) == 1
+    assert canonical_guidelines
+    assert guideline_claims[0].citation == canonical_guidelines[0].citation
+    assert document_claims[0].overlay_source_id is not None
+    assert document_claims[0].overlay_page is not None
+    assert document_claims[0].overlay_bbox is not None
+    assert guideline_claims[0].overlay_source_id is None
+    assert guideline_claims[0].overlay_page is None
+    assert guideline_claims[0].overlay_bbox is None
+    for claim in observation.rendered_claims:
+        assert isinstance(claim.citation, CitationV2)
+        assert claim.source_class is claim.citation.source_type
+        assert set(claim.citation.model_dump()) == {
+            "source_type",
+            "source_id",
+            "page_or_section",
+            "field_or_chunk_id",
+            "quote_or_value",
+        }
     assert len(observation.canonical_answer_evidence) > len(
         observation.rendered_claims
     )

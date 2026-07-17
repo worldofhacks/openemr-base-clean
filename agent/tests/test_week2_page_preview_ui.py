@@ -92,6 +92,27 @@ def _png() -> bytes:
     return output.getvalue()
 
 
+def _rendered_overlay_geometry(page) -> dict[str, object]:
+    return page.locator("#overlay").evaluate(
+        """
+        node => {
+          const svg = node.ownerSVGElement;
+          const rect = node.getBoundingClientRect();
+          const frame = svg.getBoundingClientRect();
+          return {
+            svg_hidden: svg.hasAttribute("hidden"),
+            width: rect.width,
+            height: rect.height,
+            x_ratio: (rect.left - frame.left) / frame.width,
+            y_ratio: (rect.top - frame.top) / frame.height,
+            width_ratio: rect.width / frame.width,
+            height_ratio: rect.height / frame.height,
+          };
+        }
+        """
+    )
+
+
 def _trend_payload() -> dict[str, object]:
     citation = {
         "source_type": "uploaded_document",
@@ -297,7 +318,17 @@ def test_click_fetches_page_png_and_sets_image_overlay_and_visible_error():
             assert citation_image_src is not None and citation_image_src.startswith(
                 "blob:"
             )
-            assert page.locator("#overlaySvg").evaluate("node => node.hidden") is False
+            expect(page.locator("#overlaySvg")).to_be_visible()
+            citation_geometry = _rendered_overlay_geometry(page)
+            assert citation_geometry["svg_hidden"] is False
+            assert citation_geometry["width"] > 0
+            assert citation_geometry["height"] > 0
+            assert [
+                citation_geometry["x_ratio"],
+                citation_geometry["y_ratio"],
+                citation_geometry["width_ratio"],
+                citation_geometry["height_ratio"],
+            ] == pytest.approx([0.1, 0.1, 0.2, 0.1], abs=0.002)
             overlay = page.locator("#overlay")
             assert overlay.get_attribute("class") == "box"
             assert overlay.get_attribute("x") == "0.1"
@@ -329,7 +360,17 @@ def test_click_fetches_page_png_and_sets_image_overlay_and_visible_error():
             )
             image_src = page.locator("#pageImage").get_attribute("src")
             assert image_src is not None and image_src.startswith("blob:")
-            assert page.locator("#overlaySvg").evaluate("node => node.hidden") is False
+            expect(page.locator("#overlaySvg")).to_be_visible()
+            source_geometry = _rendered_overlay_geometry(page)
+            assert source_geometry["svg_hidden"] is False
+            assert source_geometry["width"] > 0
+            assert source_geometry["height"] > 0
+            assert [
+                source_geometry["x_ratio"],
+                source_geometry["y_ratio"],
+                source_geometry["width_ratio"],
+                source_geometry["height_ratio"],
+            ] == pytest.approx([0.2, 0.3, 0.4, 0.1], abs=0.002)
             overlay = page.locator("#overlay")
             assert overlay.get_attribute("class") == "box"
             assert overlay.get_attribute("x") == "0.2"
@@ -356,7 +397,9 @@ def test_click_fetches_page_png_and_sets_image_overlay_and_visible_error():
                 "source document is unavailable for rendering"
             )
             expect(page.locator("#pageWrap")).to_be_hidden()
-            assert page.locator("#overlaySvg").evaluate("node => node.hidden") is True
+            assert page.locator("#overlaySvg").evaluate(
+                'node => node.hasAttribute("hidden")'
+            ) is True
             assert len(page_requests) == 3
             assert page_requests[2]["correlation"] == "corr.preview"
 
@@ -368,6 +411,8 @@ def test_click_fetches_page_png_and_sets_image_overlay_and_visible_error():
             page.wait_for_timeout(100)
             expect(page.locator("#modal")).not_to_have_class("modal open")
             assert page.locator("#pageImage").get_attribute("src") is None
-            assert page.locator("#overlaySvg").evaluate("node => node.hidden") is True
+            assert page.locator("#overlaySvg").evaluate(
+                'node => node.hasAttribute("hidden")'
+            ) is True
         finally:
             browser.close()

@@ -55,9 +55,12 @@ make a live vendor call.
 The route declares named, strict `EvidenceSearchRequest`, `EvidenceSnippet`, and
 `EvidenceSearchResponse` models at `POST /evidence/search`. Its query accepts condition/test
 terms only, `k` is bounded to the frozen `K_MAX` (currently 20), a healthy miss is an empty
-200 response, and a corrupt
-index or production embedder outage is a distinct 503. The composition layer can attach
-the current pinned session's demographic strings at
+200 response, and a corrupt index or production embedder outage is a distinct 503. Because
+the route searches public guideline text and its query contract is PHI-free, the SMART
+session header is optional. Sessionless calls share one content-free bounded rate-limit
+bucket and never resolve a session or read patient demographics. When a session header is
+supplied, the original patient-pin resolution remains fail-closed and the composition
+layer can attach the current pinned session's demographic strings at
 `request.state.evidence_demographic_strings`; those values are checked at the final Cohere
 egress boundary and are never logged.
 
@@ -77,7 +80,8 @@ runtime network path.
 This isolated lane does not own shared files. The integration owner must add the runtime
 requirements to `agent/pyproject.toml`, copy/build `agent/corpus/` in `agent/Dockerfile`,
 include `app.routes.evidence.router` in `app/main.py`, and connect retrieval health to
-`/ready`. Router inclusion must remain behind the application's SMART/pinned-session guard,
-and the Track M6 event owner must wrap the emitted `retrieval.query.executed`,
+`/ready`. Patient/chart/document routes remain behind the SMART pin; this public-guideline
+route remains bounded by its strict query screen and shared anonymous limiter. The Track M6
+event owner must wrap the emitted `retrieval.query.executed`,
 `retrieval.unavailable`, `rerank.executed`, and `breaker.state.changed` records in the
 canonical event envelope. No workaround for those merge points is hidden here.

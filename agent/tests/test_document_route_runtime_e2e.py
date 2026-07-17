@@ -405,9 +405,10 @@ class _RuntimeServices:
             return await self.run_brief(session, message, request_url=request_url)
 
         async def run_brief_with_context(answer_context) -> BriefResult:
-            # Mirror the production typed answer selector: only exact canonical document
-            # claims relevant to this query are selected. Unselected document/guideline
-            # context must not be appended as an unscoped evidence dump.
+            # Mirror the observed runtime omission: the typed answer selects exact
+            # patient-document claims but forgets the separate guideline selector.  The
+            # composer must retain one canonical top-ranked guideline for this anchored,
+            # in-scope answer without turning unrelated context into an evidence dump.
             if "blood pressure" in message.lower():
                 selected = tuple(
                     claim
@@ -457,12 +458,13 @@ def test_mounted_document_runtime_uploads_processes_and_serves_cited_answer(
     """POST route → queue worker → local grounding → graph/composer → cited answer."""
 
     from app.main import create_app
-    from app.schemas.citations import CitationSourceType
+    from app.schemas.citations import CitationSourceType, CitationV2
 
     monkeypatch.setenv("W2_GRAPH_ENABLED", "1")
     services = _RuntimeServices()
     app = create_app(services=services, readiness_checks=[])
     content = _LAB_FIXTURE.read_bytes()
+    expected_guideline = services.retriever.search("Glucose", k=3).items[0]
 
     with TestClient(app) as client:
         upload = client.post(
@@ -514,7 +516,8 @@ def test_mounted_document_runtime_uploads_processes_and_serves_cited_answer(
     assert body["correlation_id"] == "corr-route-chat"
     assert "Uploaded document:" in body["brief"]
     assert "results.0.value: 92" in body["brief"]
-    assert "Guideline evidence:" not in body["brief"]
+    assert "Guideline evidence:" in body["brief"]
+    assert expected_guideline.quote in body["brief"]
 
     citations = [item for item in body["citations"] if isinstance(item, dict)]
     document_citation = next(
@@ -530,7 +533,14 @@ def test_mounted_document_runtime_uploads_processes_and_serves_cited_answer(
         for item in citations
         if item["source_type"] == CitationSourceType.GUIDELINE.value
     ]
-    assert guideline_citations == []
+    assert len(guideline_citations) == 1
+    assert guideline_citations[0] == {
+        "source_type": CitationSourceType.GUIDELINE.value,
+        "source_id": expected_guideline.source_id,
+        "page_or_section": expected_guideline.section,
+        "field_or_chunk_id": expected_guideline.chunk_id,
+        "quote_or_value": expected_guideline.quote,
+    }
 
     graph_result = services.last_graph_result
     assert graph_result is not None
@@ -553,7 +563,14 @@ def test_mounted_document_runtime_uploads_processes_and_serves_cited_answer(
     assert document_claim.overlay.page == 1
     assert document_claim.overlay.bbox.x0 < document_claim.overlay.bbox.x1
     assert document_claim.overlay.bbox.y0 < document_claim.overlay.bbox.y1
-    assert not graph_result.composition.for_source(CitationSourceType.GUIDELINE)
+    guideline_claims = graph_result.composition.for_source(
+        CitationSourceType.GUIDELINE
+    )
+    assert len(guideline_claims) == 1
+    assert guideline_claims[0].text == expected_guideline.quote
+    assert guideline_claims[0].citation == CitationV2.model_validate(
+        guideline_citations[0]
+    )
 
     # The graph consumed the durable artifact and exact-once writes; it did not re-extract.
     assert services.vlm.calls == 1

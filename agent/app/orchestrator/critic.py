@@ -106,9 +106,23 @@ def review_composition(
         key = _key(citation)
         if key not in rendered and key not in response_citations:
             return CriticResult(False, CriticReason.UNRESOLVED_CITATION)
-        policy = _policy_reason(verified_claim.text)
-        if policy is not None:
-            return CriticResult(False, policy)
+        if citation.source_type is CitationSourceType.GUIDELINE:
+            # Guideline recommendations are source-separated public evidence, not
+            # model-authored patient instructions.  Permit recommendation language only
+            # when the claim resolves to the worker's allowed citation lane and its text
+            # is byte-identical to the canonical retrieved quote.  Altered/unknown text
+            # therefore remains fail-closed, while the treatment screen below is
+            # unchanged for chart/document claims and all model prose.
+            if key not in allowed:
+                return CriticResult(False, CriticReason.UNRESOLVED_CITATION)
+            if verified_claim.text != citation.quote_or_value:
+                return CriticResult(False, CriticReason.INVALID_CLAIM)
+            if contains_forbidden_phrase(verified_claim.text):
+                return CriticResult(False, CriticReason.INVALID_CLAIM)
+        else:
+            policy = _policy_reason(verified_claim.text)
+            if policy is not None:
+                return CriticResult(False, policy)
 
     for rendered_claim in composition.claims:
         citation = rendered_claim.citation
@@ -129,8 +143,16 @@ def review_composition(
                 or citation.source_id != overlay.source_id
             ):
                 return CriticResult(False, CriticReason.INVALID_CLAIM)
-        elif not citation.page_or_section or rendered_claim.overlay is not None:
-            return CriticResult(False, CriticReason.MIXED_SOURCE)
+        else:
+            if not citation.page_or_section or rendered_claim.overlay is not None:
+                return CriticResult(False, CriticReason.MIXED_SOURCE)
+            if _key(citation) not in allowed:
+                return CriticResult(False, CriticReason.UNRESOLVED_CITATION)
+            if rendered_claim.text != citation.quote_or_value:
+                return CriticResult(False, CriticReason.INVALID_CLAIM)
+            if contains_forbidden_phrase(rendered_claim.text):
+                return CriticResult(False, CriticReason.INVALID_CLAIM)
+            continue
         policy = _policy_reason(rendered_claim.text)
         if policy is not None:
             return CriticResult(False, policy)

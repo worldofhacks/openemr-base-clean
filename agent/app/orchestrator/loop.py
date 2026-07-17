@@ -353,6 +353,11 @@ class BriefResult:
     # Canonical internal claim objects used by the graph composer/critic.  Model prose,
     # invented source metadata, and unresolved chunk ids never enter this lane.
     verified_claims: tuple[VerifiedClinicalClaim, ...] = ()
+    # Internal selector provenance for the context-aware composer.  False means the
+    # answer omitted the guideline lane entirely, so an anchored canonical fallback may
+    # be used. True means a selector was attempted; failed resolution must remain
+    # fail-closed rather than being silently replaced with a different chunk.
+    guideline_selector_attempted: bool = False
     # PHI-free step names/latencies copied from the request trace so the graph can emit
     # one complete terminal encounter summary without exposing trace detail/content.
     observability_steps: tuple[tuple[str, float], ...] = ()
@@ -712,12 +717,20 @@ class Orchestrator:
             submit = next((tu for tu in resp.tool_uses() if tu.name == "submit_claims"), None)
             if submit is not None:
                 tool_calls.append(submit.name)
+                guideline_selector_attempted = False
                 # Defense-in-depth (finding-2, §6): even though parse_claims is now total,
                 # guard the entire verify+render block so an unexpected verifier or renderer
                 # failure degrades to the deterministic fallback rather than escaping to the
                 # caller. A single bad claim must never abort the entire brief.
                 try:
                     raw_claims = submit.input.get("claims", [])
+                    guideline_selector_attempted = bool(
+                        isinstance(raw_claims, list)
+                        and any(
+                            isinstance(item, dict) and item.get("type") == "guideline"
+                            for item in raw_claims
+                        )
+                    )
                     document_claims = _resolve_document_claims(raw_claims, context)
                     guideline_claims = _resolve_guideline_claims(raw_claims, context)
                     clinical_claims = (
@@ -756,7 +769,14 @@ class Orchestrator:
                         and not guideline_claims
                     ):
                         return self._grounded_supersede(
-                            packet, total, iteration, tool_calls, verdicts, question=question)
+                            packet,
+                            total,
+                            iteration,
+                            tool_calls,
+                            verdicts,
+                            question=question,
+                            guideline_selector_attempted=guideline_selector_attempted,
+                        )
                     served = render_from_verified(results_v, packet=packet)
                     if not served.strip() and (document_claims or guideline_claims):
                         source_labels = []
@@ -777,6 +797,7 @@ class Orchestrator:
                                            *document_claims,
                                            *guideline_claims,
                                        ),
+                                       guideline_selector_attempted=guideline_selector_attempted,
                                        answer_reason_code="verified")
                 except Exception:
                     # Unexpected failure in parse/verify/render: fall back to the deterministic
@@ -784,7 +805,8 @@ class Orchestrator:
                     # fallback is the safe floor — the physician always gets something grounded.
                     return self._fallback(packet, total, iteration, tool_calls, "client_error",
                                          "unexpected error during submit_claims verify+render",
-                                         question=question)
+                                         question=question,
+                                         guideline_selector_attempted=guideline_selector_attempted)
 
             messages.append({"role": "assistant", "content": _assistant_content(resp)})
             results: list[dict] = []
@@ -807,7 +829,8 @@ class Orchestrator:
 
     def _grounded_supersede(self, packet: EvidencePacket, usage: Usage, iterations: int,
                             tool_calls: list[str], verdicts: list[str], *,
-                            question: str | None = None) -> BriefResult:
+                            question: str | None = None,
+                            guideline_selector_attempted: bool = False) -> BriefResult:
         """T-E6b (2): every claim BLOCKED/REFUSED → the verified render is EMPTY. Instead of an
         empty source="llm" answer, serve the honest D13 grounded render — the real records under
         a "couldn't verify — confirm manually" framing. This is NOT the error/defect fallback:
@@ -827,12 +850,14 @@ class Orchestrator:
             verdicts=verdicts,
             citations=[claim.citation for claim in chart_claims],
             verified_claims=chart_claims,
+            guideline_selector_attempted=guideline_selector_attempted,
             answer_reason_code="all_blocked",
         )
 
     def _fallback(self, packet: EvidencePacket, usage: Usage, iterations: int,
                   tool_calls: list[str], kind: str, reason: str, *,
-                  question: str | None = None) -> BriefResult:
+                  question: str | None = None,
+                  guideline_selector_attempted: bool = False) -> BriefResult:
         chart_claims = chart_claims_from_packet(packet)
         return BriefResult(
             text=render_packet_fallback(packet, question=question),
@@ -845,4 +870,5 @@ class Orchestrator:
             fallback_kind=kind,
             citations=[claim.citation for claim in chart_claims],
             verified_claims=chart_claims,
+            guideline_selector_attempted=guideline_selector_attempted,
         )

@@ -453,8 +453,10 @@ components:
     EvidenceSessionId:
       name: X-Copilot-Session-Id
       in: header
-      required: true
-      description: Opaque SMART session pin; no patient identifier is accepted.
+      required: false
+      description: >-
+        Optional opaque SMART session pin. When omitted, this PHI-free public-guideline
+        search uses one shared anonymous rate-limit budget and does not access patient data.
       schema: {type: string, minLength: 1, maxLength: 128}
     DocumentId:
       name: document_id

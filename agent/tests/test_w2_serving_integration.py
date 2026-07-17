@@ -262,8 +262,10 @@ class _FixtureRetriever:
 class _EvidenceServices:
     def __init__(self) -> None:
         self.factory_calls = 0
+        self.session_calls: list[str] = []
 
     async def resolve_session(self, session_id: str) -> Session:
+        self.session_calls.append(session_id)
         assert session_id == "synthetic-session"
         return _session()
 
@@ -286,6 +288,22 @@ def test_evidence_router_is_mounted_and_uses_service_lazy_factory(complete_env):
     assert response.status_code == 200
     assert response.json()["items"][0]["chunk_id"] == "vadod-diabetes-targets-001"
     assert services.factory_calls == 1
+    assert services.session_calls == ["synthetic-session"]
+
+
+def test_evidence_router_allows_phifree_search_without_a_patient_session(complete_env):
+    services = _EvidenceServices()
+    client = _client(services)
+
+    response = client.post(
+        "/evidence/search",
+        json={"query": "type 2 diabetes; HbA1c", "k": 1},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["chunk_id"] == "vadod-diabetes-targets-001"
+    assert services.factory_calls == 1
+    assert services.session_calls == []
 
 
 def test_documents_router_is_mounted_on_the_application(complete_env):

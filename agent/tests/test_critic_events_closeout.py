@@ -32,6 +32,18 @@ def _citation(suffix: str = "one") -> CitationV2:
     )
 
 
+def _guideline_citation() -> CitationV2:
+    return CitationV2(
+        source_type=CitationSourceType.GUIDELINE,
+        source_id=f"vadod-diabetes-synthetic@{'a' * 64}",
+        page_or_section="Recommendations: Glycemic Management",
+        field_or_chunk_id="vadod-diabetes-synthetic:chunk-1",
+        quote_or_value=(
+            "The guideline recommends individualized treatment targets for adults."
+        ),
+    )
+
+
 def _brief(text: str = "Verified synthetic observation: 6.5.") -> BriefResult:
     citation = _citation()
     return BriefResult(
@@ -80,6 +92,124 @@ def test_critic_approves_only_resolved_policy_safe_claims() -> None:
     assert review_composition(
         brief=safe, composition=mixed, allowed_citations=()
     ).reason is CriticReason.MIXED_SOURCE
+
+
+def test_critic_allows_only_verbatim_allowed_guideline_recommendations() -> None:
+    citation = _guideline_citation()
+    canonical = VerifiedClinicalClaim(
+        text=citation.quote_or_value,
+        citation=citation,
+    )
+    brief = BriefResult(
+        text="Verified guideline evidence is provided below.",
+        source="llm",
+        degraded=False,
+        usage=Usage(),
+        iterations=1,
+        verified_claims=(canonical,),
+        answer_reason_code="verified",
+    )
+    composition = VerifiedComposition(
+        claims=(
+            RenderedClaim(
+                text=citation.quote_or_value,
+                citation=citation,
+                source_class=CitationSourceType.GUIDELINE,
+            ),
+        )
+    )
+
+    approved = review_composition(
+        brief=brief,
+        composition=composition,
+        allowed_citations=(citation,),
+    )
+    assert approved.approved is True
+    assert approved.reason is CriticReason.APPROVED
+
+    altered = VerifiedComposition(
+        claims=(
+            RenderedClaim(
+                text="The guideline recommends an invented treatment target.",
+                citation=citation,
+                source_class=CitationSourceType.GUIDELINE,
+            ),
+        )
+    )
+    altered_result = review_composition(
+        brief=brief,
+        composition=altered,
+        allowed_citations=(citation,),
+    )
+    assert altered_result.approved is False
+    assert altered_result.reason is CriticReason.INVALID_CLAIM
+
+    unknown = review_composition(
+        brief=brief,
+        composition=composition,
+        allowed_citations=(),
+    )
+    assert unknown.approved is False
+    assert unknown.reason is CriticReason.UNRESOLVED_CITATION
+
+    forbidden_citation = citation.model_copy(
+        update={"quote_or_value": "The patient declined a synthetic intervention."}
+    )
+    forbidden_claim = VerifiedClinicalClaim(
+        text=forbidden_citation.quote_or_value,
+        citation=forbidden_citation,
+    )
+    forbidden_brief = BriefResult(
+        text="Verified guideline evidence is provided below.",
+        source="llm",
+        degraded=False,
+        usage=Usage(),
+        iterations=1,
+        verified_claims=(forbidden_claim,),
+        answer_reason_code="verified",
+    )
+    forbidden_composition = VerifiedComposition(
+        claims=(
+            RenderedClaim(
+                text=forbidden_citation.quote_or_value,
+                citation=forbidden_citation,
+                source_class=CitationSourceType.GUIDELINE,
+            ),
+        )
+    )
+    forbidden = review_composition(
+        brief=forbidden_brief,
+        composition=forbidden_composition,
+        allowed_citations=(forbidden_citation,),
+    )
+    assert forbidden.approved is False
+    assert forbidden.reason is CriticReason.INVALID_CLAIM
+
+
+def test_critic_still_rejects_personalized_patient_treatment_claim() -> None:
+    citation = _citation("treatment")
+    treatment_claim = VerifiedClinicalClaim(
+        text="Increase synthetic medicine to 20 mg.",
+        citation=citation,
+    )
+    brief = BriefResult(
+        text="Verified patient-record evidence is provided below.",
+        source="llm",
+        degraded=False,
+        usage=Usage(),
+        iterations=1,
+        citations=[citation],
+        verified_claims=(treatment_claim,),
+        answer_reason_code="verified",
+    )
+
+    rejected = review_composition(
+        brief=brief,
+        composition=VerifiedComposition(),
+        allowed_citations=(),
+    )
+    assert rejected.approved is False
+    assert rejected.reason is CriticReason.TREATMENT_CLAIM
 
 
 async def test_graph_critic_discards_rejected_bytes_and_emits_complete_summary(

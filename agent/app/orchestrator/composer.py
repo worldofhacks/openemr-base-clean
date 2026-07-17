@@ -409,10 +409,10 @@ async def compose_answer(
         citations=citations,
     )
     if run_brief_with_context is not None:
-        # In the production context-aware path, document and guideline text render only when
-        # the typed answer selected an exact allowed claim/chunk. Canonical persisted objects
-        # supply every clinical/citation byte; model-authored values and source metadata are
-        # never used. This also prevents an uploaded artifact from becoming an unscoped dump.
+        # In the production context-aware path, patient/document text renders only when the
+        # typed answer selected an exact allowed claim. Guideline text uses an exact selected
+        # chunk or the single anchored fallback below. Canonical persisted objects supply every
+        # clinical/citation byte; model-authored values and source metadata are never used.
         selected_chart = {
             _citation_key(claim.citation)
             for claim in brief.verified_claims
@@ -428,6 +428,25 @@ async def compose_answer(
             for claim in brief.verified_claims
             if claim.citation.source_type is CitationSourceType.GUIDELINE
         }
+        # A relevant patient/document selection anchors this as an in-scope clinical
+        # answer.  If the answer model omitted the separate guideline selector, retain
+        # exactly the highest-ranked canonical snippet rather than silently losing the
+        # retrieval lane. An attempted-but-unresolved selector stays empty and fail-closed.
+        # ``context.guideline_snippets`` contains only bounded snippets
+        # whose complete CitationV2 is already present in the allowed citation lane, so
+        # this cannot promote model prose or an invented source.  An explicit model
+        # selection remains authoritative and is never replaced by this fallback.
+        if (
+            not selected_guidelines
+            and not brief.guideline_selector_attempted
+            and (selected_chart or selected_documents)
+            and brief.source != "deterministic_refusal"
+            and brief.answer_reason_code != "all_blocked"
+            and context.guideline_snippets
+        ):
+            selected_guidelines.add(
+                _citation_key(citation_for_guideline(context.guideline_snippets[0]))
+            )
         candidates = tuple(
             claim
             for claim in candidates

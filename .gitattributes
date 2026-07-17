@@ -50,3 +50,6 @@ Documentation/EHI_Export/schemaspy/schemas/* export-ignore
 Documentation/EHI_Export/schemaspy/schemas/openemr.meta.xml -export-ignore
 .phpstan/**/*.* text eol=lf
 .phpstan/*.* text eol=lf
+
+# Optional Week 2 demo documents are deterministic binary fixtures.
+agent/demo/fixtures/*.pdf binary

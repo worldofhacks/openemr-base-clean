@@ -127,6 +127,7 @@ async def test_answer_model_gets_only_ranked_top_five_and_resolves_canonical_chu
     ]
     assert all(claim.citation.source_type is CitationSourceType.GUIDELINE for claim in claims)
     assert "Altered model quote" not in repr(result)
+    assert result.guideline_selector_attempted is True
 
 
 def _document_claim() -> VerifiedClinicalClaim:
@@ -269,6 +270,7 @@ async def test_answer_model_resolves_only_exact_canonical_document_selection() -
     assert result.verified_claims == (document_claim,)
     assert result.verified_claims[0].citation.quote_or_value == "1.6"
     assert result.verified_claims[0].bbox == document_claim.bbox
+    assert result.guideline_selector_attempted is False
 
 
 async def _run_document_graph(
@@ -411,6 +413,144 @@ async def test_context_composer_keeps_only_explicitly_selected_chart_claim() -> 
     assert unrelated.text not in " ".join(
         claim.text for claim in result.composition.claims
     )
+
+
+async def test_context_composer_adds_top_guideline_for_anchored_answer() -> None:
+    document = _document_claim()
+    snippets = (_snippet(1), _snippet(2))
+
+    async def unsupported_legacy_path() -> BriefResult:
+        raise AssertionError("the context-aware production answer path must be used")
+
+    async def run_with_context(_context) -> BriefResult:
+        # Reproduce the runtime omission: the answer model selected relevant patient
+        # evidence but did not emit a separate guideline chunk selector.
+        return BriefResult(
+            text="Verified uploaded-document evidence is provided below.",
+            source="llm",
+            degraded=False,
+            usage=Usage(),
+            iterations=1,
+            verified_claims=(document,),
+            answer_reason_code="verified",
+        )
+
+    result = await compose_answer(
+        verified_facts=(document,),
+        evidence_snippets=snippets,
+        citations=(
+            document.citation,
+            *(citation_for_guideline(snippet) for snippet in snippets),
+        ),
+        run_brief=unsupported_legacy_path,
+        run_brief_with_context=run_with_context,
+    )
+
+    rendered = result.composition.for_source(CitationSourceType.GUIDELINE)
+    assert [claim.citation.field_or_chunk_id for claim in rendered] == ["chunk-1"]
+    assert rendered[0].text == snippets[0].quote
+    assert rendered[0].citation.quote_or_value == snippets[0].quote
+    assert rendered[0].citation.page_or_section == snippets[0].section
+    assert rendered[0].citation.source_id == snippets[0].source_id
+
+
+async def test_context_composer_preserves_explicit_guideline_selection() -> None:
+    document = _document_claim()
+    snippets = (_snippet(1), _snippet(2))
+    selected = VerifiedClinicalClaim(
+        text=snippets[1].quote,
+        citation=citation_for_guideline(snippets[1]),
+    )
+
+    async def unsupported_legacy_path() -> BriefResult:
+        raise AssertionError("the context-aware production answer path must be used")
+
+    async def run_with_context(_context) -> BriefResult:
+        return BriefResult(
+            text="Verified document and guideline evidence is provided below.",
+            source="llm",
+            degraded=False,
+            usage=Usage(),
+            iterations=1,
+            verified_claims=(document, selected),
+            answer_reason_code="verified",
+        )
+
+    result = await compose_answer(
+        verified_facts=(document,),
+        evidence_snippets=snippets,
+        citations=(
+            document.citation,
+            *(citation_for_guideline(snippet) for snippet in snippets),
+        ),
+        run_brief=unsupported_legacy_path,
+        run_brief_with_context=run_with_context,
+    )
+
+    rendered = result.composition.for_source(CitationSourceType.GUIDELINE)
+    assert [claim.citation.field_or_chunk_id for claim in rendered] == ["chunk-2"]
+    assert rendered[0].text == snippets[1].quote
+
+
+async def test_context_composer_does_not_replace_unresolved_guideline_selector() -> None:
+    document = _document_claim()
+    snippet = _snippet(1)
+
+    async def unsupported_legacy_path() -> BriefResult:
+        raise AssertionError("the context-aware production answer path must be used")
+
+    async def run_with_context(_context) -> BriefResult:
+        return BriefResult(
+            text="Verified uploaded-document evidence is provided below.",
+            source="llm",
+            degraded=False,
+            usage=Usage(),
+            iterations=1,
+            verified_claims=(document,),
+            guideline_selector_attempted=True,
+            answer_reason_code="verified",
+        )
+
+    result = await compose_answer(
+        verified_facts=(document,),
+        evidence_snippets=(snippet,),
+        citations=(document.citation, citation_for_guideline(snippet)),
+        run_brief=unsupported_legacy_path,
+        run_brief_with_context=run_with_context,
+    )
+
+    assert len(
+        result.composition.for_source(CitationSourceType.UPLOADED_DOCUMENT)
+    ) == 1
+    assert result.composition.for_source(CitationSourceType.GUIDELINE) == ()
+
+
+async def test_context_composer_does_not_dump_guidelines_without_patient_anchor() -> None:
+    snippet = _snippet(1)
+
+    async def unsupported_legacy_path() -> BriefResult:
+        raise AssertionError("the context-aware production answer path must be used")
+
+    async def run_with_context(_context) -> BriefResult:
+        return BriefResult(
+            text="No verified patient-specific claim matched.",
+            source="llm",
+            degraded=False,
+            usage=Usage(),
+            iterations=1,
+            verified_claims=(),
+            answer_reason_code="verified",
+        )
+
+    result = await compose_answer(
+        verified_facts=(),
+        evidence_snippets=(snippet,),
+        citations=(citation_for_guideline(snippet),),
+        run_brief=unsupported_legacy_path,
+        run_brief_with_context=run_with_context,
+    )
+
+    assert result.composition.for_source(CitationSourceType.GUIDELINE) == ()
 
 
 async def test_unmatched_document_query_refuses_without_unrelated_evidence_dump(

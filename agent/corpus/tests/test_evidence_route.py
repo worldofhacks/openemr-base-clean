@@ -187,6 +187,29 @@ def test_search_route_returns_typed_items_and_correlation_id() -> None:
     assert retriever.calls == [("hypertension blood pressure", 3, ())]
 
 
+@pytest.mark.parametrize(
+    ("query", "canonical"),
+    [
+        ("type 2 diabetes", "type 2 diabetes"),
+        ("HbA1c", "hba1c"),
+        ("COVID-19", "covid-19"),
+        ("vitamin B12", "vitamin b12"),
+    ],
+)
+def test_search_route_accepts_phifree_clinical_terms_with_digits(
+    query: str, canonical: str
+) -> None:
+    retriever = _FakeRetriever()
+
+    response = _client(retriever).post(
+        "/evidence/search",
+        json={"query": query, "k": 2},
+    )
+
+    assert response.status_code == 200
+    assert retriever.calls == [(canonical, 2, ())]
+
+
 def test_openapi_uses_named_request_and_response_models() -> None:
     client = _client(_FakeRetriever())
     operation = client.get("/openapi.json").json()["paths"]["/evidence/search"]["post"]
@@ -197,7 +220,7 @@ def test_openapi_uses_named_request_and_response_models() -> None:
     assert [
         (parameter["name"].casefold(), parameter["in"], parameter["required"])
         for parameter in operation["parameters"]
-    ] == [("x-copilot-session-id", "header", True)]
+    ] == [("x-copilot-session-id", "header", False)]
 
 
 def test_request_bounds_extra_fields_and_phi_are_rejected_before_retrieval() -> None:
@@ -210,6 +233,9 @@ def test_request_bounds_extra_fields_and_phi_are_rejected_before_retrieval() -> 
         {"query": "x" * 181, "k": 3},
         {"query": "What should I tell my patient?", "k": 3},
         {"query": "hypertension MRN AB123456", "k": 3},
+        {"query": "hypertension SSN 123-45-6789", "k": 3},
+        {"query": "hypertension patient 123456789", "k": 3},
+        {"query": "hypertension AB1234", "k": 3},
         {"query": "hypertension", "k": 3, "patient_id": "synthetic"},
     ]
     for payload in bad_payloads:
@@ -250,16 +276,11 @@ def test_import_is_lazy_and_does_not_initialize_models_or_network() -> None:
         (SessionStoreUnavailable("synthetic"), 503),
     ],
 )
-def test_session_is_required_and_failures_never_reach_retrieval(
+def test_supplied_session_failures_never_reach_retrieval(
     error: Exception, expected_status: int
 ) -> None:
     retriever = _FakeRetriever()
     client = _client(retriever, services=_FakeServices(error=error))
-    missing = client.post(
-        "/evidence/search", json={"query": "hypertension", "k": 2}
-    )
-    assert missing.status_code == 422
-
     refused = client.post(
         "/evidence/search",
         json={"query": "hypertension", "k": 2},
@@ -267,6 +288,59 @@ def test_session_is_required_and_failures_never_reach_retrieval(
     )
     assert refused.status_code == expected_status
     assert retriever.calls == []
+
+
+def test_sessionless_search_never_touches_session_or_demographic_context(
+    monkeypatch,
+) -> None:
+    retriever = _FakeRetriever()
+    app = FastAPI()
+    app.state.evidence_retriever = retriever
+    app.include_router(evidence.router)
+    monkeypatch.setattr(
+        evidence,
+        "_request_demographic_strings",
+        lambda _request: pytest.fail("anonymous evidence search read demographics"),
+    )
+
+    response = TestClient(app).post(
+        "/evidence/search",
+        json={"query": "type 2 diabetes", "k": 2},
+    )
+
+    assert response.status_code == 200
+    assert retriever.calls == [("type 2 diabetes", 2, ())]
+
+
+def test_sessionless_search_uses_one_bounded_anonymous_budget() -> None:
+    retriever = _FakeRetriever()
+    limiter = evidence.EvidenceRequestLimiter(
+        max_requests=1,
+        window_seconds=60,
+        max_concurrent=1,
+        max_sessions=4,
+        idle_ttl_seconds=60,
+    )
+    app = FastAPI()
+    app.state.evidence_retriever = retriever
+    app.state.evidence_request_limiter = limiter
+    app.include_router(evidence.router)
+    client = TestClient(app)
+
+    first = client.post(
+        "/evidence/search", json={"query": "hypertension", "k": 2}
+    )
+    refused = client.post(
+        "/evidence/search", json={"query": "vitamin B12", "k": 2}
+    )
+
+    assert first.status_code == 200
+    assert refused.status_code == 429
+    assert refused.json() == {"detail": "evidence request limit exceeded"}
+    assert refused.headers["retry-after"] == "60"
+    assert retriever.calls == [("hypertension", 2, ())]
+    assert "hypertension" not in refused.text
+    assert "vitamin" not in refused.text
 
 
 def test_rate_limit_is_content_free_and_precedes_retrieval() -> None:

@@ -75,11 +75,81 @@ class ParseAppRedirectTests(unittest.TestCase):
 
 class CliTests(unittest.TestCase):
     def test_flow_defaults_to_week1_and_accepts_week2(self) -> None:
-        self.assertEqual(dev_mint._argument_parser().parse_args([]).flow, "week1")
+        defaults = dev_mint._argument_parser().parse_args([])
+        self.assertEqual(defaults.flow, "week1")
+        self.assertFalse(defaults.manual)
         self.assertEqual(
             dev_mint._argument_parser().parse_args(["--flow", "week2"]).flow,
             "week2",
         )
+        self.assertTrue(
+            dev_mint._argument_parser()
+            .parse_args(["--flow", "week2", "--manual"])
+            .manual
+        )
+
+
+class ManualCaptureTests(unittest.TestCase):
+    def test_week2_manual_capture_opens_launch_and_reads_final_url_without_echo(self) -> None:
+        opened: list[str] = []
+        prompts: list[str] = []
+
+        def open_browser(url: str) -> bool:
+            opened.append(url)
+            return True
+
+        def read_hidden(prompt: str) -> str:
+            prompts.append(prompt)
+            return "https://agent.example.test/week2?sid=session_abc-123"
+
+        payload = dev_mint.mint_manual_session(
+            agent_base_url="https://agent.example.test/",
+            flow="week2",
+            browser_opener=open_browser,
+            final_url_reader=read_hidden,
+        )
+
+        self.assertEqual(opened, ["https://agent.example.test/week2/launch"])
+        self.assertEqual(payload.session_id, "session_abc-123")
+        self.assertEqual(len(prompts), 1)
+        self.assertIn("input hidden", prompts[0])
+
+    def test_manual_capture_is_week2_only_and_never_opens_week1(self) -> None:
+        opened: list[str] = []
+
+        with self.assertRaisesRegex(dev_mint.MintError, "only for the Week 2"):
+            dev_mint.mint_manual_session(
+                agent_base_url="https://agent.example.test",
+                flow="week1",
+                browser_opener=lambda url: opened.append(url),
+                final_url_reader=lambda _prompt: "must-not-be-read",
+            )
+
+        self.assertEqual(opened, [])
+
+    def test_manual_capture_rejects_untrusted_final_origin_without_echoing_session(self) -> None:
+        secretish = "session-must-not-be-echoed"
+
+        with self.assertRaises(dev_mint.MintError) as raised:
+            dev_mint.mint_manual_session(
+                agent_base_url="https://agent.example.test",
+                flow="week2",
+                browser_opener=lambda _url: True,
+                final_url_reader=lambda _prompt: (
+                    f"https://lookalike.example.test/week2?sid={secretish}"
+                ),
+            )
+
+        self.assertNotIn(secretish, str(raised.exception))
+
+    def test_manual_capture_fails_safely_when_browser_cannot_open(self) -> None:
+        with self.assertRaisesRegex(dev_mint.MintError, "could not be opened"):
+            dev_mint.mint_manual_session(
+                agent_base_url="https://agent.example.test",
+                flow="week2",
+                browser_opener=lambda _url: False,
+                final_url_reader=lambda _prompt: "must-not-be-read",
+            )
 
 
 class BrowserInterceptionTests(unittest.TestCase):

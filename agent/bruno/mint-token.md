@@ -5,9 +5,32 @@ opaque agent `session_id`. The delegated OAuth access token must remain server-s
 A direct token exchange would not populate the agent's PKCE state, patient pin, token
 cache, or session store, so `/chat` could not use it (§4, §7, D12, D14).
 
-## What the helper does
+## Recommended Week 2 path (ordinary browser, no Selenium)
 
-`dev_mint.py` automates the same synthetic-demo flow as the opt-in live E9 test:
+From `agent/`, run:
+
+```bash
+python3 bruno/dev_mint.py --manual --flow week2
+```
+
+The helper opens the deployed agent's `/week2/launch` in the default browser. Complete
+the normal SMART login, synthetic-patient selection, and consent there, then copy the
+final `/week2?sid=...` address from the browser into the helper's non-echoing prompt. The
+helper validates the exact configured agent origin, exact `/week2` path, and single opaque
+`sid` before writing `environments/Runtime.bru` with mode `0600`. It never receives an
+OpenEMR password, and the session id is not placed on the command line or printed.
+
+Then run the full collection:
+
+```bash
+cd bruno
+npx --yes @usebruno/cli@3.5.2 run --env Runtime --bail
+```
+
+## Automated compatibility path
+
+Without `--manual`, `dev_mint.py` retains the Week 1-compatible Selenium automation used
+by the opt-in live E9 test:
 
 1. Open the deployed agent's `/launch` endpoint in the repository Selenium grid.
 2. Verify the redirect reached the configured OpenEMR HTTPS origin, then authenticate
@@ -24,7 +47,7 @@ The helper verifies the final redirect returns to the configured agent origin, u
 exact `/app` path, and carries exactly one opaque session ID. Remote WebDriver endpoints
 must use HTTPS; HTTP is permitted only for a loopback grid.
 
-## Run it
+## Run the automated compatibility path
 
 Start the repository's Selenium service from the repository root:
 
@@ -62,7 +85,8 @@ OE_USERNAME      synthetic-demo username; defaults to admin
 Equivalent command flags are available via `python bruno/dev_mint.py --help`, including
 `--openemr-base-url`, `--patient-index`, and `--timeout`. Remote agent, OpenEMR, and
 WebDriver URLs must use HTTPS; HTTP is accepted only for loopback development. The output
-path is intentionally fixed to the gitignored `environments/Runtime.bru`.
+path is intentionally fixed to the gitignored `environments/Runtime.bru`. Manual mode is
+Week 2-only; the default Week 1 behavior remains the automated compatibility flow.
 
 Then run the collection:
 

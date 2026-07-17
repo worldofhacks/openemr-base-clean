@@ -8,34 +8,29 @@ The public API does not expose individual FHIR tools. The authenticated `/chat` 
 is the externally runnable sample tool flow: it performs the six read-only FHIR calls,
 builds the EvidencePacket, and returns the verify-then-flush serving envelope.
 
-## Fresh-clone run
+## Fresh-clone Week 2 run (no Selenium)
 
-Prerequisites: Python 3.12+, Node.js, Docker, and the synthetic-demo OpenEMR tester
-credentials from `DEPLOYMENT.md` §8. The registered SMART client must be enabled per
-D14. Never use real PHI or real clinical credentials.
+Prerequisites: Python 3.12+, Node.js, an ordinary web browser, and the synthetic-demo
+OpenEMR tester credentials from `DEPLOYMENT.md` §8. The registered SMART client must be
+enabled per D14. Never use real PHI or real clinical credentials.
 
 From the repository root:
 
 ```bash
-docker compose -f docker/development-easy/docker-compose.yml up --detach --wait selenium
 cd agent
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e ".[dev]"
-python bruno/dev_mint.py --flow week2
+python3 bruno/dev_mint.py --manual --flow week2
 cd bruno
 npx --yes @usebruno/cli@3.5.2 run --env Runtime --bail
 ```
 
-`dev_mint.py` prompts without echo for the synthetic-demo OpenEMR password, drives the
-browser-only SMART launch, and writes a short-lived opaque agent session to the
-gitignored `environments/Runtime.bru`. The OAuth bearer token never leaves the agent.
-Before entering credentials it verifies the browser reached the expected HTTPS OpenEMR
-origin, and it accepts plaintext WebDriver transport only on loopback. At the final
-callback it validates and captures `/week2?sid=...` for `--flow week2` (or
-`/app?sid=...` for the default-compatible `--flow week1`) while blocking automatic
-`/chat` requests; Bruno remains the only API caller. See [mint-token.md](mint-token.md)
-for options and troubleshooting.
+Manual mode opens the real `/week2/launch` flow in the default browser. Sign in with the
+synthetic tester, select the synthetic patient, approve the client, and copy the final
+`/week2?sid=...` address back to the helper's **non-echoing** prompt. The helper validates
+the exact agent origin/path/query and writes only the opaque session id to the gitignored
+`environments/Runtime.bru` with mode `0600`; the OAuth bearer token never leaves the
+agent. No Selenium grid, browser driver, or credential argument is involved. See
+[mint-token.md](mint-token.md) for the retained automated compatibility path and
+troubleshooting.
 
 The ten grader flows run sequentially (the intake idempotency flow uses two requests):
 
@@ -46,7 +41,7 @@ The ten grader flows run sequentially (the intake idempotency flow uses two requ
    30 attempts. The run fails closed if the job fails or does not complete in that bound.
 4. The extraction report, PNG page preview, and fresh source/artifact digest readback are
    checked for the same patient-pinned document.
-5. Session-authenticated guideline evidence and cited chat validate the PHI-free retrieval
+5. PHI-free guideline evidence and session-authenticated cited chat validate the retrieval
    and CitationV2-only serving envelopes.
 6. The same synthetic intake bytes are uploaded twice; the second request must return
    the same permanent document id with HTTP 200.
@@ -57,10 +52,18 @@ Use the Week 1 default only for the read-only checks and chat:
 python bruno/dev_mint.py --flow week1
 ```
 
-To exercise only the unauthenticated checks:
+Guideline retrieval is PHI-free and has a shared bounded anonymous budget, so a fresh
+grader can run it without minting a patient session:
 
 ```bash
-npx --yes @usebruno/cli@3.5.2 run health.bru ready.bru --env Deployed --bail
+cd agent/bruno
+npx --yes @usebruno/cli@3.5.2 run evidence-search.bru --env Deployed --bail
+```
+
+To exercise all unauthenticated checks:
+
+```bash
+npx --yes @usebruno/cli@3.5.2 run health.bru ready.bru evidence-search.bru --env Deployed --bail
 ```
 
 To target another deployment, set `AGENT_BASE_URL` before running the mint helper. Delete

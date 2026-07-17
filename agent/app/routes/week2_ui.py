@@ -666,7 +666,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
     image.removeAttribute("src");
     releasePageObjectUrl();
     byId("pageWrap").hidden = true;
-    byId("overlaySvg").hidden = true;
+    byId("overlaySvg").setAttribute("hidden", "");
   }
   function showPageError(error) {
     const target = byId("viewerError");
@@ -690,7 +690,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
     byId("viewerTitle").textContent = "Uploaded document · page " + page;
     byId("viewerNote").textContent = "Loading source page…";
     positionOverlay(bbox);
-    overlaySvg.hidden = true;
+    overlaySvg.setAttribute("hidden", "");
     byId("modal").classList.add("open");
     try {
       const response = await fetch(
@@ -735,7 +735,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
       });
       if (generation !== pageLoadGeneration) return;
       pageWrap.hidden = false;
-      overlaySvg.hidden = false;
+      overlaySvg.removeAttribute("hidden");
       byId("viewerNote").textContent = unsupported ? "UNSUPPORTED review region" : "verified grounded field";
     } catch (error) {
       if (generation !== pageLoadGeneration) return;

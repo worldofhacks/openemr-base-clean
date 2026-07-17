@@ -51,4 +51,8 @@ Queries contain condition/test terms only, for example `type 2 diabetes; HbA1c`;
 semicolon, and vertical-bar separators are supported. Do not send names, identifiers,
 dates of birth, contact details, demographics, free-text notes, or document excerpts.
 The route strips surrounding whitespace, rejects nonconforming terms, caps the query at
-180 characters and `k` at 10, and applies the outbound PHI screen before any Cohere call.
+180 characters and `k` at the named `K_MAX` bound, and applies the outbound PHI screen
+before any Cohere call. Since the corpus and accepted query are PHI-free, callers may omit
+`X-Copilot-Session-Id`; those requests share one bounded anonymous rate-limit bucket and
+never access the session store or patient demographics. Supplying the header retains the
+original fail-closed SMART session resolution and demographic egress screen.

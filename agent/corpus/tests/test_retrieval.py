@@ -115,10 +115,30 @@ def test_query_builder_accepts_only_coded_condition_and_test_terms() -> None:
 
 
 @pytest.mark.parametrize(
+    ("term", "canonical"),
+    [
+        ("type 2 diabetes", "type 2 diabetes"),
+        ("HbA1c", "hba1c"),
+        ("COVID-19", "covid-19"),
+        ("vitamin B12", "vitamin b12"),
+    ],
+)
+def test_query_builder_accepts_clinical_terms_with_digits(
+    term: str, canonical: str
+) -> None:
+    """Clinical numbers are not identifiers merely because they occur in a term."""
+
+    assert build_clinical_query([term]) == canonical
+
+
+@pytest.mark.parametrize(
     "terms",
     [
         ["What should I tell my patient?"],
         ["diabetes", "MRN: AB123456"],
+        ["diabetes", "SSN 123-45-6789"],
+        ["diabetes", "patient 123456789"],
+        ["diabetes", "AB1234"],
         ["diabetes", "1980-01-02"],
         ["call 212-555-0199"],
         ["alex@example.test"],

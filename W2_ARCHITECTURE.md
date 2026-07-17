@@ -138,6 +138,120 @@ to pixels.
 > both eval tiers, the full write path, and GitLab submission-host enforcement are complete
 > and robust by **Final (2026-07-19)**.
 
+> ## Post-audit closeout revision (2026-07-15 — cites W2-D11..D21; binding on §2/§2a/§3/§4a/§6/§6a/§7/§8a)
+> This dated revision reconciles the architecture to two independent gap audits (Claude + Codex)
+> on canonical `4f644d9` and folds in the closeout decisions W2-D11..D21. It marks current state and
+> superseded language; it does not restructure the §s below or change any frozen grounding,
+> patient-pin, exactly-once, PHI, or adversarial invariant. Build sequencing lives in the
+> `W2_IMPLEMENTATION_PLAN.md` 2026-07-15 closeout overlay (lanes W2-C1..C13).
+>
+> **Audit verdict.** The deployed upload→extract→ground→write/readback→cite→answer pipeline is live
+> for both document types but is **not yet a rubric-safe MVP**: the graded eval gate (§7) does not
+> execute the 50 golden cases through the agent (CI runs the retired W1 10-case runner), has no
+> committed baseline and no >5pp delta, and 5 golden cases conflict with the scorer contract; two
+> answer-path contracts (§2/§2a) are incomplete. Execution gaps against this binding architecture,
+> not new scope.
+>
+> **§2 / §2a — Answer grounding contract (W2-D12).** The answer model receives **only** the top-5
+> reranked guideline snippets, in rank order, inside a delimited untrusted-data block (internal
+> `GroundedAnswerContext`); the typed answer tool references an allowed `chunk_id` and cannot invent
+> source metadata or quotations; unknown/altered/out-of-top-5 hits are discarded. Supersedes any
+> implementation that generated the answer first and appended verified quotes afterward.
+>
+> **§2a / §6a — Citation boundary (W2-D13, extends W2-D6).** JSON and SSE responses cross the HTTP
+> boundary as `citations: list[CitationV2]` only — no legacy `str`. Chart facts project to
+> `CitationV2(source_type=patient_record, source_id=<Type>/<id>, page_or_section=null,
+> field_or_chunk_id=<stable evidence path>, quote_or_value=<deterministic verified value>)`;
+> document/guideline citations keep non-null page/section.
+>
+> **§7 — Eval gate v2 execution (W2-D14/D15/D16/D17).** Both tiers must drive **all** loaded cases
+> (≥50, no hardcoded IDs) through the real agent path. Tier-1 is offline/recorded: fixture
+> reader/OCR → recorded provider response → strict parse → grounding/CitationV2 → local
+> retrieval/rerank → composer/answer → instrumented side-effect capture; network + Cohere are
+> hard-disabled; recordings store **sanitized anchors/hashes only**, bound to case + fixture SHA +
+> prompt/tool-schema hash + model + sanitizer + recording SHA; observations are **never** derived
+> from golden expectations; executor call count = manifest length. Tier-2 is live (Anthropic
+> extract/answer/judge) with in-memory repos + fake OpenEMR write clients, never prod OpenEMR/Cohere;
+> judge = `claude-sonnet-4-6`, temperature 0, closed boolean schema, versioned prompts, one
+> infra/parse retry, `false` final. Arithmetic: deterministic = 100%, factual ≥ 90%, a drop strictly
+> > 5pp vs `w2_baseline.json` fails, exactly 5pp allowed; exhaustion/ceiling → INCONCLUSIVE +
+> nonzero exit. The baseline is accepted only from a green complete live 50-case run, committed via
+> reviewed PR; CI compares, never updates. Supersedes the current CI step running the W1 10-case
+> `evals.runner`.
+>
+> **§2 — Deterministic critic (W2-D18, conservative-final).** A named critic graph node runs after
+> composition and before `done`, reusing the canonical verifier/composer (no divergent clinical
+> judge); it rejects uncited/altered/unresolved/mixed-source/treatment/diagnosis/ordering/prescribing
+> claims, discards the entire pending composition on rejection → the existing manual-review refusal,
+> and emits refs-only span metadata; no clinical SSE bytes before approval.
+>
+> **§2a / §3 — Third document type `medication_list` (W2-D19, conservative-final).** PDF/PNG/JPEG
+> under existing limits; reuses the same OCR/text-layer, strict schema, local grounding, CitationV2,
+> bbox, patient dedup, document-intent, and byte-readback path; persists **source + grounded
+> artifact only** as additive **artifact v2** (v1 still read); never creates/updates
+> `MedicationRequest` or vital records. Separate fixtures; the governed 50-case baseline is untouched.
+>
+> **§2a — Lab trends endpoint (W2-D20, conservative-final; reaffirms §3 no-FHIR-write).**
+> `GET /documents/lab-trends?session_id=<opaque>` derives the patient from the session pin only,
+> reads write/readback-verified lab **artifacts** (not FHIR Observations — no supported client
+> Observation write, W2-R5), parses values as `Decimal` preserving `6.5 != 65`, normalizes names by
+> Unicode/whitespace/casefold only (no LOINC aliasing, no unit conversion; mixed-unit series split),
+> and renders a dependency-free SVG + accessible table; a point click opens the existing
+> patient-pinned page/bbox preview. No Observation resource is created; no lab value routes through
+> vitals.
+>
+> **§6 / §6a — Observability & correlation (binding current state, W2-C2).** W2 production components
+> emit the frozen `LogEventEnvelope` through an injectable `EventSink` against a closed attribute
+> registry that rejects clinical values, document/query text, patient/user identifiers, exceptions,
+> tokens, multiline strings, and unknown attributes; events cover ingestion, field grounding,
+> retrieval, handoffs, queue state, write-intent transitions, readback, breaker state, eval results,
+> and a terminal `encounter.summary` carrying ordered tool/worker steps, per-step latency,
+> input/output tokens, cost, retrieval-hit count, extraction-grounding rate, and verification
+> outcomes. **One** inbound correlation ID is persisted with the job and reused across worker,
+> OCR/VLM, grounding, sparse/dense retrieval, reranking, each write/reconcile/readback, graph, and
+> answer; child spans exist for each. Sink failure is soft and never changes serving output.
+>
+> **§6 — Readiness semantics (binding current state).** `/ready` runs bounded cached probes: **hard**
+> (503 on failure) = Postgres `SELECT 1`, OpenEMR FHIR, Anthropic, authorized document-category read,
+> and worker/schema/vault/route attestation; **soft** (HTTP 200 degraded) = vector integrity + static
+> synthetic search, active reranker synthetic pair, and Langfuse. `/health` stays healthy during soft
+> degradation; a stale worker or unsafe queue is unready. Response shape is preserved.
+>
+> **§6 — SLO locking (W2-O2/R4).** Working pre-measurement targets: ingestion p95 ≤ 30s, retrieval
+> p95 ≤ 2s. At **Early (2026-07-16)** numbers lock deterministically: retrieval must first meet p95 ≤
+> 2s and ingestion p95 ≤ 30s; locked target = `min(working ceiling, ceil(1.25 × measured p95))`;
+> throughput floor = `floor(0.80 × sustained)`; resource budget = `ceil(1.25 × measured peak)` and <
+> 80% of deployed capacity. Final validates against the locked numbers.
+>
+> **§6a — CI/CD governance (W2-D21).** Tier-1 runs on every push/PR without secrets; Tier-2 on
+> trusted same-repo SHAs only, never `pull_request_target`. A GitLab mirror runs the identical
+> offline command and a tested bridge verifies the exact GitHub repo, SHA, workflow/check name,
+> conclusion, and result-artifact hashes. Railway deploys the **exact evaluated SHA to both the web
+> and document-worker services** only after both W2 gates are green on `main`, then verifies deployed
+> SHA + `/health` + `/ready` + a synthetic smoke flow. Pinned quality jobs run every PR: Ruff, mypy,
+> coverage, pip-audit, Semgrep/Bandit, OpenAPI spec-sync, Bruno, PHI-artifact scan, corpus-integrity;
+> coverage floor = `max(80%, floor(first measured baseline))`, never auto-decreasing; CVE exceptions
+> are specific, justified, owner-assigned, and time-limited.
+>
+> **§4a — Data authority/classification (reaffirmed).** Patient-linked job, dedup, and write-ledger
+> rows are **PHI** (agent Postgres is a PHI-bearing, backed-up authority); logs, traces, eval
+> datasets, cost reports, recordings, and screenshots remain PHI-free, verified by the leak scanner
+> over generated outputs only.
+>
+> **§8a — Backup & recovery (W2-D21 ops; measured at closeout).** Railway backups keep ≥7 restore
+> points; the isolated restore drill validates OpenEMR MySQL/volume and Agent Postgres restore,
+> migration integrity, vault probe, readiness, byte-exact synthetic Binary readback, and duplicate
+> reconciliation; targets RPO ≤ 24h and measured RTO ≤ 60m. Evidence: `W2_BACKUP_RESTORE.md`.
+>
+> **Owner actions (blocking, W2-O4).** `ANTHROPIC_API_KEY` in the protected `eval-tier2-live`
+> environment; `RAILWAY_TOKEN`; a masked read-only GitLab GitHub-status token + mirror credential;
+> Railway backups enabled (≥7 restore points) with the restore drill authorized; sanitized
+> billing/resource totals; final-video approval and alert destinations.
+>
+> **Build-model note (W2-D11).** The Week-2 "Claude Code only — no Codex" posture is superseded:
+> Codex acts as an independent auditor and second implementer under isolated worktrees with a lead
+> integrator; `.github/` and golden cases 41–50 are in scope.
+
 ## §1 System overview
 
 ```

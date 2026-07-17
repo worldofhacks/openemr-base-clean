@@ -2,6 +2,9 @@
 
 > New file; W1 DECISIONS.md (D1–D16) is frozen at docs/week1/. Tags: **locked** /
 > proposed / open. Owner decisions recorded 2026-07-13 (see W2_PRESEARCH.md).
+> **2026-07-15:** closeout ADRs **W2-D11..D21** appended (post-audit); no W2-D1..D10
+> language changed. Sequencing: `W2_IMPLEMENTATION_PLAN.md` 2026-07-15 overlay (W2-C1..C13);
+> architecture deltas: `W2_ARCHITECTURE.md` 2026-07-15 closeout revision.
 
 ## W2-D1. Writes: append-only creates with lineage — **locked** (mechanism validated 2026-07-13, W2-R5)
 - W1 was read-only (D9/D12). W2 requires storing documents and derived facts.
@@ -320,6 +323,103 @@
   and post-cutover token retirement. If any control is unavailable or indeterminate,
   that write refuses safely rather than weakening the contract.
 
+---
+
+## Closeout ADRs (2026-07-15 — post-audit; additive, W2-D1..D10 unchanged)
+
+> Recorded after two independent gap audits (Claude + Codex) on canonical `4f644d9`. These
+> lock the MVP-to-Final closeout choices; they extend, and never rewrite, W2-D1..D10.
+
+## W2-D11. Closeout build model + scope — **locked** (2026-07-15)
+- Audits found the deployed upload→extract→ground→write/readback→cite→answer pipeline
+  substantially built but **not rubric-safe** (graded gate never runs the 50 cases through
+  the agent; two answer-path contracts incomplete). These are execution gaps, not new scope.
+- Codex joins as independent auditor + second implementer; isolated worktrees off `4f644d9`
+  on `swarm/w2-final-closeout`; a **lead integrator** owns shared schemas, UI-collision
+  resolution, merges, integration, and deploy. Supersedes the plan note "Claude Code only —
+  no Codex."
+- Scope additions: `.github/` and golden cases 41–50 now in scope. Two milestones: rubric-safe
+  MVP, then conservative final. Sequencing lives in the plan overlay (W2-C1..C13).
+- Rejected: single-implementer continuation; rewriting binding docs (updates are additive/dated).
+
+## W2-D12. Answer grounding: only top-5 snippets reach the model — **locked** (2026-07-15)
+- The answer model receives **only** the top-5 reranked guideline snippets, in rank order, in a
+  delimited untrusted-data block (internal `GroundedAnswerContext`); the typed answer tool
+  references an allowed `chunk_id` and cannot invent metadata/quotes; unknown/altered/out-of-top-5
+  are discarded; deterministic stored-quote render; verify-then-flush preserved.
+- Supersedes generate-first-then-append-quotes (the audited `composer.py`). Implements PRD Stage 2
+  "feed only top grounded evidence to the answer model." Limit = 5 (owner default).
+
+## W2-D13. CitationV2-only at the HTTP boundary — **locked** (2026-07-15) — extends W2-D6
+- JSON + SSE emit `citations: list[CitationV2]`; no legacy `str` crosses HTTP. Chart facts →
+  `CitationV2(source_type=patient_record, source_id=<Type>/<id>, page_or_section=null,
+  field_or_chunk_id=<stable evidence path>, quote_or_value=<deterministic verified value>)`;
+  document/guideline citations keep non-null page/section.
+- Rejected: the `list[str | CitationV2]` union (audited in `chat.py`).
+
+## W2-D14. Live judge config — **locked** (2026-07-15) — extends W2-D8
+- Judge = anthropic `claude-sonnet-4-6`, temperature 0, closed boolean result schema, versioned
+  prompts, one retry for infra/parse errors only; a `false` is final and never retried into a
+  pass; rationale to logs only (PHI-safe). Judge ≥ system-under-test.
+
+## W2-D15. CI isolation: local rerank, fake writes — **locked** (2026-07-15) — extends W2-D8
+- Tier-1 hard-disables network + Cohere (local/stubbed rerank). Tier-2 live uses in-memory repos
+  + fake OpenEMR write clients; never contacts prod OpenEMR or Cohere. Reason: reproducibility and
+  zero prod side effects during grading.
+
+## W2-D16. Recording provenance / anti-cheat — **locked** (2026-07-15)
+- Tier-1 recordings store **sanitized anchors/hashes only** (source anchors, page/bbox selectors,
+  schema/prompt/model config, recording hashes) — never copied golden outputs or clinical fixture
+  text; bound to case ID + fixture SHA + prompt/tool-schema hash + model + sanitizer version +
+  recording SHA; fail on missing/stale/mismatched/corrupt. Observations are **never** derived from
+  golden expectations; executor call count must equal manifest length.
+
+## W2-D17. Baseline governance + regression arithmetic — **locked** (2026-07-15)
+- `w2_baseline.json` accepted only from a green, complete, live 50-case run; committed via reviewed
+  PR; CI compares but never updates. Arithmetic: deterministic categories = 100%, factual ≥ 90%, a
+  drop **strictly greater than 5pp** vs baseline fails, exactly 5pp allowed; provider
+  exhaustion/cost-time ceiling → INCONCLUSIVE + nonzero exit. Implements PRD §6 (">5% OR below
+  threshold") and the HARD-GATE regression drill.
+
+## W2-D18. Deterministic critic node — **locked** (2026-07-15) — reinstates the Cut-§ stretch item
+- A named critic graph node runs after composition, before `done`, reusing the canonical
+  verifier/composer (no divergent clinical judge). Rejects uncited/altered/unresolved/mixed-source/
+  treatment/diagnosis/ordering/prescribing; on rejection discards the entire composition → the
+  existing manual-review refusal; refs-only span metadata; no clinical SSE bytes before approval.
+- PRD p.5 lists the critic under Core Deliverables → treated as required (the p.4 "extension"
+  reading is the less-safe one). Cut entry dated 2026-07-13 is superseded.
+
+## W2-D19. Third document type = `medication_list`, artifact-only — **locked** (2026-07-15) — reinstates Cut-§ stretch
+- `MedicationListEntry{medication_name,strength,dose,route,frequency,status}` (each
+  `GroundedField[str]`) + `MedicationListExtraction{medications, as_of_date: GroundedField[date],
+  source_document_id}`. PDF/PNG/JPEG under existing limits; same OCR/grounding/CitationV2/bbox/
+  dedup/readback path; persists **source + grounded artifact only** as additive **artifact v2**
+  (v1 still read); never creates/updates `MedicationRequest` or vitals. Separate fixtures; the
+  governed 50-case baseline is untouched. Only after the two core types + gate are solid (PRD
+  pitfall 1).
+
+## W2-D20. Lab trends artifact-backed; no FHIR Observation write — **locked** (2026-07-15) — reinstates Cut-§ stretch; reaffirms W2-D1/W2-R5
+- `GET /documents/lab-trends?session_id=<opaque>`; patient from the session pin only; reads
+  write/readback-verified lab **artifacts**; `Decimal` parse preserving `6.5 != 65`;
+  Unicode/whitespace/casefold name normalization only (no LOINC alias, no unit conversion;
+  mixed-unit series split); dependency-free SVG + accessible table; point click → the existing
+  patient-pinned page/bbox preview.
+- **No** FHIR Observation resource is created and no lab value routes through vitals — this fork has
+  no supported client Observation write (W2-R5). Confirms, does not weaken, W2-D1.
+
+## W2-D21. CI/CD + ops governance — **locked** (2026-07-15)
+- Exact evaluated SHA deploys to **both** web + document-worker only after both W2 gates are green
+  on `main`; GitLab mirror + tested bridge verifies GH repo/SHA/check-name/conclusion/artifact
+  hashes; pinned Ruff/mypy/coverage/pip-audit/Semgrep+Bandit/OpenAPI/Bruno/PHI-artifact/
+  corpus-integrity jobs; coverage floor = `max(80%, floor(first measured baseline))`, never
+  auto-decreasing; CVE exceptions specific/justified/owner-assigned/time-limited.
+- Readiness hard/soft probes, alert thresholds, SLO-locking arithmetic, and backup RPO/RTO are
+  specified in the `W2_ARCHITECTURE.md` 2026-07-15 closeout revision (§6/§6a/§8a). New owner
+  actions: `RAILWAY_TOKEN`; a masked read-only GitLab GitHub-status token + mirror credential;
+  Railway backups (≥7 restore points) + restore-drill authorization.
+
+---
+
 ## Open
 - W2-O1. ~~Vector index: in-process vs external~~ **Resolved 2026-07-13
   (/arch-finalize):** in-process, built at Docker image build from the committed
@@ -342,3 +442,8 @@
   during /tasks-gen.~~ **Resolved 2026-07-13 by W2-D10 and the frozen canonical
   schema:** only grounded intake-vitals fields map to the typed `form_vitals` write;
   labs never map to vitals (W2-F3).
+- W2-O4. **Closeout provisioning (open — external, 2026-07-15):** the Tier-2
+  `ANTHROPIC_API_KEY` (protected `eval-tier2-live` env), `RAILWAY_TOKEN`, the masked read-only
+  GitLab GitHub-status token + mirror credential, and Railway backups authorization gate the live
+  gate, exact-SHA deploy, GitLab bridge, and restore drill respectively (W2-D21; W2-C5/C7/C9).
+  Until provisioned, those lanes fail closed — never a silent pass.

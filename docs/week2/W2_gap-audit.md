@@ -40,6 +40,15 @@ an unowned PHI surface. After resolution: **99 PRD requirements re-derived, 94 c
 > the precision correction is that registered scope is not an effective same-resource
 > authorization ceiling (W2-F12). Coverage remains scheduled, not implementation-proven.
 
+> **Post-audit note (2026-07-15 — Claude + Codex independent gap audits; see the Post-audit
+> closeout revision below and `W2_DECISIONS.md` W2-D11..D21).** Coverage above remained
+> *scheduled, not proven* — the two audits confirm that on canonical `4f644d9` the graded eval
+> gate (the Critical findings below) is **still not enforcing**: CI runs the retired W1 10-case
+> runner, not the 50 golden cases through the agent, with no committed baseline and no >5pp delta.
+> Two answer-path contracts (grounded-evidence-to-model, CitationV2-only boundary) and the
+> cost/OpenAPI/Bruno/baseline/backup evidence remain open. Closeout lanes **W2-C1..C13** own the
+> fixes; of the 5 sanctioned stretch rows, **3 are reinstated** to conservative-final scope.
+
 ## Post-review remediation record (2026-07-13 — W2-D9/W2-D10)
 
 This table is the authoritative closure record for the second review. **Scheduled by
@@ -188,6 +197,45 @@ resolution. "Resolved →" points into the binding `W2_ARCHITECTURE.md`.
 - `docs/week1/**` — untouched (frozen), per the standing rule.
 
 ---
+
+## Post-audit closeout revision (2026-07-15 — Claude + Codex gap audits; W2-C1..C13 / W2-D11..D21)
+
+Two independent gap audits against canonical `4f644d9` reconcile this register to current state.
+These are **execution gaps against the binding architecture, not new uncovered requirements** —
+every row below already had a scheduled owner; the audits show which are actually landed vs. still
+open and re-point them at the closeout lanes.
+
+**Confirmed critical (the graded hard gate — the "Critical (3)" above, now proven not-yet-enforcing).**
+CI does not execute the 50 golden cases through the agent; it runs the retired W1 10-case
+`evals.runner`. No `w2_baseline.json`, no >5pp delta, no recorded/live executor
+(`evals/live_executor.py`, `recorded_executor.py`, `judge_config.yaml` absent). 5 golden cases
+conflict with the scorer contract (4 adversarial-intake omit required fields; 3 safe-refusal expect
+`extract`). `main` unprotected; latest gate + deploy runs red. → **W2-C1/C4/C5/C7**; arithmetic +
+governance in **W2-D16/D17**; PRD §6 hard gate.
+
+**Answer-contract gaps (surfaced by the Codex read).**
+Retrieved guideline evidence is appended *after* generation rather than supplied to the answer
+model (`composer.py`) → **W2-C3 / W2-D12** (top-5 to the model). Some chart citations still cross
+the HTTP boundary as legacy `str`, not `CitationV2` (`chat.py`) → **W2-C3 / W2-D13**.
+
+**Submission/engineering evidence still open (scheduled → owned by lanes).**
+W2 cost/latency report, W1-vs-W2 performance baselines, backup/restore + RPO/RTO → **W2-C9**. OpenAPI
+3.0 for all W2 endpoints + contract tests, full-flow Bruno, README/`.env` hygiene → **W2-C6**. W2
+observability envelope emission, one-ID correlation, child spans, dashboards, alerts, SLO locking →
+**W2-C2/C8**.
+
+**Confirmed landed (both audits agree).** Two doc types + strict schemas + source/artifact
+write/readback; LangGraph supervisor + 2 workers with logged handoffs; hybrid RAG + rerank; deployed
+click-to-source + bbox overlay UI; `/health` + `/ready`.
+
+**Coverage math update.** Of the 5 PRD-sanctioned stretch rows previously out-of-scope, **3 are
+reinstated** as Milestone-2 conservative-final scope — critic (**W2-C11/D18**), `medication_list`
+(**W2-C12/D19**), and artifact-backed lab trends (**W2-C13/D20**, no FHIR Observation write) —
+leaving **2** sanctioned cuts. Reinstated rows are *targeted with concrete lanes*, not yet proven.
+
+**STOP (intent unchanged).** A requirement is proven only by landed code + tests + a green two-tier
+gate + an introduced-regression drill that turns CI red; nothing here reclassifies a non-stretch
+requirement out of scope.
 
 ## PRD coverage table (re-derived from the PRD; 99 rows, zero blank cells)
 

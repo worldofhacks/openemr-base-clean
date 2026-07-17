@@ -98,6 +98,85 @@ requirement. These are execution gates baked into the tasks below, not new produ
 
 ---
 
+## MVP-to-Final closeout overlay (2026-07-15) — post-audit reconciliation
+
+> Supersedes the top-note "Build model (this week): Claude Code only — no Codex." Two
+> independent gap audits (Claude + Codex) ran against the canonical line **`4f644d9`**
+> (GitHub + GitLab `main` and `swarm/w2-wave0` in sync). Verdict: the deployed
+> upload→extract→ground→write/readback→cite→answer pipeline is substantially built and
+> live, but it is **not yet a rubric-safe MVP**. This overlay reconciles plan state to
+> those audits and sequences the closeout. It adds no product scope beyond the ADRs it
+> cites (W2-D11..D21) and cuts nothing non-stretch; new binding choices live in
+> `W2_DECISIONS.md`, not here. Architecture-level clarifications are captured as a dated **2026-07-15 closeout
+> revision** appended to `W2_ARCHITECTURE.md` — its existing binding sections are not rewritten.
+
+**Build-model change (locked — W2-D11).** Codex joins as an independent auditor and a
+second implementer. Work runs as **isolated worktrees off `4f644d9`** on a
+`swarm/w2-final-closeout` line; a **lead integrator** owns shared schemas, UI-collision
+resolution, merges, integration, and deployment. `.github/` and golden cases 41–50 are now
+in scope (the prior limiter is lifted).
+
+**Reconciled state vs. audits** (existing task IDs; ✅ done · 🟡 partial · ❌ not met):
+
+| Area | State | Finding → owning closeout lane |
+|---|---|---|
+| Two doc types, strict schemas, source+artifact write/readback | ✅ | live for lab_pdf + intake_form (W2-M6/M8/M9/M10/M11) |
+| LangGraph supervisor + 2 workers, logged handoffs | ✅ | W2-M12 (`graph.py`) |
+| Hybrid RAG + rerank | 🟡 | retrieval is live but the answer model is **not** fed the reranked snippets — grounded evidence is appended *after* generation (`composer.py`). → **W2-C3** (W2-D12) |
+| Citation contract | 🟡 | `CitationV2` shape is exact, but the HTTP boundary still permits legacy `str` citations (`chat.py`). → **W2-C3** (W2-D13) |
+| Click-to-source + bbox overlay UI | ✅ | deployed Week 2 workbench |
+| **50-case PR-blocking gate + >5% regression (HARD GATE)** | ❌ | CI runs the old **10-case W1** `evals.runner`, never drives the 50 golden cases through the agent; no recorded/live executor, no `w2_baseline.json`, no >5pp delta; 5 golden cases conflict with the scorer contract; `main` unprotected; latest gate + deploy runs red. → **W2-C1/C4/C5/C7** (implements W2-M17/M18/M19/M20/M24) |
+| W2 observability (envelope emission, one-ID trace, child spans, dashboards, alerts, SLOs) | 🟡 | primitives exist; `LogEventEnvelope` not emitted by prod W2 components; correlation ID not unified end-to-end; child spans/dashboards/alerts absent. → **W2-C2/C8** (implements W2-E3/E8) |
+| Cost/latency report · W1-vs-W2 baselines · backup/restore + RPO/RTO | ❌ | not produced. → **W2-C9** (implements W2-M22/E4/W2-3/W2-4/OA5) |
+| OpenAPI 3.0 (all W2 endpoints) + contract tests · full-flow Bruno · README/env hygiene | 🟡 | only the `/evidence/search` fragment; README + `.env.example` stale. → **W2-C6** (implements W2-E5/M21) |
+| Critic node · third doc type (medication_list) · lab trends | ❌ → reinstated | previously cut as stretch (Cut §, 2026-07-13); **reinstated as conservative-final scope** per PRD p.5 core-deliverable reading → **W2-C11/C12/C13** (W2-D18/D19/D20) |
+
+**Closeout lane (W2-C#).** One isolated worktree per lane; PR into `swarm/w2-final-closeout`;
+DoD = code + tests + green offline gate + docs + PR. Each lane *implements already-scoped
+milestones* — it never extends the architecture. Guardrails: preserve every frozen
+grounding / patient-pin / exactly-once / PHI / adversarial regression; never derive
+observations from golden expectations; no PHI or secrets in CI artifacts; no OpenEMR
+PHP/schema edits or SMART-scope widening; no native lab FHIR Observation write (this fork
+has no such client route — trends use byte-attested artifacts, W2-D20); plain pushes only.
+
+*Milestone 1 — rubric-safe MVP:*
+- **W2-C1 — eval-contract repair** (`feat/w2-eval-contract`; implements W2-M17/M18; W2-D16/D17). Fix the 4 adversarial-intake + 3 safe-refusal case↔scorer conflicts; typed SafetyExpectation/SafetyEvent judged from *instrumented side-effect evidence* (embedded_command_ignored / cross_patient_write_blocked / identifier_query_blocked), not verdict text; add PASS/FAIL/INCONCLUSIVE; exact arithmetic (deterministic=100%, factual≥90%, drop >5pp fails, =5pp allowed); runner loads ≥50 cases, no hardcoded IDs. *Guards:* golden-expectation drift, observation-from-golden.
+- **W2-C2 — observability foundation** (`feat/w2-observability`; implements W2-E8/E3). Injectable `EventSink` on the frozen `LogEventEnvelope`; closed attribute registry (rejects clinical values, doc/query text, identifiers, exceptions, tokens, multiline, unknown); events ingestion→terminal `encounter.summary`; **one** persisted correlation ID reused across worker/OCR/VLM/grounding/retrieval/write·reconcile·readback/graph/answer; child spans for each. Sink failures stay soft. *Guards:* PHI-in-logs, broken trace.
+- **W2-C3 — answer + citation contract** (`feat/w2-answer-contract`; implements W2-M15; **W2-D12/D13**). `GroundedAnswerContext` passes **only** the top-5 reranked snippets to the model in a delimited untrusted-data block; typed answer tool references an allowed `chunk_id`; deterministic quote resolution (unknown/altered/out-of-top-5 discarded); JSON+SSE become `citations: list[CitationV2]` (no legacy strings cross HTTP); chart facts → `CitationV2(patient_record, source_id=Type/id, page_or_section=null, …)`; verify-then-flush preserved. *Guards:* ungrounded answer, legacy-citation leak.
+- **W2-C4 — offline Tier-1** (`feat/w2-eval-tier1`; implements W2-M19; **W2-D15/D16**). `python -m evals.w2_runner run --tier recorded` drives every case through the real offline path (fixture reader/OCR → recorded provider response → strict parse → grounding/CitationV2 → local retrieval/rerank → composer/answer → instrumented side-effect capture); recordings store **sanitized anchors/hashes only**, bound to case + fixture SHA + prompt/tool-schema hash + model + sanitizer + recording SHA; network + Cohere hard-disabled; aggregate-only `results-tier1.json`; committed pre-push hook + one local command == CI. *Executor call count must equal manifest length; recorded observations produced independently of golden expectations.*
+- **W2-C5 — live Tier-2 + baseline** (`feat/w2-eval-tier2`; implements W2-M20/M24; **W2-D14/D17**). `live_executor.py` (live Anthropic extract/answer/judge; in-memory repos + fake OpenEMR write clients; never prod OpenEMR or Cohere); committed `judge_config.yaml` (anthropic `claude-sonnet-4-6`, temp 0, closed boolean, versioned prompts, one infra/parse retry, `false` is final); INCONCLUSIVE + nonzero exit on exhaustion/ceiling; `w2_baseline.json` accepted only from a green complete live 50-case run, committed via reviewed PR; CI compares, never updates.
+- **W2-C6 — API + grader workflow** (`feat/w2-api-docs`; implements W2-E5/M21). One committed OpenAPI 3.0 for every mounted W2 endpoint + spec-sync tests (routes/methods/schemas/enums/status/media/redirects/correlation headers/multipart/PNG pages/SSE); 10-request full-flow Bruno; session helper `--flow week1|week2`; README W1-read-only vs W2-write separation; `.env.example` refreshed (retired singleton patient vars removed) + config-drift test.
+- **W2-C7 — CI enforcement + exact-SHA deploy** (`feat/w2-ci-enforcement`; implements W2-M20; **W2-D21**). Tier-1 on every push/PR (no secrets); Tier-2 on trusted same-repo SHAs only (never `pull_request_target`); GitLab mirror + tested bridge verifying GH repo/SHA/check-name/conclusion/artifact hashes; deploy the **exact evaluated SHA to web + document-worker** only after both gates green on `main`, then verify deployed SHA + `/health` + `/ready` + synthetic smoke; pinned Ruff/mypy/coverage/pip-audit/Semgrep+Bandit/OpenAPI/Bruno/PHI-artifact/corpus-integrity jobs; coverage floor = max(80%, first measured baseline), never auto-lowered; scoped, time-limited CVE exceptions.
+- **W2-C8 — ops evidence** (`feat/w2-ops-evidence`; implements W2-E3/E4). Readiness hard/soft probe set (hard→503, soft→200 degraded); W2 dashboards + alert rules + thresholds + runbooks. Full target state in the **`W2_ARCHITECTURE.md` 2026-07-15 closeout revision** (Operations/Infrastructure).
+- **W2-C9 — performance / recovery / demo evidence** (`feat/w2-submission-evidence`; implements W2-M22/E4/W2-3/W2-4/OA5/M23/W2-5). Synthetic 1/10/50-VU profiles; deterministic SLO locking; publish `W2_BASELINES.md`, `W2_COST_LATENCY.md`, `W2_BACKUP_RESTORE.md`, `W2_DEMO_SCRIPT.md`; sanitized backup/restore drill (RPO ≤24h, RTO ≤60m); 4–5 min synthetic demo including a deliberate red gate.
+
+*Milestone 2 — conservative final (branch from the tagged MVP SHA):*
+- **W2-C11 — deterministic critic** (`feat/w2-critic`; **W2-D18**) — reinstates the Cut-§ critic as a named graph node after composition/before done, reusing the canonical verifier/composer; rejects uncited/altered/unresolved/mixed-source/treatment/diagnosis/ordering/prescribing; discards the whole composition on rejection → manual-review refusal; no clinical SSE bytes before approval.
+- **W2-C12 — third doc type `medication_list`** (`feat/w2-medication-list`; **W2-D19**) — same OCR/grounding/CitationV2/bbox/dedup/readback path; PDF/PNG/JPEG; additive artifact **v2**; source + grounded artifact only; never `MedicationRequest`/vitals; separate fixtures, governed 50-case baseline untouched.
+- **W2-C13 — artifact-backed lab trends** (`feat/w2-lab-trends`; **W2-D20**) — `GET /documents/lab-trends?session_id=`; patient from session pin only; reads write/readback-verified lab artifacts; `Decimal` (6.5 ≠ 65), Unicode-normalize names only, no LOINC alias/unit conversion (split mixed units); dependency-free SVG + accessible table; click → patient-pinned page/bbox preview; **no** FHIR Observation write. Lead integrator lands one consolidated UI commit (critic → med-list → trends) to avoid collisions.
+
+**MVP acceptance gate (intent unchanged, now explicit):** both paths pass local + deployed;
+all 50 cases execute through Tier-1 and Tier-2; deterministic 100% / factual ≥90% within
+5pp of baseline; deliberate regressions turn CI red and block merge + deploy; final answers
+are CitationV2-only with the model seeing only the top-5 verified evidence; one correlation
+ID reconstructs the async path; W2 logs/traces pass the PHI scanner; OpenAPI/Bruno/README/env
++ baseline/cost report + demo video present; GitHub, GitLab, Railway web + worker all report
+the **same SHA**. Red throwaway-branch evidence (malformed schema, incomplete citation,
+unsafe action, short-PHI leak, threshold-crossing factual) is recorded with SHAs/run
+URLs/arithmetic/trigger in **`W2_CI_EVIDENCE.md`**, followed by canonical green evidence.
+
+**Owner actions added (blocking — tracked in Phase 0 W2-OA + the `W2_ARCHITECTURE.md` closeout revision):**
+`ANTHROPIC_API_KEY` in the protected `eval-tier2-live` env (W2-OA2); `RAILWAY_TOKEN`
+(debt #5); a masked read-only GitLab GitHub-status token + mirror credential; enable Railway
+backups (≥7 restore points) and authorize the isolated restore drill (W2-OA5); provide
+sanitized billing/resource totals; approve the final video and configure alert destinations.
+
+**Artifacts introduced/updated by this overlay:** a dated **2026-07-15 closeout revision** appended to `W2_ARCHITECTURE.md` (Operations/Infrastructure); ADRs
+**W2-D11..D21** in `W2_DECISIONS.md`; evidence docs `W2_BASELINES.md`,
+`W2_COST_LATENCY.md`, `W2_BACKUP_RESTORE.md`, `W2_DEMO_SCRIPT.md`, `W2_CI_EVIDENCE.md`.
+
+---
+
 ## Checkpoints (Central time — phase boundaries are the real gates)
 
 | Checkpoint | Deadline | Must be true |
@@ -1399,6 +1478,10 @@ beyond W2-D1..D10, **STOP and report it rather than inventing W2-D11**.
 
 ## Deliverables map (graded item → producing task)
 
+> **2026-07-15 closeout note:** the producing-task IDs below remain current; the closeout overlay
+> maps each to its executing lane (W2-C1..C13) and adds evidence docs `W2_BASELINES.md`,
+> `W2_COST_LATENCY.md`, `W2_BACKUP_RESTORE.md`, `W2_DEMO_SCRIPT.md`, `W2_CI_EVIDENCE.md`.
+
 **PRD deliverable table (all eight rows):**
 
 | Deliverable | Producing task(s) |
@@ -1458,6 +1541,12 @@ sanctioned out-of-scope rows W2-REQ-10/42/44/45/46).
 ---
 
 ## Cut — stretch tier only
+
+> **Reinstated 2026-07-15 (closeout overlay; W2-D18/D19/D20):** the Critic agent, the third
+> document type (`medication_list`), and the lab-trend widget below are **no longer cut** — they
+> return as Milestone-2 conservative-final scope (lanes W2-C11/C12/C13) under the PRD p.5
+> core-deliverable reading. The dated cut entries are retained for the audit trail; their status
+> is superseded.
 
 Dated entries; cuts are decisions with a paper trail. **Post-review remediation
 (2026-07-13): only the five PRD-sanctioned stretch items below are cuttable.** No

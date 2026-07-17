@@ -183,3 +183,35 @@
   whose leak fixture or threshold-crossing drill stays green; do not cut a non-stretch
   requirement; do not report readiness with a stale worker or unknown F20 configuration.
 - Stage: PLANNING REMEDIATED — implementation evidence required by Final 2026-07-19.
+
+## [2026-07-15] Post-audit closeout reconciliation — two gap audits + Codex plan · type: milestone
+- What: two independent gap audits (Claude + Codex) ran against canonical `4f644d9` (GitHub +
+  GitLab `main` and `swarm/w2-wave0` in sync). Verdict: the deployed
+  upload→extract→ground→write/readback→cite→answer pipeline is substantially built and live for
+  both document types, but is **not yet a rubric-safe MVP**. Decisive blocker: the graded eval
+  gate (§7) does not execute the 50 golden cases through the agent — CI runs the retired W1
+  10-case `evals.runner`; there is no committed `w2_baseline.json`, no >5pp delta, no
+  recorded/live executor; and 5 golden cases conflict with the scorer contract. Two answer-path
+  contracts are incomplete: the answer model is not fed the reranked snippets (`composer.py`), and
+  the HTTP boundary still permits legacy `str` citations (`chat.py`). Missing submission/
+  engineering evidence: W2 cost/latency report, full OpenAPI + contract tests, full-flow Bruno,
+  W1-vs-W2 baselines, backup/restore drill.
+- Why: prove the hard gate the PRD says graders actively test (introduce a regression → CI must go
+  red and block merge + deploy), close the two grounding/citation contracts, and produce the
+  remaining graded evidence before Early (2026-07-16) and Final (2026-07-19).
+- Result: additive, dated reconciliation across the binding docs — **no prior language rewritten**.
+  `W2_IMPLEMENTATION_PLAN.md` gained the **MVP-to-Final closeout overlay** (lanes **W2-C1..C13**,
+  per-lane branches/acceptance, MVP acceptance gate); `W2_DECISIONS.md` gained **W2-D11..D21** +
+  open item **W2-O4** (W2-D1..D10 untouched); `W2_ARCHITECTURE.md` gained the **2026-07-15 closeout
+  revision** (§2/§2a/§3/§4a/§6/§6a/§7/§8a: answer grounding top-5, CitationV2-only boundary,
+  two-tier gate execution, observability/one-ID correlation, readiness hard/soft, SLO locking,
+  CI/CD + exact-SHA deploy, backup RPO/RTO). Build model changed: Codex joins as independent
+  auditor + second implementer under isolated worktrees with a lead integrator; `.github/` and
+  golden cases 41–50 are in scope. The critic, `medication_list`, and lab-trend widget are
+  reinstated from the Cut § as Milestone-2 conservative-final scope (W2-C11/C12/C13).
+- STOP: the gate is not "done" until an introduced regression turns CI red and blocks merge +
+  deploy; never derive eval observations from golden expectations; no PHI/secrets in CI artifacts;
+  no OpenEMR PHP/schema edits or SMART-scope widening; no native lab FHIR Observation write
+  (byte-attested artifacts only). Tier-2 `ANTHROPIC_API_KEY`, `RAILWAY_TOKEN`, the GitLab
+  status/mirror credential, and Railway backups are blocking owner actions (W2-O4).
+- Stage: PLANNING RECONCILED — closeout implementation (W2-C1..C13) pending against Early/Final.

@@ -45,4 +45,8 @@ tests {
   test("readiness carries a correlation id", function () {
     expect(res.getHeader("x-copilot-request-id")).to.be.a("string").and.not.be.empty;
   });
+
+  test("readiness cannot be served from a stale cache", function () {
+    expect(res.getHeader("cache-control")).to.equal("no-store, no-cache, must-revalidate");
+  });
 }

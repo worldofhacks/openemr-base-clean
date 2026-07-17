@@ -25,6 +25,8 @@ _CORRELATION_HEADER = {
     "schema": {"type": "string", "minLength": 1},
 }
 
+NO_STORE_CACHE_CONTROL = "no-store, no-cache, must-revalidate"
+
 _ERROR_DESCRIPTIONS = {
     400: "The request could not complete the closed workflow.",
     401: "The opaque session expired.",
@@ -43,6 +45,7 @@ def correlation_headers(
     location: bool = False,
     retry_after: bool = False,
     private_no_store: bool = False,
+    operational_no_store: bool = False,
 ) -> dict[str, dict[str, object]]:
     """Return fresh header metadata so FastAPI cannot mutate shared declarations."""
 
@@ -61,10 +64,18 @@ def correlation_headers(
             "required": True,
             "schema": {"type": "integer", "minimum": 1},
         }
+    if private_no_store and operational_no_store:
+        raise ValueError("cache-control policies are mutually exclusive")
     if private_no_store:
         headers["Cache-Control"] = {
             "description": "This patient-pinned response must not be stored.",
             "schema": {"type": "string", "enum": ["private, no-store"]},
+        }
+    if operational_no_store:
+        headers["Cache-Control"] = {
+            "description": "This operational response must not be stored or revalidated.",
+            "required": True,
+            "schema": {"type": "string", "enum": [NO_STORE_CACHE_CONTROL]},
         }
     return headers
 
@@ -76,13 +87,16 @@ def documented_response(
     content: dict[str, object] | None = None,
     location: bool = False,
     private_no_store: bool = False,
+    operational_no_store: bool = False,
 ) -> dict[str, object]:
     """Build a response annotation with the mandatory correlation header."""
 
     response: dict[str, object] = {
         "description": description,
         "headers": correlation_headers(
-            location=location, private_no_store=private_no_store
+            location=location,
+            private_no_store=private_no_store,
+            operational_no_store=operational_no_store,
         ),
     }
     if model is not None:

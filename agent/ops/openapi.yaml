@@ -23,6 +23,9 @@ paths:
           headers:
             x-copilot-request-id:
               $ref: "#/components/headers/CorrelationId"
+            Cache-Control:
+              required: true
+              schema: {type: string, enum: ["no-store, no-cache, must-revalidate"]}
           content:
             application/json:
               schema:
@@ -37,6 +40,9 @@ paths:
           headers:
             x-copilot-request-id:
               $ref: "#/components/headers/CorrelationId"
+            Cache-Control:
+              required: true
+              schema: {type: string, enum: ["no-store, no-cache, must-revalidate"]}
           content:
             application/json:
               schema:
@@ -46,6 +52,9 @@ paths:
           headers:
             x-copilot-request-id:
               $ref: "#/components/headers/CorrelationId"
+            Cache-Control:
+              required: true
+              schema: {type: string, enum: ["no-store, no-cache, must-revalidate"]}
           content:
             application/json:
               schema:

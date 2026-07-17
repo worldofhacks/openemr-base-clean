@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.health import CachedReadinessRunner, DependencyResult
+from app.routes.openapi_contract import NO_STORE_CACHE_CONTROL
 
 
 def _app_with_checks(checks):
@@ -51,6 +52,7 @@ def test_health_is_liveness_only_200(complete_env):
     assert resp.status_code == 200
     assert resp.json()["status"] == "alive"
     assert resp.json()["sha"] == "unknown"
+    assert resp.headers["cache-control"] == NO_STORE_CACHE_CONTROL
 
 
 def test_ready_200_when_all_dependencies_ok(complete_env):
@@ -60,6 +62,7 @@ def test_ready_200_when_all_dependencies_ok(complete_env):
     body = resp.json()
     assert body["status"] == "ready"
     assert {c["name"]: c["ok"] for c in body["checks"]}["openemr_fhir"] is True
+    assert resp.headers["cache-control"] == NO_STORE_CACHE_CONTROL
 
 
 def test_ready_503_when_hard_dependency_openemr_down(complete_env):
@@ -72,6 +75,7 @@ def test_ready_503_when_hard_dependency_openemr_down(complete_env):
     assert body["status"] == "not_ready"
     failed = [c for c in body["checks"] if not c["ok"]]
     assert any(c["name"] == "openemr_fhir" and c["kind"] == "hard" for c in failed)
+    assert resp.headers["cache-control"] == NO_STORE_CACHE_CONTROL
 
 
 def test_ready_200_degraded_when_soft_dependency_langfuse_down(complete_env):
@@ -85,6 +89,7 @@ def test_ready_200_degraded_when_soft_dependency_langfuse_down(complete_env):
     assert body["status"] == "degraded"
     langfuse = next(c for c in body["checks"] if c["name"] == "langfuse")
     assert langfuse["ok"] is False and langfuse["kind"] == "soft"
+    assert resp.headers["cache-control"] == NO_STORE_CACHE_CONTROL
 
 
 def test_ready_503_when_only_soft_ok_but_hard_down(complete_env):

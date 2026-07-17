@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.health import CachedReadinessRunner, Probe
-from app.routes.openapi_contract import documented_response
+from app.routes.openapi_contract import NO_STORE_CACHE_CONTROL, documented_response
 
 router = APIRouter()
 
@@ -46,11 +46,14 @@ class ReadinessResponse(BaseModel):
     "/health",
     response_model=HealthResponse,
     responses={
-        200: documented_response("Process liveness and deployed SHA."),
+        200: documented_response(
+            "Process liveness and deployed SHA.", operational_no_store=True
+        ),
     },
 )
-def health(request: Request) -> dict[str, str]:
+def health(request: Request, response: Response) -> dict[str, str]:
     """Liveness: the process is up. No dependency checks (§7)."""
+    response.headers["Cache-Control"] = NO_STORE_CACHE_CONTROL
     return {
         "status": "alive",
         "sha": request.app.state.settings.deployment_sha,
@@ -62,11 +65,13 @@ def health(request: Request) -> dict[str, str]:
     response_model=ReadinessResponse,
     responses={
         200: documented_response(
-            "All hard probes are healthy; soft probes may be degraded."
+            "All hard probes are healthy; soft probes may be degraded.",
+            operational_no_store=True,
         ),
         503: documented_response(
             "At least one hard readiness probe failed.",
             model=ReadinessResponse,
+            operational_no_store=True,
         ),
     },
 )
@@ -76,5 +81,6 @@ async def ready(request: Request, response: Response) -> dict:
     checks: list[Probe] = request.app.state.readiness_checks
     runner: CachedReadinessRunner = request.app.state.readiness_runner
     report = await runner.run(settings, checks)
+    response.headers["Cache-Control"] = NO_STORE_CACHE_CONTROL
     response.status_code = report.http_status
     return report.to_body()

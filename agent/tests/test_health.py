@@ -131,3 +131,16 @@ async def test_readiness_runner_bounds_soft_reranker_timeout(complete_env):
     assert report.results == [
         DependencyResult("active_reranker", "soft", False, "timeout")
     ]
+
+
+def test_default_probe_budget_accommodates_measured_reranker_execution():
+    """R07 follow-up (REL1, 2026-07-19): the soft `active_reranker` probe executes a
+    real fresh-retriever rerank; with weights PRE-BAKED (zero downloads, proven by
+    deploy logs) execution alone measured 8.5-10.7 s on Railway's shared vCPU, so the
+    former 8 s budget marked a WORKING reranker as `timeout` on every TTL refresh.
+    Plan §5 R07 sanctions raising the soft-probe budget with a documented rationale —
+    this test IS that record. Hard probes self-bound at <=5 s via their inner
+    httpx/asyncpg timeouts, so the runner-level budget effectively bounds only the
+    reranker probe."""
+    runner = CachedReadinessRunner()
+    assert runner._timeout == 20.0

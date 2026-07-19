@@ -121,3 +121,26 @@ The evidence-bearing pull-request head and the merge SHA must each pass the cano
 GitHub Tier-1 and protected Tier-2 gates before deployment. Their immutable run URLs and
 the exact deployed SHA are release records in GitHub Actions and Railway rather than
 precomputed values in this commit.
+
+## E01-lite — durable committed copies of the current green exact-SHA results (2026-07-19)
+
+GitHub artifact retention is ~14 days; these repository copies are the durable record
+(AF-P1-06 interim; full E01 re-binds to the accepted release SHA).
+
+- Source run (green `agent-eval-gate` on `main`, 2026-07-17):
+  https://github.com/worldofhacks/openemr-base-clean/actions/runs/29553727457
+- Both artifacts carry `source_sha = 658307936f0396d292c94fff3f9ef8089f1697e7`
+  (= the audit baseline and the deployed `/health` SHA), `status = PASS`,
+  50 manifest cases / 50 executor calls, all five rubric categories met.
+- Committed copies + SHA-256 digests (verified at download, 2026-07-19):
+  - `docs/week2/evidence/eval-results/results-tier1-6583079.json`
+    `8d43bb568a689d08ea6c54b95e6588a28d9369fbcd3b0b40b68ce274041c5b3b`
+  - `docs/week2/evidence/eval-results/results-tier2-live-6583079.json`
+    `b66bae841231aa4ea8683cd64225752ef217dca0a9148ca4389efc3f421b7a3f`
+    (live Tier-2 aggregates: cost $3.0658, p50 5611 ms, p95 12266 ms, 621k in /
+    58k out tokens, retrieval_hit_count 202, grounding 0.9596)
+- Sanitization: `python -m evals.artifact_scan --eval-result <file>` → PASS on both
+  (aggregate-only; no case text, no PHI).
+- The committed `agent/evals/results-tier2.json` INCONCLUSIVE placeholder is replaced by
+  full E01 against the accepted SHA (with the submission check binding evidence SHA =
+  release SHA); it is intentionally untouched here.

@@ -302,6 +302,27 @@ class AgentServices:
             ready, detail = False, "worker_heartbeat_unavailable"
         return DependencyResult("document_runtime", "hard", ready, detail)
 
+    async def probe_graph_state(self, _settings: Settings) -> DependencyResult:
+        """Readiness reports the W2 graph state (R03/AF-P1-02).
+
+        The probe always reports whether ``W2_GRAPH_ENABLED`` is on, making the
+        deployed graph externally observable. It fails readiness ONLY where the
+        deployment *declares* the graph required (``W2_GRAPH_REQUIRED``); otherwise
+        the probe stays soft, preserving the fail-closed W1 fallback mode.
+        """
+
+        required = bool(getattr(self.settings, "w2_graph_required", False))
+        enabled = orchestrator_graph.graph_enabled()
+        if required and not enabled:
+            return DependencyResult(
+                "graph_state", "hard", False, "graph_required_but_disabled"
+            )
+        if required:
+            return DependencyResult("graph_state", "hard", True, "graph_enabled")
+        if enabled:
+            return DependencyResult("graph_state", "soft", True, "graph_enabled")
+        return DependencyResult("graph_state", "soft", True, "disabled_w1_fallback")
+
     async def probe_document_category_read(
         self, _settings: Settings
     ) -> DependencyResult:

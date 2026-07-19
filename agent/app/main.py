@@ -80,6 +80,11 @@ def create_app(
     document_category_probe = getattr(services, "probe_document_category_read", None)
     if document_category_probe is not None:
         app.state.readiness_checks.append(document_category_probe)
+    # R03: readiness reports graph state (soft unless the deployment declares the
+    # graph required via W2_GRAPH_REQUIRED — then fail-closed; W1 fallback preserved).
+    graph_state_probe = getattr(services, "probe_graph_state", None)
+    if graph_state_probe is not None:
+        app.state.readiness_checks.append(graph_state_probe)
     # One lazy retrieval instance is shared by the graph worker and the public evidence
     # endpoint (W2-D4). Merely constructing the app never loads an ONNX model or vendor client.
     evidence_retriever_factory = getattr(services, "get_evidence_retriever", None)

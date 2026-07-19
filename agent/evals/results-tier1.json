@@ -16,15 +16,15 @@
     },
     {
       "baseline_score": 1.0,
-      "current_score": 1.0,
+      "current_score": 0.94,
       "denominator": 50,
       "inconclusive": 0,
-      "numerator": 50,
-      "passed": true,
-      "percentage_point_delta": 0.0,
+      "numerator": 47,
+      "passed": false,
+      "percentage_point_delta": -6.0,
       "rubric": "citation_present",
       "threshold": 1.0,
-      "trigger": "met 100% invariant"
+      "trigger": "failed 100% invariant"
     },
     {
       "baseline_score": 1.0,
@@ -69,14 +69,14 @@
   "manifest_sha256": "a9f8098e49ad98cc85fe2c22955aae438f73500aa2c83e53d32be0cb75dbb4a1",
   "metrics": {
     "cost_usd": 0.0,
-    "elapsed_seconds": 3.880317,
+    "elapsed_seconds": 3.837464,
     "extraction_grounding_rate": 0.9629761904761905,
     "input_tokens": 0,
     "output_tokens": 0,
-    "p50_ms": 26.339624999309308,
-    "p95_ms": 258.63708300130384,
+    "p50_ms": 27.497999999468448,
+    "p95_ms": 255.26791700031026,
     "retries": 0,
-    "retrieval_hit_count": 98
+    "retrieval_hit_count": 237
   },
   "recordings_sha256": "f70b7a7fdb22ba72cdce1675dc43a89847ec0b110d5cec448771d5f8d2849f6b",
   "retrieval": {
@@ -88,6 +88,6 @@
   },
   "schema_version": 1,
   "source_sha": "local-uncommitted",
-  "status": "PASS",
+  "status": "FAIL",
   "tier": "recorded"
 }

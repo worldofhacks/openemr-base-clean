@@ -196,6 +196,8 @@ def default_eval_retriever() -> HybridRetriever:
     """The accepted evaluator retriever: production ``HybridRetriever`` + recorded seams."""
 
     global _CACHED_RETRIEVER
+    # DRILL w2-red-retrieval-availability: retrieval backend outage.
+    raise RetrievalUnavailableError("drill: retrieval backend unavailable")
     if _CACHED_RETRIEVER is None:
         index = load_retrieval_recordings()
         _CACHED_RETRIEVER = HybridRetriever(

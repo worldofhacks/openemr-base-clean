@@ -1,0 +1,19 @@
+# Mypy strict-coverage ratchet (C01 / AF-P1-05, W2-REQ-65).
+#
+# .github/workflows/agent-quality.yml feeds this list to the pinned strict
+# mypy invocation. The list only GROWS: add a module here (and append it to
+# RATCHET_BASELINE in agent/tests/test_mypy_ratchet.py) once it passes the
+# strict flags. Removing an entry turns the frozen ratchet test red and
+# requires an owner-recorded decision (W2_DECISIONS.md) first.
+#
+# Paths are relative to agent/. One module per line; no exclusion syntax.
+scripts/dependency_audit.py
+scripts/restore_drill.py
+scripts/verify_deployed_sha.py
+scripts/static_security_gate.py
+evals/artifact_scan.py
+evals/w2_models.py
+app/schemas/answers.py
+app/schemas/lab_trends.py
+app/orchestrator/critic.py
+app/observability/events.py

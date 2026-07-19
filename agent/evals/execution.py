@@ -43,11 +43,20 @@ from app.schemas.extraction import (
 )
 from pydantic import BaseModel
 from app.writeback.ranges import _BOUNDS, build_vital_writes
-from corpus.retrieval import build_clinical_query, reciprocal_rank_fusion, screen_phi
+from corpus.retrieval import (
+    HybridRetriever,
+    QueryContractError,
+    RetrievalUnavailableError,
+    build_clinical_query,
+    reciprocal_rank_fusion,
+    screen_phi,
+)
+from evals.retrieval_adapters import default_eval_retriever
 from evals.w2_models import (
     CanonicalAnswerEvidenceObservation,
     RefusalObservation,
     RenderedClaimObservation,
+    RetrievalObservation,
     SafetyCode,
     SafetyEvent,
 )
@@ -119,6 +128,7 @@ class ExecutionOutput:
     verified_facts: tuple[VerifiedClinicalClaim, ...]
     evidence_snippets: tuple[EvidenceSnippet, ...]
     answer_citations: tuple[CitationV2, ...]
+    retrieval_observation: RetrievalObservation | None = None
 
 
 def observe_rendered_claims(
@@ -860,6 +870,56 @@ def _retrieval_terms(fields: dict[str, object], doc_type: str) -> list[str]:
     return values[:8]
 
 
+def _production_retrieve(
+    terms: Sequence[str],
+    *,
+    capture: SideEffectCapture,
+    retriever: HybridRetriever | None = None,
+    k: int = 5,
+) -> tuple[list[EvidenceSnippet], bool, RetrievalObservation]:
+    """The accepted evaluator retrieval route: production ``HybridRetriever.search``.
+
+    This traverses the committed corpus/index, real BM25 + dense fusion, the real
+    reranker seam, and the real unavailability contract (AF-P0-02). The retired
+    term-overlap ``_local_retrieve`` below is kept only for unit tests and is never
+    called by the evaluator.
+    """
+
+    if not terms:
+        return [], True, RetrievalObservation(attempted=False)
+    try:
+        query = build_clinical_query(terms)
+    except QueryContractError:
+        return [], True, RetrievalObservation(attempted=False)
+    validated = capture.validate_outbound_query(query)
+    if not validated:
+        return [], False, RetrievalObservation(attempted=False)
+    selected = retriever if retriever is not None else default_eval_retriever()
+    try:
+        outcome = selected.search(query, k=k)
+    except RetrievalUnavailableError:
+        return [], True, RetrievalObservation(attempted=True, unavailable=True)
+    snippets = [
+        EvidenceSnippet(
+            source_id=hit.source_id,
+            section=hit.section,
+            chunk_id=hit.chunk_id,
+            quote=hit.quote,
+            score=hit.score,
+            corpus_version=hit.corpus_version,
+        )
+        for hit in outcome.items
+    ]
+    observation = RetrievalObservation(
+        attempted=True,
+        hit_chunk_ids=[hit.chunk_id for hit in outcome.items],
+        degraded_reasons=list(outcome.degraded_reasons),
+        corpus_version=outcome.corpus_version,
+        manifest_hash=outcome.manifest_hash,
+    )
+    return snippets, True, observation
+
+
 def _local_retrieve(
     terms: Sequence[str],
     *,
@@ -973,6 +1033,7 @@ def finalize_typed_extraction(
     sections_seen: set[str] | None = None,
     source_lines: Sequence[SourceLine] = (),
     side_effects: SideEffectCapture | None = None,
+    retriever: HybridRetriever | None = None,
 ) -> ExecutionOutput:
     fields = fields or normalize_typed_extraction(extraction)
     sections_seen = sections_seen or set()
@@ -1057,7 +1118,9 @@ def finalize_typed_extraction(
     )
 
     terms = _retrieval_terms(fields, doc_type)
-    snippets, query_validated = _local_retrieve(terms, capture=capture)
+    snippets, query_validated, retrieval_observation = _production_retrieve(
+        terms, capture=capture, retriever=retriever
+    )
     document_claims = [
         CandidateClaim(
             text=citation.quote_or_value,
@@ -1158,6 +1221,7 @@ def finalize_typed_extraction(
                 if candidate.citation is not None
             ]
         ),
+        retrieval_observation=retrieval_observation,
     )
 
 

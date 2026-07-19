@@ -156,15 +156,88 @@ def _surface_key(value: object) -> tuple[str, CitationV2]:
     return key, citation
 
 
+def _guideline_chunk_ids(items: object) -> list[str] | None:
+    """Chunk ids of guideline-class entries in one answer surface; None if malformed."""
+
+    chunk_ids: list[str] = []
+    if not isinstance(items, (list, tuple)):
+        return None
+    for item in items:
+        source_class = getattr(item, "source_class", None)
+        if source_class is not CitationSourceType.GUIDELINE:
+            continue
+        chunk_id = getattr(getattr(item, "citation", None), "field_or_chunk_id", None)
+        if not isinstance(chunk_id, str) or not chunk_id:
+            return None
+        chunk_ids.append(chunk_id)
+    return chunk_ids
+
+
+def _retrieval_expectation_met(case: GoldenCase, observation: CaseObservation) -> bool:
+    """Score the case's pinned production-retrieval behavior (AF-P0-02).
+
+    Cases without an ``expected_retrieval`` block are unaffected. Expectation-carrying
+    cases require the executor's retrieval observation to match the pinned outcome and
+    the guideline lanes of the answer surfaces to agree with it — retrieved evidence for
+    hits, and provably no fabricated guideline evidence for miss/no-query/unavailable.
+    """
+
+    expectation = case.expected_retrieval
+    if expectation is None:
+        return True
+    retrieval = observation.retrieval
+    if retrieval is None:
+        return False
+    canonical_guidelines = _guideline_chunk_ids(observation.canonical_answer_evidence)
+    rendered_guidelines = _guideline_chunk_ids(observation.rendered_claims)
+    if canonical_guidelines is None or rendered_guidelines is None:
+        return False
+
+    if expectation.outcome == "hit":
+        if retrieval.unavailable or not retrieval.attempted:
+            return False
+        if retrieval.degraded_reasons or not retrieval.hit_chunk_ids:
+            return False
+        expected_prefix = expectation.expected_top_chunk_ids
+        if retrieval.hit_chunk_ids[: len(expected_prefix)] != expected_prefix:
+            return False
+        allowed = set(retrieval.hit_chunk_ids)
+        if not set(canonical_guidelines) <= allowed:
+            return False
+        if expectation.require_rendered_guideline:
+            top_chunk_id = (
+                expected_prefix[0] if expected_prefix else retrieval.hit_chunk_ids[0]
+            )
+            if top_chunk_id not in rendered_guidelines:
+                return False
+        return True
+
+    # miss / no_query / unavailable: no guideline evidence may exist anywhere.
+    if canonical_guidelines or rendered_guidelines or retrieval.hit_chunk_ids:
+        return False
+    if expectation.outcome == "miss":
+        return (
+            retrieval.attempted
+            and not retrieval.unavailable
+            and not retrieval.degraded_reasons
+        )
+    if expectation.outcome == "no_query":
+        return not retrieval.attempted and not retrieval.unavailable
+    return retrieval.attempted and retrieval.unavailable
+
+
 def citation_present(case: GoldenCase, observation: CaseObservation) -> bool:
     """Require complete extraction citations and citations on every rendered claim.
 
     The golden citation multiset describes extraction coverage. A cited answer may select
     a narrow subset of those leaves, so rendered claims are checked as an exact submultiset
     of the canonical bounded answer evidence (including document overlay geometry) instead
-    of requiring the answer to dump every extracted fact.
+    of requiring the answer to dump every extracted fact. Cases carrying an
+    ``expected_retrieval`` block additionally pin the production retrieval behavior.
     """
 
+    if not _retrieval_expectation_met(case, observation):
+        return False
     try:
         observed = [CitationV2.model_validate(value) for value in observation.citations]
     except (ValidationError, TypeError):

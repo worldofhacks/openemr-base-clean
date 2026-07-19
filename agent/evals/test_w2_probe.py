@@ -10,11 +10,13 @@ import pytest
 from app.llm.provider import Usage
 from evals.artifact_scan import scan_eval_result_paths
 from evals.golden_loader import DEFAULT_MANIFEST, load_golden_cases
+from app.schemas.citations import CitationSourceType, CitationV2
 from evals.w2_models import (
     CanonicalAnswerEvidenceObservation,
     CaseObservation,
     GoldenCase,
     RenderedClaimObservation,
+    RetrievalObservation,
     RunStatus,
 )
 from evals.w2_runner import (
@@ -60,16 +62,47 @@ class _OfflineSubsetExecutor:
             "overlay_page": page,
             "overlay_bbox": {"x0": 0.1, "y0": 0.1, "x1": 0.2, "y1": 0.2},
         }
+        canonical = [CanonicalAnswerEvidenceObservation(**metadata)]
+        rendered = [RenderedClaimObservation(**metadata)]
+        # Honor the case's pinned production-retrieval behavior (R02): this offline
+        # fake stays source-independent but must satisfy the strengthened scorer.
+        retrieval = None
+        expectation = case.expected_retrieval
+        if expectation is not None:
+            if expectation.outcome == "hit":
+                top_chunk_ids = list(expectation.expected_top_chunk_ids)
+                guideline_metadata = {
+                    "citation": CitationV2(
+                        source_type=CitationSourceType.GUIDELINE,
+                        source_id="synthetic-guideline@offline-subset",
+                        page_or_section="Synthetic guideline section",
+                        field_or_chunk_id=top_chunk_ids[0],
+                        quote_or_value="synthetic guideline quote",
+                    ),
+                    "source_class": CitationSourceType.GUIDELINE,
+                }
+                canonical.append(
+                    CanonicalAnswerEvidenceObservation(**guideline_metadata)
+                )
+                rendered.append(RenderedClaimObservation(**guideline_metadata))
+                retrieval = RetrievalObservation(
+                    attempted=True, hit_chunk_ids=top_chunk_ids
+                )
+            elif expectation.outcome == "miss":
+                retrieval = RetrievalObservation(attempted=True)
+            elif expectation.outcome == "no_query":
+                retrieval = RetrievalObservation(attempted=False)
+            else:
+                retrieval = RetrievalObservation(attempted=True, unavailable=True)
         return CaseObservation(
             case_id=case.case_id,
             fields=case.expected_fields,
             citations=case.expected_citations,
-            canonical_answer_evidence=[
-                CanonicalAnswerEvidenceObservation(**metadata)
-            ],
-            rendered_claims=[RenderedClaimObservation(**metadata)],
+            canonical_answer_evidence=canonical,
+            rendered_claims=rendered,
             verdict=case.expected_verdict,
             factual_judgement=True,
+            retrieval=retrieval,
         )
 
 

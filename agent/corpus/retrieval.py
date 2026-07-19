@@ -15,11 +15,12 @@ import json
 import logging
 import math
 import os
+import random
 import re
 import threading
 import time
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -44,6 +45,7 @@ RERANK_REVISION = "800f24c113213a187e65bde9db00c15a2bb12738"
 RERANK_ONNX = "onnx/model_quantized.onnx"
 COHERE_MODEL = "rerank-v3.5"
 COHERE_RERANK_URL = "https://api.cohere.com/v2/rerank"
+_RETRYABLE_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 _HF_COMMON_FILES = (
     "config.json",
@@ -320,6 +322,65 @@ class _CircuitBreaker:
             )
 
 
+@dataclass(frozen=True)
+class CohereRetryPolicy:
+    """Bounded retry for the managed reranker (W2-REQ-60 / AF-P1-10).
+
+    ``max_attempts`` bounds the logical attempts per request; the frozen
+    2-failure breaker independently caps clean-state managed attempts at two
+    and is updated once per attempt.  Backoff is jittered uniformly over
+    ``[backoff_seconds / 2, backoff_seconds)``.  A retry may only *start*
+    while the elapsed time plus its backoff stays inside
+    ``overall_deadline_seconds``, so worst-case managed latency is bounded by
+    the deadline plus one per-attempt timeout before the local fallback
+    answers.
+    """
+
+    max_attempts: int = 2
+    backoff_seconds: float = 0.25
+    overall_deadline_seconds: float = 8.0
+
+    def __post_init__(self) -> None:
+        if self.max_attempts < 1:
+            raise ValueError("max_attempts must be at least 1")
+        if not math.isfinite(self.backoff_seconds) or self.backoff_seconds < 0.0:
+            raise ValueError("backoff_seconds must be finite and non-negative")
+        if (
+            not math.isfinite(self.overall_deadline_seconds)
+            or self.overall_deadline_seconds <= 0.0
+        ):
+            raise ValueError("overall_deadline_seconds must be positive")
+
+    def backoff_for(self, rng_value: float) -> float:
+        """Jittered backoff in ``[backoff_seconds / 2, backoff_seconds)``."""
+
+        jitter = 0.5 + 0.5 * min(max(rng_value, 0.0), 1.0)
+        return self.backoff_seconds * jitter
+
+
+def _classify_cohere_failure(exc: BaseException) -> tuple[bool, str]:
+    """Classify a managed-reranker failure as (retryable, fixed reason code).
+
+    Retryable: timeouts, transport/connect failures, HTTP 429, and eligible
+    5xx.  Permanent: every other 4xx and response-contract violations.  Reason
+    codes come from a fixed vocabulary; exception text (which could echo
+    request material) never reaches telemetry.
+    """
+
+    try:
+        import httpx
+    except ImportError:  # pragma: no cover - httpx is a pinned dependency
+        return False, "unclassified"
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status in _RETRYABLE_HTTP_STATUSES, f"http_{status}"
+    if isinstance(exc, httpx.TimeoutException):
+        return True, "timeout"
+    if isinstance(exc, httpx.TransportError):
+        return True, "connect_error"
+    return False, "permanent"
+
+
 class CohereReranker:
     """Minimal Cohere v2 client; the API key is accepted only at construction."""
 
@@ -483,6 +544,10 @@ class RerankerSeam:
         cohere: Reranker | None = None,
         local: Reranker | None = None,
         demographic_strings: Sequence[str] = (),
+        retry_policy: CohereRetryPolicy | None = None,
+        clock: Callable[[], float] | None = None,
+        sleep: Callable[[float], None] | None = None,
+        rng: Callable[[], float] | None = None,
     ):
         normalized_mode = mode.strip().casefold()
         if normalized_mode not in {"cohere", "local"}:
@@ -492,6 +557,102 @@ class RerankerSeam:
         self._local = local
         self._demographic_strings = tuple(demographic_strings)
         self._cohere_breaker = _CircuitBreaker()
+        self._retry_policy = retry_policy if retry_policy is not None else CohereRetryPolicy()
+        self._clock = clock
+        self._sleep = sleep
+        self._rng = rng
+
+    def _now(self) -> float:
+        return self._clock() if self._clock is not None else time.monotonic()
+
+    def _pause(self, seconds: float) -> None:
+        if self._sleep is not None:
+            self._sleep(seconds)
+        else:
+            time.sleep(seconds)
+
+    def _jitter_value(self) -> float:
+        return self._rng() if self._rng is not None else random.random()
+
+    def _log_fallback(self, reason: str, *, attempts: int, started: float) -> None:
+        _log.info(
+            "rerank.cohere.fallback",
+            extra={
+                "dependency": "cohere_reranker",
+                "reason": reason,
+                "attempts": attempts,
+                "elapsed_ms": round((self._now() - started) * 1000, 3),
+            },
+        )
+
+    def _managed_scores_with_retry(
+        self, cohere: Reranker, query: str, documents: list[str]
+    ) -> list[float] | None:
+        """Call the managed reranker with bounded, breaker-aware retry.
+
+        W2-REQ-60 (PDF p.6): retryable failures (timeout, connect, 429,
+        eligible 5xx) are retried under jittered backoff within an attempt
+        budget and an overall deadline; permanent failures are not.  The
+        breaker is updated once per logical attempt.  Telemetry carries
+        attempt counts, fixed failure classes, and timings only — never the
+        query or any candidate document.
+        """
+
+        policy = self._retry_policy
+        started = self._now()
+        if not self._cohere_breaker.allow():
+            self._log_fallback("breaker_open", attempts=0, started=started)
+            return None
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                scores = _validate_reranker_scores(
+                    cohere.scores(query, documents), len(documents)
+                )
+            except Exception as exc:
+                self._cohere_breaker.failure()
+                retryable, failure_class = _classify_cohere_failure(exc)
+                _log.info(
+                    "rerank.cohere.attempt",
+                    extra={
+                        "dependency": "cohere_reranker",
+                        "attempt": attempt,
+                        "failure_class": failure_class,
+                        "retryable": retryable,
+                    },
+                )
+                if not retryable:
+                    self._log_fallback(
+                        "permanent_failure", attempts=attempt, started=started
+                    )
+                    return None
+                if attempt >= policy.max_attempts:
+                    self._log_fallback(
+                        "attempts_exhausted", attempts=attempt, started=started
+                    )
+                    return None
+                delay = policy.backoff_for(self._jitter_value())
+                if self._now() - started + delay >= policy.overall_deadline_seconds:
+                    self._log_fallback(
+                        "deadline_exceeded", attempts=attempt, started=started
+                    )
+                    return None
+                if not self._cohere_breaker.allow():
+                    self._log_fallback("breaker_open", attempts=attempt, started=started)
+                    return None
+                _log.info(
+                    "rerank.cohere.retry",
+                    extra={
+                        "dependency": "cohere_reranker",
+                        "attempt": attempt + 1,
+                        "backoff_ms": round(delay * 1000, 3),
+                    },
+                )
+                self._pause(delay)
+                continue
+            self._cohere_breaker.success()
+            return scores
 
     def _local_scores(self, query: str, documents: list[str]) -> list[float] | None:
         if self._local is None:
@@ -519,16 +680,11 @@ class RerankerSeam:
         if not screen.safe:
             return self._local_scores(query, documents), "cohere_phi_screen"
 
-        if self._cohere is None or not self._cohere_breaker.allow():
+        if self._cohere is None:
             return self._local_scores(query, documents), "cohere_unavailable"
-        try:
-            scores = _validate_reranker_scores(
-                self._cohere.scores(query, documents), len(documents)
-            )
-        except Exception:
-            self._cohere_breaker.failure()
+        scores = self._managed_scores_with_retry(self._cohere, query, documents)
+        if scores is None:
             return self._local_scores(query, documents), "cohere_unavailable"
-        self._cohere_breaker.success()
         return scores, None
 
     def model_for(self, *, reason: str | None, scored: bool) -> str:

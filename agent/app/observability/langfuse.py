@@ -29,8 +29,10 @@ from app.observability.events import (
     EventSeverity,
     EventType,
     OperationalStepCode,
+    RerankerModeCode,
     VerificationOutcomeCode,
 )
+from app.observability.summary import encounter_summary_attributes
 
 
 @runtime_checkable
@@ -404,6 +406,10 @@ class TraceBuilder:
         self._usage = Usage()
         self._verdicts: list[str] = []
         self._order = 0
+        # R05 fused-summary halves: recorded when the turn actually retrieved/grounded,
+        # zero only as the honest default (previously hard-coded zero at emit time).
+        self._retrieval_hit_count = 0
+        self._grounding_rate = 0.0
 
     @property
     def tracer(self) -> "RequestTracer":
@@ -435,6 +441,49 @@ class TraceBuilder:
     def record_verdict(self, verdict: str) -> None:
         if type(verdict) is str and verdict in _CLOSED_VERDICTS:
             self._verdicts.append(verdict)
+
+    def record_retrieval(
+        self,
+        *,
+        hit_count: int,
+        latency_ms: float,
+        degraded: bool,
+        reranker_mode: RerankerModeCode,
+    ) -> None:
+        """Record the turn's retrieval half and emit ``retrieval.completed`` now.
+
+        Emission happens at retrieval completion (not at finish) so the event's
+        timestamp reflects when retrieval actually ended; the recorded hit count
+        additionally rides the fused encounter summary.
+        """
+
+        self._retrieval_hit_count = min(
+            self._retrieval_hit_count + max(int(hit_count), 0), 20
+        )
+        if self._tracer.events is None:
+            return
+        self._tracer.events.emit(
+            EventType.RETRIEVAL_COMPLETED,
+            {
+                "hit_count": min(max(int(hit_count), 0), 20),
+                "latency_ms": max(float(latency_ms), 0.0),
+                "degraded": degraded,
+                "reranker_mode": reranker_mode,
+            },
+            component=EventComponent.RETRIEVAL,
+            severity=EventSeverity.WARNING if degraded else EventSeverity.INFO,
+            correlation_id=self._acct.correlation_id,
+        )
+
+    def record_grounding(
+        self, *, fields_grounded: int, fields_unsupported: int
+    ) -> None:
+        """Record the turn's extraction-confidence half for the fused summary."""
+
+        total = max(int(fields_grounded), 0) + max(int(fields_unsupported), 0)
+        self._grounding_rate = (
+            max(int(fields_grounded), 0) / total if total else 0.0
+        )
 
     def step_summary(self) -> tuple[tuple[str, float], ...]:
         """Return PHI-free ordered step names/latencies for the terminal event."""
@@ -474,19 +523,17 @@ class TraceBuilder:
         )
         self._tracer._emit(trace)
         if emit_summary and self._tracer.events is not None:
-            bounded_steps = trace.steps[:64]
             self._tracer.events.emit(
                 EventType.ENCOUNTER_SUMMARY,
-                {
-                    "ordered_steps": [step.name for step in bounded_steps],
-                    "step_latencies_ms": [step.latency_ms for step in bounded_steps],
-                    "input_tokens": trace.input_tokens,
-                    "output_tokens": trace.output_tokens,
-                    "cost_usd": trace.cost_usd,
-                    "retrieval_hit_count": 0,
-                    "extraction_grounding_rate": 0.0,
-                    "verification_outcomes": list(trace.verdicts[:64]),
-                },
+                encounter_summary_attributes(
+                    steps=[(step.name, step.latency_ms) for step in trace.steps],
+                    input_tokens=trace.input_tokens,
+                    output_tokens=trace.output_tokens,
+                    cost_usd=trace.cost_usd,
+                    retrieval_hit_count=self._retrieval_hit_count,
+                    extraction_grounding_rate=self._grounding_rate,
+                    verification_outcomes=list(trace.verdicts),
+                ),
                 component=EventComponent.ORCHESTRATOR,
                 severity=(
                     EventSeverity.WARNING if trace.degraded else EventSeverity.INFO

@@ -223,3 +223,25 @@
   and TICKETS.md hard rules. W2-R6 library selection unchanged; plan §9 (G-tasks:
   tables/figures/image intake) unaffected in substance — G-D1's "PyMuPDF not adopted"
   rationale is now purely capability-based. Full record: W2_DECISIONS.md G-D2.
+- 2026-07-19 — **G-fix: cursive/handwritten forms and PNG uploads no longer fail extraction.**
+  Root cause: `vlm.py` source-completeness validators compared VLM output against OCR
+  evidence that could not read the document (Tesseract cannot read handwriting; photo
+  PNGs OCR to garbage) and raised `VlmResponseRejected` on the resulting mismatch —
+  rejecting VALID extractions of exactly the imperfect documents the W2 PDF requires
+  (W2-REQ-91). Pattern informed by the reference implementation analyzed today
+  (VLM-first extraction, evidence used to verify only where it could actually read).
+  Changes: (1) document-level evidence-quality gate (`reader.evidence_is_trustworthy`,
+  W2-D3 heuristics) — garbage/unreadable evidence skips the veto entirely; (2) per-value
+  mercy — printed-label/garbled-value rows and digit-free vital evidence no longer veto
+  (`token_is_wordlike`); (3) lab row check is now an in-order subsequence match: VLM may
+  report rows degraded OCR could not parse, may never drop or reorder OCR-readable rows;
+  (4) `image_reader.py` hardened — undecodable bytes → typed unreadable page (never
+  raises), OCR runs under the shared kill-safe subprocess budget
+  (`reader._run_ocr_with_timeout`, dead-child fast-path) — parity with the PDF path.
+  Anti-invention posture unchanged on trustworthy evidence (clean conflicting values,
+  dropped rows, reordering, vital rescale/omission all still reject; grounding still
+  decides visibility per W2-REQ-97). New frozen tests: `tests/test_vlm_evidence_gate.py`
+  (12), `tests/test_image_intake_robustness.py` (4). Verified green alongside the
+  untouched contracts: `test_vlm_provider.py` 17/17, `test_reader_geometry.py` 7/7
+  (AC-4 kill path exercises the refactor; real Tesseract). Full-suite run in the repo
+  venv (`cd agent && .venv/bin/pytest -q`, baseline 936+5) still owed before merge.

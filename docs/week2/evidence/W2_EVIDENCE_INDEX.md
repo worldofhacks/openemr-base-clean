@@ -27,3 +27,19 @@ file or directly in the checklist.
 - Mid-run drift note: `W2_DECISIONS.md` gained owner entries G-D1/G-D3 (and G-D2's
   stale §9.2 pointer fix) at 13:52 local, confirmed deliberate by the owner; content
   rides `f9b8fc4`.
+
+## R08 / PR 0b — extraction-robustness fix verified (2026-07-19)
+
+- **Branch:** `feat/g-d2-reader` @ `a48987f` (rebased onto main @ `93ab760`); commits
+  `7c99b75` (G-D1..G-D3 decision records + license-gate removal), `8881ed2` (R08 fix,
+  16 new frozen tests), `a48987f` (picklable intake OCR fake — assertions unchanged).
+- **Full suite:** `cd agent && .venv/bin/pytest -q` → **952 passed, 5 skipped**
+  (≥ 936+5 baseline; +16 new frozen tests). First run caught one test-local OCR fake
+  that could not pickle into the G-D3 spawned OCR child — hoisted to module level,
+  assertions byte-identical (see W2_DEVLOG.md R08 verification entry).
+- **Recorded 50-case gate:** `make eval-tier1` → gate=PASS, **zero category delta**
+  (schema 50/50, citation 50/50, factual 23/23, safe_refusal 10/10, no_phi 50/50);
+  artifact-scan PASS. Generated timing jitter in `evals/results-tier1.json` reverted.
+- **PR 0b:** https://github.com/worldofhacks/openemr-base-clean/pull/24 — merge waits on
+  C02 phase-1 protection (owner admin) + review; §8 R08 box stays unchecked until merged
+  through the protected flow.

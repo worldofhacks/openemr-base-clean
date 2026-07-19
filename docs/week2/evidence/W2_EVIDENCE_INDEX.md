@@ -86,3 +86,24 @@ file or directly in the checklist.
   baseline; corpus dir 106 passed explicitly); gate PASS zero delta.
 - Dispatched next: R03 (`fix/w2-conditional-routing`), R04 (`fix/w2-authority-typing`).
   R02 (long pole) and the S01 dry-run kit still in flight.
+
+## S01 dry run + recording kit (2026-07-19)
+
+- **Kit:** `docs/week2/evidence/W2_S01_RECORDING_KIT.md` + 8 sanitized dry-run
+  screenshots in `docs/week2/evidence/s01/` (synthetic data only; no URL bars/tokens).
+- **Verified live-authenticated on SHA `6583079` (2026-07-19):** `/health` SHA match;
+  `/ready` all eight probes green (no reranker flap at probe time); SMART launch →
+  sign-in → authorize → workbench; lab upload → bounded status → grounded extraction →
+  **bbox click-to-source opens the correct page with visible overlay (W2-REQ-29)**;
+  intake double-upload idempotency (same doc id, fresh readback digests, UNSUPPORTED
+  fields redacted); medication list source+artifact-only; cited answer rendering all
+  three CitationV2 source classes with chip click → page/bbox preview; committed
+  exact-SHA eval aggregates; red-gate via committed drill URLs.
+- **All six PDF p.5 elements demonstrable today.** Degraded-until: per-claim inline
+  citations + critic badge (R01, PR #26), medication-list gate cases (R09), dashboard
+  beat (R05), Langfuse correlation walk (owner access; O01).
+- Demo patient: Daron260 Windler79 (Synthea synthetic). UI notes: one garbled guideline
+  snippet (corpus PDF-extraction artifact — avoid via question choice); intake OCR path
+  ~60–90 s (narrate over poll).
+- **Owner actions remaining for the §8 S01 box:** record (kit makes it one sitting),
+  frame/transcript PHI scan, publishing decision, link into README + this index.

@@ -16,10 +16,13 @@ import secrets
 import threading
 import time
 from collections import deque
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+from pydantic import SecretStr
 
 from app.auth.scopes import (
     ScopeCoverageError,
@@ -31,10 +34,11 @@ from app.auth.job_credentials import (
     JobCredentialAuthExpired,
     JobCredentialBindingError,
     JobCredentialUnavailable,
+    JobCredentialVault,
 )
 from app.auth.smart_client import SmartClient, TokenResponse, generate_pkce
 from app.config import Settings
-from app.evidence.packet import build_evidence_packet
+from app.evidence.packet import EvidencePacket, build_evidence_packet
 from app.ingestion.migrations import apply_document_migrations
 from app.ingestion.processor import DocumentProcessor
 from app.ingestion.runtime import DocumentRuntime, build_document_runtime
@@ -59,6 +63,7 @@ from app.schemas.answers import GroundedAnswerContext
 from app.schemas.retrieval import EvidenceSearchRequest
 from app.schemas.workers import WorkerInput, WorkerOutput
 from app.session.store import PostgresSessionStore, Session
+from app.tools.contracts import ToolResult
 from app.tools.fhir_client import FhirClient
 from app.tools.fhir_tools import run_previsit_fanout
 from app.writeback.route_attestations import RouteAttestationNotFound
@@ -70,8 +75,15 @@ from corpus.retrieval import (
     build_clinical_query,
 )
 
+if TYPE_CHECKING:
+    import asyncpg
+
 
 LaunchDestination = Literal["week1", "week2"]
+
+# One asyncpg connection factory per durable-store operation (AF-P1-03: the seam is
+# typed here once instead of appearing as anonymous untyped callables).
+PgConnect = Callable[[], Awaitable["asyncpg.Connection"]]
 
 
 @dataclass(frozen=True)
@@ -110,12 +122,13 @@ def _build_tracer(
     return RequestTracer(sink, events=events)
 
 
-def _build_job_credential_vault(*, settings: Settings, connect, smart: SmartClient):
+def _build_job_credential_vault(
+    *, settings: Settings, connect: PgConnect, smart: SmartClient
+) -> JobCredentialVault:
     """Build the separately encrypted delegated-job credential authority (§3)."""
 
     from app.auth.job_credentials import (
         CredentialCipher,
-        JobCredentialVault,
         PostgresJobCredentialRepository,
     )
 
@@ -123,7 +136,7 @@ def _build_job_credential_vault(*, settings: Settings, connect, smart: SmartClie
     if key is None:  # Settings rejects this first; retain a local fail-closed guard.
         raise ValueError("document credential key is required")
 
-    async def refresh(refresh_token):
+    async def refresh(refresh_token: SecretStr) -> TokenResponse:
         return await smart.refresh_token(refresh_token=refresh_token)
 
     return JobCredentialVault(
@@ -133,7 +146,7 @@ def _build_job_credential_vault(*, settings: Settings, connect, smart: SmartClie
     )
 
 
-def _patient_header(packet) -> dict[str, str] | None:
+def _patient_header(packet: EvidencePacket) -> dict[str, str] | None:
     """Presentation-only chart header (T-E9 UI): name/gender/birth_date from the packet's Patient
     record (age is computed client-side). None if no Patient record was returned."""
     records = packet.by_type("Patient")
@@ -146,7 +159,7 @@ def _patient_header(packet) -> dict[str, str] | None:
     return header or None
 
 
-async def _pg_connect(dsn: str):
+async def _pg_connect(dsn: str) -> "asyncpg.Connection":
     """Open one asyncpg connection for a single session-store operation. asyncpg is imported
     lazily so it is never a hard import dependency for the route tests, which inject a fake
     service and never construct AgentServices."""
@@ -176,12 +189,12 @@ class AgentServices:
             idle_timeout_s=settings.session_idle_timeout_seconds,
             turn_cap=settings.session_turn_cap,
         )
-        self._document_connect = lambda: _pg_connect(
+        self._document_connect: PgConnect = lambda: _pg_connect(
             settings.session_store_dsn.get_secret_value()
         )
         self._document_schema_ready = not settings.w2_document_runtime_enabled
         self.document_runtime: DocumentRuntime | None = None
-        self._document_worker_task = None
+        self._document_worker_task: asyncio.Task[None] | None = None
         # Foreground graph/FHIR turns retain their session-scoped token in memory. Enabled
         # document jobs separately use the encrypted credential vault composed below, so their
         # worker lifetime does not depend on this cache or the UI idle timer (§3).
@@ -691,7 +704,7 @@ class AgentServices:
         )
         builder = self.tracer.begin(accountability)
 
-        def _record_fhir(name: str, latency_ms: float, result) -> None:
+        def _record_fhir(name: str, latency_ms: float, result: ToolResult) -> None:
             # One accountability span per outbound FHIR read (CXR-05): resource, latency, and
             # tri-state outcome — so the trace localizes FHIR work and every PHI read is logged,
             # including timeouts/budget failures. Only the closed outcome and record count enter

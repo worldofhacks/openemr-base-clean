@@ -450,17 +450,22 @@ class PostgresRouteAttestationRepository:
         return binding
 
     async def import_batch(
-        self, batch: RouteAttestationBatch
+        self, batch: RouteAttestationBatch | Mapping[str, object]
     ) -> RouteAttestationImportResult:
         """Atomically merge and activate an attested batch.
 
-        The transaction takes a process-independent advisory lock before reading.
-        Exact repeats are idempotent; omissions preserve old rows; every UUID and
-        numeric identifier is immutable in both directions.
+        Raw mappings from the CLI boundary are parsed into the strict batch model
+        here, before any database work (parse, don't validate).  The transaction
+        takes a process-independent advisory lock before reading.  Exact repeats
+        are idempotent; omissions preserve old rows; every UUID and numeric
+        identifier is immutable in both directions.
         """
 
-        if not isinstance(batch, RouteAttestationBatch):
-            batch = RouteAttestationBatch.model_validate(batch)
+        parsed: RouteAttestationBatch = (
+            batch
+            if isinstance(batch, RouteAttestationBatch)
+            else RouteAttestationBatch.model_validate(batch)
+        )
         conn = await self._open()
         try:
             async with conn.transaction():  # type: ignore[attr-defined]
@@ -487,7 +492,7 @@ class PostgresRouteAttestationRepository:
                 existing_patients = _patient_map(patient_rows)
                 existing_encounters = _encounter_map(encounter_rows)
                 patients, encounters = _merge_batch(
-                    existing_patients, existing_encounters, batch
+                    existing_patients, existing_encounters, parsed
                 )
                 generation_id = _generation_id(patients, encounters)
                 now = datetime.now(timezone.utc)

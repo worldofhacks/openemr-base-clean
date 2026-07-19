@@ -3,6 +3,28 @@
 Refs contain no clinical content.  The in-process resolver is synchronous so it can be
 composed with the graph's ``TurnRefRegistry``; production replicas warm that cache from
 Postgres before composing a turn.
+
+Authority ledger (AF-P1-03; PDF p.6 "one source of truth per data type, no silent
+overwrites"; conservative pending the AF-P2-04 grader answer):
+
+- **Extraction artifacts and citation refs** — *owner:* Agent PostgreSQL
+  (``agent_extraction_refs``, migration 004; this module's ``PostgresArtifactStore``).
+  *Lineage:* produced by the VLM extraction pipeline from the OpenEMR source document,
+  keyed by ``document_id``/``content_hash``/``artifact_version``. *Access:* written
+  only by the dedicated document worker under a patient-pinned delegated credential;
+  read by report/trend/graph turns through the session's patient pin. *Validation:*
+  strict Pydantic models (``ExtractionArtifact``/``CitationV2``); ref-collision inserts
+  fail (`ON CONFLICT` readback compare) — never a silent overwrite.
+- **The OpenEMR artifact copy** (``/AI-Extractions`` document) is a *verified
+  projection*, not an authority: every readback re-reads the Binary bytes and compares
+  a SHA-256 digest against the Postgres-authoritative serialization; divergence is
+  detected and fails closed (``tests/test_artifact_authority_divergence.py``).
+- **Source documents and written vitals** — *owner:* OpenEMR (the EHR record).  The
+  agent's write legs are append-only, exactly-once intents (migration 003) verified by
+  digest readback; the agent never edits or deletes EHR content.
+
+See ``agent/migrations/README.md`` for the per-table ledger and the real migration
+inventory (001, 003–007; there has never been a migration 002).
 """
 
 from __future__ import annotations
@@ -103,7 +125,12 @@ class InMemoryArtifactStore:
 
 
 class PostgresArtifactStore:
-    """Durable artifact authority backed by migration 004.
+    """THE durable artifact authority, backed by migration 004 (AF-P1-03).
+
+    Report, trend, and graph-turn reads resolve extraction artifacts here; the
+    OpenEMR ``/AI-Extractions`` copy is only a digest-verified projection and is
+    never served as an artifact read path.  Persist refuses divergent re-inserts
+    (ref collision) instead of overwriting.
 
     ``resolve`` intentionally reads only the local warmed cache.  Call
     ``warm_for_documents`` at the turn boundary; this preserves the registry's

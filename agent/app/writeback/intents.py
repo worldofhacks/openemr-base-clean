@@ -11,10 +11,32 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Awaitable, Callable, Mapping, Protocol, cast
+from typing import Awaitable, Callable, Mapping, Protocol, TypeAlias, cast
 
 from app.schemas.documents import FailureReason
 from app.schemas.writeback import WriteIntent, WriteLeg, WriteResult, WriteState
+
+
+@dataclass(frozen=True)
+class DocumentWritePayload:
+    """Closed DTO for the source-document and extraction-artifact write legs."""
+
+    filename: str
+    content_type: str
+    content: bytes
+
+
+@dataclass(frozen=True)
+class VitalWritePayload:
+    """Closed DTO for the encounter-pinned vital write leg."""
+
+    encounter_id: str
+    values: Mapping[str, object]
+
+
+# AF-P1-03: the write seam accepts exactly the closed payload union — never a bare
+# ``object``. Each transport still narrows to its own leg's DTO at runtime.
+WritePayload: TypeAlias = DocumentWritePayload | VitalWritePayload
 
 
 def _now() -> str:
@@ -80,7 +102,7 @@ class IntentRepository(Protocol):
 class WriteTransport(Protocol):
     async def discover(self, intent: WriteIntent) -> list[RemoteMatch]: ...
 
-    async def post(self, intent: WriteIntent, payload: object) -> str | None: ...
+    async def post(self, intent: WriteIntent, payload: WritePayload) -> str | None: ...
 
     async def verify(
         self, intent: WriteIntent, match: RemoteMatch, payload_hash: str
@@ -223,7 +245,7 @@ class ExactlyOnceWriter:
         self._repository = repository
         self._transport = transport
 
-    async def execute(self, spec: IntentSpec, *, payload: object) -> WriteResult:
+    async def execute(self, spec: IntentSpec, *, payload: WritePayload) -> WriteResult:
         intent = await self._repository.get_or_create(spec)
         if intent.state is WriteState.COMPLETE:
             return self._result(intent, verified=True)

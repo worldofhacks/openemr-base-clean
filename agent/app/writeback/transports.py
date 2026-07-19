@@ -1,12 +1,22 @@
-"""Injectable source/artifact/vital transports for the shared intent machine."""
+"""Injectable source/artifact/vital transports for the shared intent machine.
+
+The closed payload DTOs live beside the ``WriteTransport`` protocol in
+``app.writeback.intents`` and are re-exported here for their historical import
+path (AF-P1-03).
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Mapping, Protocol
+from typing import Protocol
 
 from app.schemas.writeback import WriteIntent
-from app.writeback.intents import AmbiguousCommitError, RemoteMatch
+from app.writeback.intents import (
+    AmbiguousCommitError,
+    DocumentWritePayload,
+    RemoteMatch,
+    VitalWritePayload,
+    WritePayload,
+)
 from app.writeback.preflight import (
     CategoryExpectation,
     CategoryResolution,
@@ -14,18 +24,17 @@ from app.writeback.preflight import (
 )
 from app.writeback.rest_client import OpenEMRWriteError, strip_caller_attribution
 
-
-@dataclass(frozen=True)
-class DocumentWritePayload:
-    filename: str
-    content_type: str
-    content: bytes
-
-
-@dataclass(frozen=True)
-class VitalWritePayload:
-    encounter_id: str
-    values: Mapping[str, object]
+__all__ = [
+    "DocumentBackend",
+    "DocumentIntentTransport",
+    "DocumentWritePayload",
+    "ExtractionArtifactTransport",
+    "SourceDocumentTransport",
+    "VitalBackend",
+    "VitalIntentTransport",
+    "VitalWritePayload",
+    "WritePayload",
+]
 
 
 class DocumentBackend(Protocol):
@@ -83,7 +92,7 @@ class DocumentIntentTransport:
             payload_hash=intent.payload_hash,
         )
 
-    async def post(self, intent: WriteIntent, payload: object) -> str | None:
+    async def post(self, intent: WriteIntent, payload: WritePayload) -> str | None:
         if not isinstance(payload, DocumentWritePayload):
             raise TypeError("document intent requires DocumentWritePayload")
         resolved = await self._backend.resolve_category(self._category.path)
@@ -131,7 +140,7 @@ class VitalIntentTransport:
             payload_hash=intent.payload_hash,
         )
 
-    async def post(self, intent: WriteIntent, payload: object) -> str | None:
+    async def post(self, intent: WriteIntent, payload: WritePayload) -> str | None:
         if not isinstance(payload, VitalWritePayload):
             raise TypeError("vital intent requires VitalWritePayload")
         clean = strip_caller_attribution(payload.values)

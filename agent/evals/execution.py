@@ -38,6 +38,8 @@ from app.schemas.extraction import (
     IntakeVitals,
     LabPdfExtraction,
     LabResult,
+    MedicationListEntry,
+    MedicationListExtraction,
     NormBBox,
     VitalCandidate,
 )
@@ -105,6 +107,26 @@ _VITAL_LABELS = {
     "pulse": "pulse",
     "respiration": "respiration",
     "oxygen saturation": "oxygen_saturation",
+}
+_MEDICATION_HEADINGS = {"medication list", "medications"}
+_MEDICATION_LABELS = {
+    "medication name": "medication_name",
+    "strength": "strength",
+    "dose": "dose",
+    "route": "route",
+    "frequency": "frequency",
+    "status": "status",
+}
+_MEDICATION_ROW_MARKER = re.compile(r"^medication \d+$")
+_EXTRACTION_SCHEMAS: dict[
+    str,
+    type[LabPdfExtraction]
+    | type[IntakeFormExtraction]
+    | type[MedicationListExtraction],
+] = {
+    "lab_pdf": LabPdfExtraction,
+    "intake_form": IntakeFormExtraction,
+    "medication_list": MedicationListExtraction,
 }
 
 
@@ -321,8 +343,8 @@ async def _replay_recorded_provider_response(
     source: bytes,
     words_boxes: WordsBoxes,
     source_id: str,
-    parsed: LabPdfExtraction | IntakeFormExtraction,
-) -> LabPdfExtraction | IntakeFormExtraction:
+    parsed: LabPdfExtraction | IntakeFormExtraction | MedicationListExtraction,
+) -> LabPdfExtraction | IntakeFormExtraction | MedicationListExtraction:
     proposal = cast(BaseModel, _proposal_without_grounding(parsed))
     provider = _RecordedToolProvider(
         proposal.model_dump(mode="json", round_trip=True)
@@ -333,7 +355,7 @@ async def _replay_recorded_provider_response(
         words_boxes=words_boxes,
         source_document_id=source_id,
     )
-    schema = LabPdfExtraction if doc_type == "lab_pdf" else IntakeFormExtraction
+    schema = _EXTRACTION_SCHEMAS[doc_type]
     strict = schema.model_validate(mapping, strict=True)
     grounded, _ = _reground(
         strict,
@@ -341,7 +363,9 @@ async def _replay_recorded_provider_response(
         document_id=source_id,
         verifier=GroundingVerifier(),
     )
-    return cast(LabPdfExtraction | IntakeFormExtraction, grounded)
+    return cast(
+        LabPdfExtraction | IntakeFormExtraction | MedicationListExtraction, grounded
+    )
 
 
 def fixture_path(path: str) -> Path:
@@ -360,7 +384,7 @@ def prompt_hash() -> str:
 
 
 def schema_hash(doc_type: str) -> str:
-    schema = LabPdfExtraction if doc_type == "lab_pdf" else IntakeFormExtraction
+    schema = _EXTRACTION_SCHEMAS.get(doc_type, IntakeFormExtraction)
     canonical = json.dumps(schema.model_json_schema(), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -850,6 +874,104 @@ def _intake(
     return intake, normalized, sections_seen
 
 
+def _medication(
+    lines: Sequence[SourceLine], words_boxes: WordsBoxes, source_id: str
+) -> tuple[MedicationListExtraction, dict[str, object]]:
+    """Parse a medication-list source anchor (third document type, R09).
+
+    A structural all-uppercase line (a section heading or end marker) closes the
+    medication section.  A mixed-case line without a recognized label continues the
+    previous label's value: real medication instructions wrap across lines, and the
+    joined value stays visible in the source even when the bounded single-row grounding
+    contract cannot attest it (the honestly-ungrounded, visible-and-unverified posture).
+    """
+
+    active = False
+    as_of: tuple[str | None, int] = (None, 1)
+    rows: list[dict[str, tuple[str | None, int]]] = []
+    current: dict[str, tuple[str | None, int]] | None = None
+    last_field: str | None = None
+
+    for line in lines:
+        folded = " ".join(line.text.casefold().split())
+        if "embedded note" in folded:
+            break
+        if folded in _MEDICATION_HEADINGS:
+            active = True
+            continue
+        if not active:
+            continue
+        stripped = line.text.strip()
+        if stripped and stripped == stripped.upper() and stripped != stripped.lower():
+            break  # structural heading/end marker closes the section
+        if _MEDICATION_ROW_MARKER.fullmatch(folded):
+            current = {}
+            rows.append(current)
+            last_field = None
+            continue
+        parsed = _label(line.text)
+        if parsed is not None and parsed[0] == "as of date":
+            as_of = (_optional(parsed[1]), line.page)
+            last_field = None
+            continue
+        if parsed is not None and parsed[0] in _MEDICATION_LABELS:
+            if current is None:
+                current = {}
+                rows.append(current)
+            field = _MEDICATION_LABELS[parsed[0]]
+            current[field] = (_optional(parsed[1]), line.page)
+            last_field = field
+            continue
+        continuation = _optional(line.text)
+        if current is not None and last_field is not None and continuation:
+            existing, page = current[last_field]
+            joined = f"{existing} {continuation}" if existing else continuation
+            current[last_field] = (joined, page)
+
+    verifier = GroundingVerifier()
+    entries: list[MedicationListEntry] = []
+    normalized_rows: list[dict[str, object]] = []
+    for index, row in enumerate(rows):
+        grounded = {
+            name: _ground(
+                verifier,
+                value=row.get(name, (None, 1))[0],
+                words_boxes=words_boxes,
+                source_id=source_id,
+                field_id=f"medications[{index}].{name}",
+                page=row.get(name, (None, 1))[1],
+            )
+            for name in _MEDICATION_LABELS.values()
+        }
+        entries.append(MedicationListEntry.model_validate(grounded, strict=True))
+        normalized_rows.append(
+            {name: row.get(name, (None, 1))[0] for name in _MEDICATION_LABELS.values()}
+        )
+
+    as_of_value = date.fromisoformat(as_of[0]) if as_of[0] is not None else None
+    as_of_field = _ground(
+        verifier,
+        value=as_of_value,
+        words_boxes=words_boxes,
+        source_id=source_id,
+        field_id="as_of_date",
+        page=as_of[1],
+    )
+    extraction = MedicationListExtraction(
+        medications=entries, as_of_date=as_of_field, source_document_id=source_id
+    )
+    # A second strict parse is the same boundary used after a provider tool response.
+    extraction = MedicationListExtraction.model_validate(
+        extraction.model_dump(), strict=True
+    )
+    normalized: dict[str, object] = {
+        "medications": normalized_rows,
+        "as_of_date": as_of[0],
+        "source_document_id": source_id,
+    }
+    return extraction, normalized
+
+
 def _retrieval_terms(fields: dict[str, object], doc_type: str) -> list[str]:
     values: list[str] = []
     if doc_type == "lab_pdf":
@@ -859,7 +981,7 @@ def _retrieval_terms(fields: dict[str, object], doc_type: str) -> list[str]:
         for result in results:
             if isinstance(result, dict) and isinstance(result.get("test_name"), str):
                 values.append(result["test_name"])
-    else:
+    elif doc_type == "intake_form":
         concern = fields.get("chief_concern")
         if isinstance(concern, str):
             tokens = re.findall(r"[A-Za-z][A-Za-z-]+", concern.casefold())
@@ -867,6 +989,8 @@ def _retrieval_terms(fields: dict[str, object], doc_type: str) -> list[str]:
             useful = [token for token in tokens if token not in stop]
             if useful:
                 values.append(" ".join(useful[:4]))
+    # medication_list: grounding-only posture — no PHI-free clinical query is derived
+    # from a medication list, so retrieval is never attempted for this document type.
     return values[:8]
 
 
@@ -968,7 +1092,7 @@ def _local_retrieve(
 
 
 def normalize_typed_extraction(
-    extraction: LabPdfExtraction | IntakeFormExtraction,
+    extraction: LabPdfExtraction | IntakeFormExtraction | MedicationListExtraction,
 ) -> dict[str, object]:
     """Project a production grounded extraction into the scorer's stable value shape."""
 
@@ -980,6 +1104,18 @@ def normalize_typed_extraction(
             return _json_number(value)
         return value
 
+    if isinstance(extraction, MedicationListExtraction):
+        return {
+            "medications": [
+                {
+                    name: scalar(getattr(entry, name).value)
+                    for name in _MEDICATION_LABELS.values()
+                }
+                for entry in extraction.medications
+            ],
+            "as_of_date": scalar(extraction.as_of_date.value),
+            "source_document_id": extraction.source_document_id,
+        }
     if isinstance(extraction, LabPdfExtraction):
         return {
             "results": [
@@ -1028,7 +1164,7 @@ def finalize_typed_extraction(
     *,
     case_id: str,
     doc_type: str,
-    extraction: LabPdfExtraction | IntakeFormExtraction,
+    extraction: LabPdfExtraction | IntakeFormExtraction | MedicationListExtraction,
     fields: dict[str, object] | None = None,
     sections_seen: set[str] | None = None,
     source_lines: Sequence[SourceLine] = (),
@@ -1077,6 +1213,11 @@ def finalize_typed_extraction(
             if stale
             else "extract"
         )
+    elif doc_type == "medication_list":
+        # Source + grounded artifact ONLY (pinned by tests/test_medication_list.py):
+        # never a vitals write, never a MedicationRequest, no completeness refusal.
+        # Ungrounded leaves persist as visible-and-unverified rather than refused.
+        verdict = "extract"
     else:
         intake = extraction
         assert isinstance(intake, IntakeFormExtraction)
@@ -1245,6 +1386,9 @@ async def execute_source(
         sections_seen: set[str] = set()
     elif doc_type == "intake_form":
         parsed, _fields, sections_seen = _intake(lines, words_boxes, source_id)
+    elif doc_type == "medication_list":
+        parsed, _fields = _medication(lines, words_boxes, source_id)
+        sections_seen = set()
     else:
         raise ValueError("unsupported recorded document type")
 

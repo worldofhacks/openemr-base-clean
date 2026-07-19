@@ -144,3 +144,30 @@ GitHub artifact retention is ~14 days; these repository copies are the durable r
 - The committed `agent/evals/results-tier2.json` INCONCLUSIVE placeholder is replaced by
   full E01 against the accepted SHA (with the submission check binding evidence SHA =
   release SHA); it is intentionally untouched here.
+
+## C02 phase 1 — protection applied and exported (2026-07-19, owner-authorized run)
+
+### GitHub ruleset (applied 2026-07-19T17:22-04:00)
+- Ruleset id **19180393** `w2-main-required-gates`, enforcement **active**, target
+  `refs/heads/main`, `bypass_actors: []` (`current_user_can_bypass: never`).
+- Rules: deletion blocked; non-fast-forward blocked; pull_request required (0 approvals,
+  stale-review dismissal on push); required status checks (strict up-to-date policy):
+  `eval-tier1`, `quality-security-contracts / ruff-mypy-coverage`,
+  `quality-security-contracts / pip-audit`, `quality-security-contracts / bandit-semgrep`,
+  `quality-security-contracts / openapi-bruno-phi-corpus`.
+- Export: `gh api repos/worldofhacks/openemr-base-clean/rulesets/19180393`
+  (also html: https://github.com/worldofhacks/openemr-base-clean/rules/19180393).
+- First protected-flow merge: PR #24 → merge commit `43605c2` (the green drill of the
+  phase-2 runbook records the block/merge pair separately).
+
+### GitLab (project 1537, alexander.miller/openemr-base-clean; applied 2026-07-19)
+- Protected branch `main`: push **Maintainers** (id 40), merge **Maintainers**,
+  `allow_force_push: false`. Note: found ALREADY protected at Maintainers/Maintainers
+  (audit D7 could not verify this; now confirmed via API); briefly set to push=No one,
+  then restored to Maintainers because the submission mirror is updated by direct
+  maintainer pushes — "No one" would freeze the mirror.
+- Merge checks: `only_allow_merge_if_pipeline_succeeds: true`,
+  `allow_merge_on_skipped_pipeline: false`.
+- Exports (API responses captured at apply time): protected-branch and merge-check
+  JSON archived in this commit's message context and reproducible via
+  `GET /api/v4/projects/1537/protected_branches` + `GET /api/v4/projects/1537`.

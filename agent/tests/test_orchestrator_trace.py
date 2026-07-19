@@ -169,3 +169,204 @@ async def test_trace_never_retains_model_io_claims_or_served_output():
     verify = next(step for step in trace.steps if step.name == "verify")
     assert verify.detail == {"verdict": "pass", "claim_type": "ConditionClaim"}
     assert trace.served_output is None
+
+
+# =======================================================================================
+# R03 / W2-REQ-74 — worker sub-call capture: extraction and retrieval sub-calls must be
+# traceable within their worker spans (PDF p.7). These tests pin the recorder seam the
+# graph installs around each worker hop and the sub-spans the production worker
+# adapters emit through it.
+# =======================================================================================
+
+
+def _worker_payload(correlation_id, *, document_refs=(), evidence_refs=()):
+    from app.schemas.workers import WorkerInput
+
+    return WorkerInput(
+        correlation_id=correlation_id,
+        turn=0,
+        patient_ref="patient:synthetic-patient",
+        document_refs=list(document_refs),
+        evidence_refs=list(evidence_refs),
+        request_kind="previsit_brief",
+    )
+
+
+def test_subspan_recorder_captures_named_boundaries_and_is_noop_without_install():
+    import time
+
+    from app.orchestrator.subspans import SubSpanRecorder, recording, sub_span
+
+    # Without an installed recorder the seam is a strict no-op (workers stay pure).
+    with sub_span("retrieval.query_build") as metadata:
+        metadata["ignored"] = True
+
+    recorder = SubSpanRecorder()
+    before = time.time_ns()
+    with recording(recorder):
+        with sub_span("retrieval.query_build", k=2) as metadata:
+            metadata["hit_count"] = 1
+    after = time.time_ns()
+
+    assert [span.name for span in recorder.spans] == ["retrieval.query_build"]
+    span = recorder.spans[0]
+    assert before <= span.started_ns <= span.ended_ns <= after
+    assert span.metadata["k"] == 2 and span.metadata["hit_count"] == 1
+    # The context uninstalls on exit — later sub-calls are not attributed to this hop.
+    with sub_span("retrieval.query_build"):
+        pass
+    assert len(recorder.spans) == 1
+
+
+async def test_evidence_worker_records_query_search_and_register_subspans():
+    from app.orchestrator.refs import TurnRefRegistry
+    from app.orchestrator.subspans import SubSpanRecorder, recording
+    from app.orchestrator.workers.evidence_retriever import build_evidence_worker
+    from app.schemas.retrieval import EvidenceSearchRequest
+    from corpus.retrieval import EvidenceHit, RetrievalOutcome
+
+    manifest_hash = "a" * 64
+
+    class FixtureRetriever:
+        def search(self, query, *, k, demographic_strings=()):
+            return RetrievalOutcome(
+                items=(
+                    EvidenceHit(
+                        source_id=f"vadod-diabetes@{manifest_hash}",
+                        section="Glycemic Targets",
+                        chunk_id="vadod-diabetes-targets-001",
+                        quote="Use individualized glycemic targets.",
+                        score=0.91,
+                        corpus_version=f"vadod-cpg-trio@{manifest_hash}",
+                    ),
+                ),
+                corpus_version=f"vadod-cpg-trio@{manifest_hash}",
+                manifest_hash=manifest_hash,
+                degraded_reasons=(),
+            )
+
+    refs = TurnRefRegistry("corr-r03-retrieval")
+    request_ref = refs.put(
+        EvidenceSearchRequest(query="type 2 diabetes hba1c", k=2),
+        kind="evidence-request")
+    worker = build_evidence_worker(FixtureRetriever(), refs)
+    recorder = SubSpanRecorder()
+
+    with recording(recorder):
+        output = await worker(
+            _worker_payload("corr-r03-retrieval", evidence_refs=(request_ref,)))
+
+    assert output.status == "complete" and output.citation_refs
+    names = [span.name for span in recorder.spans]
+    assert names == [
+        "retrieval.query_build",
+        "retrieval.search.bm25_dense_rerank",
+        "retrieval.register_evidence",
+    ]
+    search_span = recorder.spans[1]
+    assert search_span.metadata["k"] == 2
+    assert search_span.metadata["hit_count"] == 1
+    register_span = recorder.spans[2]
+    assert register_span.metadata["citation_count"] == 1
+    # PHI posture: no clinical text enters sub-span names or metadata values.
+    assert "glycemic" not in repr(recorder.spans).casefold()
+
+
+async def test_evidence_worker_records_failed_search_subspan_on_unavailability():
+    from app.orchestrator.refs import TurnRefRegistry
+    from app.orchestrator.subspans import SubSpanRecorder, recording
+    from app.orchestrator.workers.evidence_retriever import build_evidence_worker
+    from app.schemas.retrieval import EvidenceSearchRequest
+    from corpus.retrieval import RetrievalUnavailableError
+
+    class UnavailableRetriever:
+        def search(self, query, *, k, demographic_strings=()):
+            raise RetrievalUnavailableError("synthetic unavailable")
+
+    refs = TurnRefRegistry("corr-r03-degraded")
+    request_ref = refs.put(
+        EvidenceSearchRequest(query="type 2 diabetes hba1c", k=2),
+        kind="evidence-request")
+    recorder = SubSpanRecorder()
+
+    with recording(recorder):
+        output = await build_evidence_worker(UnavailableRetriever(), refs)(
+            _worker_payload("corr-r03-degraded", evidence_refs=(request_ref,)))
+
+    # The degraded outcome is preserved AND the failed sub-call remains traceable.
+    assert output.status == "degraded"
+    names = [span.name for span in recorder.spans]
+    assert "retrieval.search.bm25_dense_rerank" in names
+
+
+async def test_intake_worker_passes_stage_telemetry_to_capable_pipelines():
+    from app.orchestrator.subspans import SubSpanRecorder, recording
+    from app.orchestrator.workers.intake_extractor import (
+        PersistedExtraction,
+        run_extraction_worker,
+    )
+
+    class TelemetryCapablePipeline:
+        """Mirrors the concrete DocumentExtractionPipeline's optional telemetry seam."""
+
+        async def extract_document(self, document_ref, *, patient_ref, correlation_id,
+                                   telemetry=None):
+            assert telemetry is not None
+            for stage in ("ocr", "vlm", "schema_parse", "artifact_write"):
+                async with telemetry.stage(stage) as span:
+                    assert span is not None
+            telemetry.record_grounding(fields_grounded=1, fields_unsupported=0)
+            telemetry.finish(success=True)
+            return PersistedExtraction(
+                artifact_ref="document:synthetic:artifact",
+                citation_refs=("document:synthetic:citation:0",),
+                fields_grounded=1,
+                fields_unsupported=0,
+            )
+
+    recorder = SubSpanRecorder()
+    with recording(recorder):
+        output = await run_extraction_worker(
+            _worker_payload("corr-r03-intake", document_refs=("document-synthetic",)),
+            pipeline=TelemetryCapablePipeline())
+
+    assert output.artifact_refs == ["document:synthetic:artifact"]
+    names = [span.name for span in recorder.spans]
+    # Stage sub-spans close before the per-document sub-call span that contains them.
+    assert names == [
+        "intake.ocr",
+        "intake.vlm",
+        "intake.schema_parse",
+        "intake.artifact_write",
+        "intake.extract_document",
+    ]
+
+
+async def test_intake_worker_never_passes_telemetry_to_minimal_protocol_pipelines():
+    from app.orchestrator.subspans import SubSpanRecorder, recording
+    from app.orchestrator.workers.intake_extractor import (
+        PersistedExtraction,
+        run_extraction_worker,
+    )
+
+    class MinimalPipeline:
+        """The frozen ExtractionPipeline protocol surface — no telemetry parameter."""
+
+        def __init__(self):
+            self.calls = 0
+
+        async def extract_document(self, document_ref, *, patient_ref, correlation_id):
+            self.calls += 1
+            return PersistedExtraction(artifact_ref="document:synthetic:artifact")
+
+    pipeline = MinimalPipeline()
+    recorder = SubSpanRecorder()
+    with recording(recorder):
+        output = await run_extraction_worker(
+            _worker_payload("corr-r03-minimal", document_refs=("document-synthetic",)),
+            pipeline=pipeline)
+
+    assert pipeline.calls == 1
+    assert output.artifact_refs == ["document:synthetic:artifact"]
+    # The per-document sub-call is still traceable even without pipeline stage seams.
+    assert [span.name for span in recorder.spans] == ["intake.extract_document"]

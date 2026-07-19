@@ -48,6 +48,11 @@ class GraphState(TypedDict):
     extracted_ref: str | None
     retrieved_ref: str | None
     routing_failed: bool
+    # R03/AF-P1-02: need predicates derived ONCE from the validated request state
+    # (caller-supplied WorkerInput refs) — the supervisor decides when extraction and
+    # retrieval are needed and skips unneeded workers (PDF p.4 Stage 3; W2-REQ-11).
+    needs_intake: bool
+    needs_retrieval: bool
     # Only trace-addressable refs cross from worker output to composition.
     verified_facts: tuple[str, ...]
     evidence_snippets: tuple[str, ...]

@@ -84,6 +84,14 @@ class Settings(BaseSettings):
     session_idle_timeout_seconds: int = Field(default=1800, gt=0)
     session_turn_cap: int = Field(default=20, gt=0)
 
+    # --- W2 graph readiness declaration (R03/AF-P1-02) ---
+    # The runtime routing flag stays the per-call env var W2_GRAPH_ENABLED (frozen
+    # W2-M3 contract). This setting only declares whether THIS deployment REQUIRES the
+    # graph: readiness always reports the graph state, but fails (hard probe) only
+    # when the graph is declared required and disabled. Default False preserves the
+    # fail-closed W1 fallback mode: graph off → W1 serving path, readiness green.
+    w2_graph_required: bool = False
+
     # --- W2 document runtime (W2-D1/D9/D10; §2/§3) ---
     # Disabled by default so the frozen W1 serving contract remains bootable. Enabling it
     # requires the replacement SMART client plus both OA3 category attestations and the

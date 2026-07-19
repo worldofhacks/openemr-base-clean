@@ -13,6 +13,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.auth.smart_client import TokenResponse
@@ -518,3 +519,65 @@ def test_runtime_declares_retrieval_dependency_and_packages_corpus():
     assert "COPY migrations ./migrations" in dockerfile
     assert "libgomp1" in dockerfile
     assert "tesseract-ocr" in dockerfile and "tesseract-ocr-eng" in dockerfile
+
+
+# =======================================================================================
+# R03 / AF-P1-02 item 4 — readiness reports graph state; readiness fails only where the
+# deployment DECLARES the graph required, preserving the fail-closed W1 fallback mode.
+# =======================================================================================
+
+
+def test_settings_graph_required_defaults_off_preserving_w1_fallback(
+    complete_env, monkeypatch
+):
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    assert get_settings().w2_graph_required is False
+
+    monkeypatch.setenv("W2_GRAPH_REQUIRED", "true")
+    get_settings.cache_clear()
+    assert get_settings().w2_graph_required is True
+    get_settings.cache_clear()
+
+
+def _graph_probe_services(*, graph_required: bool):
+    import app.service as service_module
+
+    services = object.__new__(service_module.AgentServices)
+    services.settings = type(
+        "SettingsStub", (), {"w2_graph_required": graph_required}
+    )()
+    return services
+
+
+@pytest.mark.parametrize(
+    ("required", "enabled", "kind", "ok", "detail"),
+    [
+        (False, False, "soft", True, "disabled_w1_fallback"),
+        (False, True, "soft", True, "graph_enabled"),
+        (True, True, "hard", True, "graph_enabled"),
+        (True, False, "hard", False, "graph_required_but_disabled"),
+    ],
+    ids=[
+        "optional_disabled_reports_w1_fallback",
+        "optional_enabled_reports_enabled",
+        "required_enabled_is_ready",
+        "required_disabled_fails_readiness",
+    ],
+)
+def test_graph_state_probe_reports_state_and_fails_only_when_declared_required(
+    monkeypatch, required, enabled, kind, ok, detail
+):
+    if enabled:
+        monkeypatch.setenv("W2_GRAPH_ENABLED", "1")
+    else:
+        monkeypatch.delenv("W2_GRAPH_ENABLED", raising=False)
+    services = _graph_probe_services(graph_required=required)
+
+    result = asyncio.run(services.probe_graph_state(services.settings))
+
+    assert result.name == "graph_state"
+    assert result.kind == kind
+    assert result.ok is ok
+    assert result.detail == detail

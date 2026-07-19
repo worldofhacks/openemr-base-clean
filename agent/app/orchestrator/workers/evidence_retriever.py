@@ -4,7 +4,14 @@ Only a ref to ``EvidenceSearchRequest`` crosses the worker boundary. The adapter
 resolves it, re-applies the PHI-free clinical-term builder, calls the real hybrid
 retriever, and stores canonical EvidenceSnippet/CitationV2 objects behind refs.
 
-Traceability: W2-D2/W2-D4/W2-D6; W2_ARCHITECTURE.md §2/§4/§5.
+Sub-call tracing (R03; W2-REQ-74): each retrieval sub-call is marked with
+``sub_span`` so it nests inside this worker's span in the graph trace — the query
+build, the BM25+dense+rerank hybrid search (one sub-call: its per-stage boundaries
+live inside ``corpus.retrieval`` and are reported there via structured logs), and the
+evidence/citation registration. Metadata carries only operational scalars, never
+query text or clinical values.
+
+Traceability: W2-D2/W2-D4/W2-D6; W2_ARCHITECTURE.md §2/§4/§5/§6.
 """
 
 from __future__ import annotations
@@ -17,6 +24,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.orchestrator.composer import citation_for_guideline
 from app.orchestrator.refs import RefResolver
+from app.orchestrator.subspans import sub_span
 from app.orchestrator.workers.contracts import WorkerCallable
 from app.schemas.citations import EvidenceSnippet
 from app.schemas.retrieval import EvidenceSearchRequest
@@ -59,17 +67,28 @@ def build_evidence_worker(
             request = refs.resolve(request_ref)
             if not isinstance(request, EvidenceSearchRequest):
                 raise TypeError("evidence ref did not resolve to EvidenceSearchRequest")
-            query = build_clinical_query(
-                re.split(r"[,;|]+", request.query),
-                demographic_strings=demographics,
-            )
-            try:
-                outcome = await run_in_threadpool(
-                    retriever.search,
-                    query,
-                    k=request.k,
+            with sub_span("retrieval.query_build"):
+                query = build_clinical_query(
+                    re.split(r"[,;|]+", request.query),
                     demographic_strings=demographics,
                 )
+            try:
+                # One hybrid sub-call: BM25 sparse + dense + rerank execute inside
+                # ``corpus.retrieval`` behind this boundary; the sub-span records the
+                # real call boundary and outcome (a failed search stays traceable).
+                with sub_span(
+                    "retrieval.search.bm25_dense_rerank", k=request.k
+                ) as search_meta:
+                    outcome = await run_in_threadpool(
+                        retriever.search,
+                        query,
+                        k=request.k,
+                        demographic_strings=demographics,
+                    )
+                    search_meta["hit_count"] = len(outcome.items)
+                    search_meta["degraded_reasons"] = ",".join(
+                        outcome.degraded_reasons
+                    )
             except RetrievalUnavailableError:
                 # §6/W2-D4: unavailable is distinct from a healthy empty hit and is a
                 # soft graph degradation. Do not turn a grounded W1 chart brief into a
@@ -83,20 +102,27 @@ def build_evidence_worker(
                     reason_code=None,
                 )
             degraded = degraded or bool(outcome.degraded_reasons)
-            for hit in outcome.items:
-                snippet = EvidenceSnippet(
-                    source_id=hit.source_id,
-                    section=hit.section,
-                    chunk_id=hit.chunk_id,
-                    quote=hit.quote,
-                    score=hit.score,
-                    corpus_version=hit.corpus_version,
-                )
-                citation = citation_for_guideline(snippet)
-                if not citation.page_or_section or not citation.page_or_section.strip():
-                    raise ValueError("guideline evidence requires a section")
-                snippet_refs.append(refs.put(snippet, kind="evidence-snippet"))
-                citation_refs.append(refs.put(citation, kind="guideline-citation"))
+            with sub_span("retrieval.register_evidence") as register_meta:
+                for hit in outcome.items:
+                    snippet = EvidenceSnippet(
+                        source_id=hit.source_id,
+                        section=hit.section,
+                        chunk_id=hit.chunk_id,
+                        quote=hit.quote,
+                        score=hit.score,
+                        corpus_version=hit.corpus_version,
+                    )
+                    citation = citation_for_guideline(snippet)
+                    if (
+                        not citation.page_or_section
+                        or not citation.page_or_section.strip()
+                    ):
+                        raise ValueError("guideline evidence requires a section")
+                    snippet_refs.append(refs.put(snippet, kind="evidence-snippet"))
+                    citation_refs.append(
+                        refs.put(citation, kind="guideline-citation")
+                    )
+                register_meta["citation_count"] = len(citation_refs)
 
         return WorkerOutput(
             correlation_id=payload.correlation_id,

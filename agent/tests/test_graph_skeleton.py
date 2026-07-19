@@ -736,3 +736,460 @@ def test_flag_on_sse_is_served_from_the_graph_entrypoint(complete_env, monkeypat
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/event-stream")
     assert calls, "flag-ON SSE must be served through the graph entrypoint run_graph_turn"
+
+
+# =======================================================================================
+# R03 / AF-P1-02 — conditional need-sensitive routing (PDF p.4 Stage 3: "The supervisor
+# should decide when extraction is needed, when evidence retrieval is needed, and when
+# the final answer is ready. Keep handoffs explicit."). W2-REQ-04/11/85: valid turns
+# independently skip each worker; every conditional hop is explainable.
+# =======================================================================================
+
+
+def _r03_request_state(correlation_id, *, document_refs=(), evidence_refs=()):
+    """Validated request state (the caller-supplied WorkerInput) driving the routing
+    predicates: needs_intake ⇔ completed document refs exist; needs_retrieval ⇔ the
+    deterministic clinical-query builder produced an evidence request ref."""
+    from app.schemas.workers import WorkerInput
+
+    return WorkerInput(
+        correlation_id=correlation_id,
+        turn=0,
+        patient_ref="session:synthetic-session",
+        document_refs=list(document_refs),
+        evidence_refs=list(evidence_refs),
+        request_kind="previsit_brief",
+    )
+
+
+def _r03_counting_worker(name, calls, *, citation_refs=()):
+    from app.schemas.workers import WorkerOutput
+
+    async def run(payload):
+        calls.append(payload.turn)
+        return WorkerOutput(
+            correlation_id=payload.correlation_id,
+            worker=name,
+            status="complete",
+            artifact_refs=[],
+            citation_refs=list(citation_refs),
+            reason_code=None,
+        )
+
+    return run
+
+
+_R03_ROUTE_MATRIX = [
+    # (case, document_refs, evidence_refs, extract_calls, retrieve_calls)
+    ("neither", (), (), 0, 0),
+    ("intake_only", ("document:synthetic-1",), (), 1, 0),
+    ("retrieval_only", (), ("trace:synthetic/ref/1/evidence-request",), 0, 1),
+    ("both", ("document:synthetic-1",), ("trace:synthetic/ref/1/evidence-request",), 1, 1),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "document_refs", "evidence_refs", "extract_calls", "retrieve_calls"),
+    _R03_ROUTE_MATRIX, ids=[row[0] for row in _R03_ROUTE_MATRIX])
+async def test_supervisor_routes_neither_either_both_without_executing_unneeded_workers(
+        monkeypatch, case, document_refs, evidence_refs, extract_calls, retrieve_calls):
+    # spec(R03/AF-P1-02; W2-REQ-11)
+    # guards: missing-ref sequential routing that always executes both workers — an
+    # unneeded extraction/retrieval hop on every valid turn makes the supervisor's
+    # "decide when extraction/retrieval is needed" (PDF p.4) a fiction.
+    monkeypatch.setenv(FLAG, "1")
+    from app.orchestrator.graph import run_graph_turn
+
+    corr = f"w2r03-corr-{case}"
+    extract_seen: list[int] = []
+    retrieve_seen: list[int] = []
+    packet, provider = _packet_and_provider()
+    result = await asyncio.wait_for(
+        run_graph_turn(
+            run_brief=_loop_runner(packet, provider),
+            correlation_id=corr,
+            worker_input=_r03_request_state(
+                corr, document_refs=document_refs, evidence_refs=evidence_refs),
+            extraction_worker=_r03_counting_worker("intake_extractor", extract_seen),
+            retrieval_worker=_r03_counting_worker("evidence_retriever", retrieve_seen),
+        ),
+        timeout=TURN_TIMEOUT_S)
+
+    assert len(extract_seen) == extract_calls, (
+        f"{case}: intake extractor executed {len(extract_seen)}x, expected {extract_calls}")
+    assert len(retrieve_seen) == retrieve_calls, (
+        f"{case}: evidence retriever executed {len(retrieve_seen)}x, expected {retrieve_calls}")
+
+    decisions = [_enum_value(r.supervisor_decision) for r in result.handoffs]
+    assert ("route_extract" in decisions) == bool(extract_calls)
+    assert ("route_retrieve" in decisions) == bool(retrieve_calls)
+    # The supervisor still decides when the final answer is ready on every route.
+    assert "compose_answer" in decisions
+    assert decisions[-1] == "done"
+    assert result.brief.source == "llm"
+    assert "500 mg" in result.brief.text and "5000" not in result.brief.text
+
+
+async def test_both_route_merges_deterministically_extraction_before_retrieval(monkeypatch):
+    # spec(R03/AF-P1-02; W2-REQ-04/85)
+    # guards: a nondeterministic merge when both workers run — citation order or hop
+    # order varying between identical turns would make handoffs unexplainable and
+    # golden behavior unstable.
+    monkeypatch.setenv(FLAG, "1")
+    import app.orchestrator.graph as graph_mod
+    from app.orchestrator.refs import TurnRefRegistry
+    from app.schemas.citations import CitationV2
+
+    document_citation = CitationV2(
+        source_type="uploaded_document",
+        source_id="document:synthetic",
+        page_or_section="1",
+        field_or_chunk_id="results.0.value",
+        quote_or_value="92",
+    )
+    guideline_citation = CitationV2(
+        source_type="guideline",
+        source_id="vadod-diabetes@" + "a" * 64,
+        page_or_section="Glycemic Targets",
+        field_or_chunk_id="vadod-diabetes-targets-001",
+        quote_or_value="Use individualized glycemic targets.",
+    )
+
+    captured_orders: list[list[CitationV2]] = []
+    real_compose = graph_mod.composer.compose_answer
+
+    async def compose_spy(*, citations, **kwargs):
+        captured_orders.append(list(citations))
+        return await real_compose(citations=citations, **kwargs)
+
+    monkeypatch.setattr(graph_mod.composer, "compose_answer", compose_spy)
+
+    decision_runs: list[list[str]] = []
+    for _run in range(2):
+        corr = "w2r03-corr-merge"
+        refs = TurnRefRegistry(corr)
+        document_ref = refs.put(document_citation, kind="document-citation")
+        guideline_ref = refs.put(guideline_citation, kind="guideline-citation")
+        packet, provider = _packet_and_provider()
+        result = await asyncio.wait_for(
+            graph_mod.run_graph_turn(
+                run_brief=_loop_runner(packet, provider),
+                correlation_id=corr,
+                worker_input=_r03_request_state(
+                    corr,
+                    document_refs=("document:synthetic",),
+                    evidence_refs=("trace:synthetic/ref/1/evidence-request",)),
+                extraction_worker=_r03_counting_worker(
+                    "intake_extractor", [], citation_refs=(document_ref,)),
+                retrieval_worker=_r03_counting_worker(
+                    "evidence_retriever", [], citation_refs=(guideline_ref,)),
+                ref_registry=refs,
+            ),
+            timeout=TURN_TIMEOUT_S)
+        decision_runs.append(
+            [_enum_value(r.supervisor_decision) for r in result.handoffs])
+
+    # Identical inputs → identical hop sequence, extraction strictly before retrieval.
+    assert decision_runs[0] == decision_runs[1]
+    assert decision_runs[0].index("route_extract") < decision_runs[0].index("route_retrieve")
+    # The merged citation lane is deterministic: extraction citations, then retrieval.
+    assert len(captured_orders) == 2
+    assert captured_orders[0] == captured_orders[1] == [
+        document_citation, guideline_citation]
+
+
+async def test_default_skeleton_input_still_routes_both_stub_workers(monkeypatch):
+    # spec(R03/AF-P1-02 compatibility with W2-M3:AC-1/AC-2)
+    # guards: the routing predicates breaking the frozen M3 skeleton contract — with no
+    # validated request state supplied, the compatibility stub graph must keep routing
+    # through both named workers so the pinned handoff/span contract stays exercised.
+    monkeypatch.setenv(FLAG, "1")
+    result = await _graph_turn("w2r03-corr-default")
+    decisions = [_enum_value(r.supervisor_decision) for r in result.handoffs]
+    assert "route_extract" in decisions and "route_retrieve" in decisions
+
+
+async def test_route_decisions_reach_event_lane_with_correlation_ids(monkeypatch):
+    # spec(R03/AF-P1-02; W2-REQ-85: "The supervisor is inspectable; handoffs explainable")
+    # guards: routing decisions visible only in the Langfuse sink — the structured EVENT
+    # lane must independently carry every supervisor decision with the correlation id,
+    # or a sink outage erases the routing audit trail.
+    monkeypatch.setenv(FLAG, "1")
+    from app.observability.events import (
+        EventEmitter,
+        EventType,
+        InMemoryEventSink,
+    )
+    from app.orchestrator.graph import run_graph_turn
+
+    corr = "w2r03-corr-events"
+    sink = InMemoryEventSink()
+    emitter = EventEmitter(sink)
+    packet, provider = _packet_and_provider()
+    await asyncio.wait_for(
+        run_graph_turn(
+            run_brief=_loop_runner(packet, provider),
+            correlation_id=corr,
+            worker_input=_r03_request_state(
+                corr,
+                document_refs=("document:synthetic-1",),
+                evidence_refs=("trace:synthetic/ref/1/evidence-request",)),
+            extraction_worker=_r03_counting_worker("intake_extractor", []),
+            retrieval_worker=_r03_counting_worker("evidence_retriever", []),
+            events=emitter,
+        ),
+        timeout=TURN_TIMEOUT_S)
+
+    assert emitter.dropped == 0, "a route-decision event failed closed-registry validation"
+    handoff_events = [event for event in sink.events
+                      if event.event_type is EventType.HANDOFF_COMPLETED]
+    assert all(event.correlation_id == corr for event in handoff_events)
+    supervisor_decisions = [
+        event.attributes["decision"] for event in handoff_events
+        if event.attributes.get("worker") == "supervisor"]
+    # One structured route-decision event per supervisor decision, in decision order.
+    assert supervisor_decisions == [
+        "route_extract", "route_retrieve", "compose_answer",
+        "review_critic", "critic_approve", "done"]
+
+
+async def test_skipped_worker_emits_no_route_decision_event_for_that_branch(monkeypatch):
+    # spec(R03/AF-P1-02; W2-REQ-11/85)
+    # guards: an event lane that still claims a worker hop after routing skipped it —
+    # the decision record would contradict the executed graph and poison the audit.
+    monkeypatch.setenv(FLAG, "1")
+    from app.observability.events import (
+        EventEmitter,
+        EventType,
+        InMemoryEventSink,
+    )
+    from app.orchestrator.graph import run_graph_turn
+
+    corr = "w2r03-corr-skip-events"
+    sink = InMemoryEventSink()
+    emitter = EventEmitter(sink)
+    packet, provider = _packet_and_provider()
+    await asyncio.wait_for(
+        run_graph_turn(
+            run_brief=_loop_runner(packet, provider),
+            correlation_id=corr,
+            worker_input=_r03_request_state(
+                corr, document_refs=("document:synthetic-1",), evidence_refs=()),
+            extraction_worker=_r03_counting_worker("intake_extractor", []),
+            retrieval_worker=_r03_counting_worker("evidence_retriever", []),
+            events=emitter,
+        ),
+        timeout=TURN_TIMEOUT_S)
+
+    assert emitter.dropped == 0
+    decisions = [event.attributes["decision"] for event in sink.events
+                 if event.event_type is EventType.HANDOFF_COMPLETED]
+    assert "route_extract" in decisions
+    assert "route_retrieve" not in decisions, (
+        "the skipped retrieval branch must not fabricate a route-decision event")
+
+
+# =======================================================================================
+# R03 / W2-REQ-74 — trace tree: supervisor span ⊃ worker spans ⊃ sub-call spans (PDF p.7:
+# "Each worker invocation must be a child span of the supervisor span. Extraction and
+# retrieval sub-calls must be traceable within their worker spans.")
+# =======================================================================================
+
+
+class _R03TelemetryCapablePipeline:
+    """Fake B2 pipeline with the concrete DocumentExtractionPipeline's telemetry seam:
+    it drives the same OCR/VLM/schema/write stage boundaries through telemetry.stage."""
+
+    def __init__(self):
+        self.calls = 0
+        self.telemetry_seen: list[object] = []
+
+    async def extract_document(self, document_ref, *, patient_ref, correlation_id,
+                               telemetry=None):
+        from app.orchestrator.workers.intake_extractor import PersistedExtraction
+
+        self.calls += 1
+        self.telemetry_seen.append(telemetry)
+        assert telemetry is not None, (
+            "the intake worker must hand its stage-recording telemetry to a "
+            "telemetry-capable pipeline")
+        for stage in ("ocr", "vlm", "schema_parse", "artifact_write"):
+            async with telemetry.stage(stage):
+                pass
+        return PersistedExtraction(
+            artifact_ref=f"trace:{correlation_id}/artifact/1",
+            citation_refs=(),
+            fields_grounded=1,
+            fields_unsupported=0,
+        )
+
+
+class _R03FixtureRetriever:
+    def search(self, query, *, k, demographic_strings=()):
+        from corpus.retrieval import EvidenceHit, RetrievalOutcome
+
+        manifest_hash = "a" * 64
+        return RetrievalOutcome(
+            items=(
+                EvidenceHit(
+                    source_id=f"vadod-diabetes@{manifest_hash}",
+                    section="Glycemic Targets",
+                    chunk_id="vadod-diabetes-targets-001",
+                    quote="Use individualized glycemic targets.",
+                    score=0.91,
+                    corpus_version=f"vadod-cpg-trio@{manifest_hash}",
+                ),
+            ),
+            corpus_version=f"vadod-cpg-trio@{manifest_hash}",
+            manifest_hash=manifest_hash,
+            degraded_reasons=(),
+        )
+
+
+async def test_trace_tree_nests_worker_subcalls_and_route_decisions_with_full_parentage(
+        monkeypatch):
+    # spec(R03/AF-P1-02; W2-REQ-74)
+    # guards: flat worker-hop children with no nested sub-calls — the exact "Not Met"
+    # state of W2-REQ-74: an incident reader could see THAT a worker ran but never which
+    # OCR/VLM/schema/write or retrieval sub-call inside it failed or stalled.
+    monkeypatch.setenv(FLAG, "1")
+    from app.orchestrator.graph import run_graph_turn
+    from app.orchestrator.refs import TurnRefRegistry
+    from app.orchestrator.workers.evidence_retriever import build_evidence_worker
+    from app.orchestrator.workers.extraction_adapter import build_extraction_worker
+    from app.schemas.retrieval import EvidenceSearchRequest
+
+    corr = "w2r03-corr-tree"
+    sink, holder = _fake_langfuse(monkeypatch)
+    tracer = RequestTracer(sink)
+    refs = TurnRefRegistry(corr)
+    request_ref = refs.put(
+        EvidenceSearchRequest(query="type 2 diabetes hba1c", k=2),
+        kind="evidence-request")
+    pipeline = _R03TelemetryCapablePipeline()
+    packet, provider = _packet_and_provider()
+
+    await asyncio.wait_for(
+        run_graph_turn(
+            run_brief=_loop_runner(packet, provider),
+            correlation_id=corr,
+            tracer=tracer,
+            accountability=_acct(corr),
+            worker_input=_r03_request_state(
+                corr, document_refs=("document-synthetic",),
+                evidence_refs=(request_ref,)),
+            extraction_worker=build_extraction_worker(pipeline),
+            retrieval_worker=build_evidence_worker(_R03FixtureRetriever(), refs),
+            ref_registry=refs,
+        ),
+        timeout=TURN_TIMEOUT_S)
+
+    assert tracer.dropped == 0, "the graph turn's trace export failed"
+    assert pipeline.calls == 1
+    fake = holder.get("client")
+    assert fake is not None and fake.observations
+
+    by_name = {}
+    for observation in fake.observations:
+        by_name.setdefault(str(observation.get("name", "")), []).append(observation)
+    parent_of = {o["id"]: o["parent_id"] for o in fake.observations}
+
+    def one(name):
+        spans = by_name.get(name, [])
+        assert len(spans) == 1, f"expected exactly one span named {name!r}, got {spans!r}"
+        return spans[0]
+
+    supervisor = one("graph.supervisor")
+    intake_span = one("graph.worker.intake_extractor")
+    retrieval_span = one("graph.worker.evidence_retriever")
+    assert parent_of[intake_span["id"]] == supervisor["id"]
+    assert parent_of[retrieval_span["id"]] == supervisor["id"]
+
+    # Extraction sub-calls nest INSIDE the intake worker span (OCR/VLM/schema/write).
+    for stage_name in ("intake.ocr", "intake.vlm", "intake.schema_parse",
+                       "intake.artifact_write", "intake.extract_document"):
+        assert parent_of[one(stage_name)["id"]] == intake_span["id"], (
+            f"{stage_name} must be a child span of the intake worker span")
+
+    # Retrieval sub-calls nest INSIDE the retrieval worker span (BM25/dense/rerank
+    # hybrid search plus its query build and evidence registration).
+    for sub_name in ("retrieval.query_build", "retrieval.search.bm25_dense_rerank",
+                     "retrieval.register_evidence"):
+        assert parent_of[one(sub_name)["id"]] == retrieval_span["id"], (
+            f"{sub_name} must be a child span of the retrieval worker span")
+
+    # Route-decision spans are children of the supervisor span and carry the
+    # explainable decision metadata (decision, reason, need predicates).
+    decision_spans = by_name.get("graph.supervisor.decision", [])
+    assert decision_spans, "no route-decision spans exported"
+    assert all(parent_of[span["id"]] == supervisor["id"] for span in decision_spans)
+    decision_meta = [span.get("metadata", {}) for span in decision_spans]
+    decisions = [meta.get("decision") for meta in decision_meta]
+    assert "route_extract" in decisions and "route_retrieve" in decisions
+    assert "compose_answer" in decisions and "done" in decisions
+    for meta in decision_meta:
+        assert meta.get("correlation_id") == corr
+        assert meta.get("reason")
+        assert meta.get("needs_intake") is True
+        assert meta.get("needs_retrieval") is True
+
+    # FULL parentage: every observation's ancestor chain terminates at the one
+    # supervisor root span — nothing dangles beside the tree.
+    def root_of(observation_id):
+        seen = set()
+        current = observation_id
+        while parent_of.get(current) is not None and current not in seen:
+            seen.add(current)
+            current = parent_of[current]
+        return current
+
+    for observation in fake.observations:
+        assert root_of(observation["id"]) == supervisor["id"], (
+            f"span {observation.get('name')!r} is not attached to the supervisor tree")
+
+
+async def test_skipped_branch_emits_no_worker_span_but_keeps_decision_spans(monkeypatch):
+    # spec(R03/AF-P1-02; W2-REQ-74/85)
+    # guards: a trace that fabricates a worker span for a branch routing skipped — the
+    # deployed trace must show the SELECTED branch only, while decision spans explain
+    # why the other branch was not taken.
+    monkeypatch.setenv(FLAG, "1")
+    from app.orchestrator.graph import run_graph_turn
+    from app.orchestrator.refs import TurnRefRegistry
+    from app.orchestrator.workers.evidence_retriever import build_evidence_worker
+    from app.schemas.retrieval import EvidenceSearchRequest
+
+    corr = "w2r03-corr-skip-trace"
+    sink, holder = _fake_langfuse(monkeypatch)
+    tracer = RequestTracer(sink)
+    refs = TurnRefRegistry(corr)
+    request_ref = refs.put(
+        EvidenceSearchRequest(query="type 2 diabetes hba1c", k=2),
+        kind="evidence-request")
+    packet, provider = _packet_and_provider()
+
+    await asyncio.wait_for(
+        run_graph_turn(
+            run_brief=_loop_runner(packet, provider),
+            correlation_id=corr,
+            tracer=tracer,
+            accountability=_acct(corr),
+            worker_input=_r03_request_state(
+                corr, document_refs=(), evidence_refs=(request_ref,)),
+            retrieval_worker=build_evidence_worker(_R03FixtureRetriever(), refs),
+            ref_registry=refs,
+        ),
+        timeout=TURN_TIMEOUT_S)
+
+    assert tracer.dropped == 0
+    fake = holder.get("client")
+    names = [str(o.get("name", "")) for o in fake.observations]
+    assert "graph.worker.evidence_retriever" in names
+    assert not any("intake" in name or name == "graph.worker.intake_extractor_stub"
+                   for name in names), (
+        "the skipped intake branch must not fabricate a worker span")
+    decision_spans = [o for o in fake.observations
+                      if str(o.get("name", "")) == "graph.supervisor.decision"]
+    assert decision_spans
+    for span in decision_spans:
+        assert span.get("metadata", {}).get("needs_intake") is False

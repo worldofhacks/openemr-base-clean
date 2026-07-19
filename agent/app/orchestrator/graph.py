@@ -1,10 +1,15 @@
 """B3 LangGraph topology with canonical worker boundaries and verified composition.
 
-W2-D2 locks LangGraph as the router. The supervisor routes by state readiness: missing
-extraction output -> intake extractor; missing evidence output -> evidence retriever;
-both present -> composer; composed answer -> done. Budget exhaustion -> refuse. Real
+W2-D2 locks LangGraph as the router. The supervisor routes by NEED plus state
+readiness (R03/AF-P1-02, PDF p.4 Stage 3): the need predicates are derived once from
+the validated request state — completed document refs drive intake, a built evidence
+request drives retrieval — so each worker can be independently skipped for a valid
+turn and an unneeded worker is never executed. Needed-but-missing extraction output ->
+intake extractor; needed-but-missing evidence output -> evidence retriever; everything
+needed present -> composer; composed answer -> done. Budget exhaustion -> refuse. Real
 workers are dependency-injected as the frozen WorkerInput -> WorkerOutput callable;
-the defaults are compatibility workers for the frozen M3 tests.
+the defaults are compatibility workers for the frozen M3 tests (with no caller-supplied
+request state, both stubs stay routed so the pinned handoff contract is exercised).
 
 Graph state is constructed per turn and discarded at turn end — no LangGraph
 checkpointer (W2_ARCHITECTURE.md §2). Every hop emits a strict `HandoffRecord` (closed
@@ -17,11 +22,15 @@ Promotion into `app/config.py` settings is a later feature ticket. With the flag
 this module is never invoked on the serving path (AC-4 tripwire-enforced).
 
 Observability (§6): when a `RequestTracer` + `AccountabilityContext` are given, the turn
-emits one Langfuse trace whose supervisor span is the PARENT of the worker spans, tagged
-with the correlation id so the hop flow reconstructs from one ID. Tracing stays a soft
-dependency: any export failure increments `tracer.dropped` and never affects the turn.
-W1 D16 content posture is unchanged — spans carry refs and PHI-minimized metadata only,
-never clinical content.
+emits one Langfuse trace whose supervisor span is the PARENT of the worker spans; worker
+sub-calls (OCR/VLM/schema/write; the BM25+dense+rerank hybrid search) nest as children
+of their worker span, and each supervisor route decision is its own child span carrying
+the need predicates (W2-REQ-74/85). The trace is tagged with the correlation id so the
+hop flow reconstructs from one ID; route decisions are ALSO emitted to the structured
+event lane (HANDOFF_COMPLETED, worker=supervisor) so the audit trail never depends on
+the Langfuse sink alone. Tracing stays a soft dependency: any export failure increments
+`tracer.dropped` and never affects the turn. W1 D16 content posture is unchanged —
+spans carry refs and PHI-minimized metadata only, never clinical content.
 """
 
 from __future__ import annotations
@@ -61,6 +70,7 @@ from app.orchestrator.state import (
     ReasonCode,
     SupervisorDecision,
 )
+from app.orchestrator.subspans import SubSpanRecorder, WorkerSubSpan, recording
 from app.orchestrator.workers import stub_extractor, stub_retriever
 from app.orchestrator.workers.contracts import WorkerCallable
 from app.schemas.citations import CitationV2, EvidenceSnippet
@@ -206,17 +216,20 @@ def _record(correlation_id: str, turn: int, decision: SupervisorDecision,
 
 
 def select_next_decision(state: GraphState) -> SupervisorDecision:
-    """Select the next topology hop from completion state.
+    """Select the next topology hop from need predicates + completion state.
 
-    The worker request itself contains only refs. A failed worker retry refuses; otherwise
-    missing extraction/retrieval outputs route to the corresponding worker and completed
-    outputs route to the composer.
+    R03/AF-P1-02 (PDF p.4 Stage 3): the supervisor decides when extraction is needed,
+    when evidence retrieval is needed, and when the final answer is ready. The need
+    predicates (``needs_intake``/``needs_retrieval``) are derived once from the
+    validated request state, so an unneeded worker is never executed; when both are
+    needed the merge order is deterministic (extraction, then retrieval). A failed
+    worker retry refuses. The worker request itself contains only refs.
     """
     if state.get("routing_failed"):
         return SupervisorDecision.REFUSE
-    if state.get("extracted_ref") is None:
+    if state.get("needs_intake", True) and state.get("extracted_ref") is None:
         return SupervisorDecision.ROUTE_EXTRACT
-    if state.get("retrieved_ref") is None:
+    if state.get("needs_retrieval", True) and state.get("retrieved_ref") is None:
         return SupervisorDecision.ROUTE_RETRIEVE
     if state.get("brief") is None:
         return SupervisorDecision.COMPOSE_ANSWER
@@ -272,8 +285,25 @@ async def run_graph_turn(
         raise ValueError("worker_input correlation_id must match the graph turn")
     extract_runner = extraction_worker or stub_extractor.run_intake_extractor_stub
     retrieve_runner = retrieval_worker or stub_retriever.run_evidence_retriever_stub
-    # Per-hop span timings for the post-hoc trace replay (name, start_ns, end_ns, hop).
-    hop_spans: list[tuple[str, int, int, HandoffRecord]] = []
+    # R03/AF-P1-02: need predicates derived ONCE from the validated request state. A
+    # caller-supplied WorkerInput IS that state — completed document refs drive intake,
+    # a built evidence request drives retrieval — so each worker is independently
+    # skippable and an unneeded worker is never executed (PDF p.4; W2-REQ-11). With no
+    # request state supplied (M3 skeleton/compat mode), both stub workers stay routed
+    # so the frozen AC-1/AC-2 handoff-and-span contract remains exercised end to end.
+    explicit_request_state = worker_input is not None
+    needs_intake = (
+        bool(initial_worker_input.document_refs) if explicit_request_state else True
+    )
+    needs_retrieval = (
+        bool(initial_worker_input.evidence_refs) if explicit_request_state else True
+    )
+    # Per-hop span timings for the post-hoc trace replay
+    # (name, start_ns, end_ns, hop record, nested worker sub-call spans — REQ-74).
+    hop_spans: list[tuple[str, int, int, HandoffRecord, tuple[WorkerSubSpan, ...]]] = []
+    # Route-decision spans (name, start_ns, end_ns, PHI-free decision metadata): the
+    # explainable "why" of every conditional hop, nested under the supervisor span.
+    decision_spans: list[tuple[str, int, int, dict[str, object]]] = []
     turn_started_ns = time.time_ns()
     retrieval_hit_count = 0
     grounding_rate = 0.0
@@ -356,26 +386,91 @@ async def run_graph_turn(
             "critic_finalized": True,
         }
 
+    def _record_decision_span(
+        state: GraphState,
+        decision: SupervisorDecision,
+        reason: ReasonCode,
+        started_ns: int,
+    ) -> None:
+        """One route-decision span per supervisor decision — the explainable "why" of
+        each conditional hop (W2-REQ-85), carrying only closed operational values."""
+
+        decision_spans.append(
+            (
+                "graph.supervisor.decision",
+                started_ns,
+                time.time_ns(),
+                {
+                    "turn": state["turn"],
+                    "decision": decision.value,
+                    "reason": reason.value,
+                    "needs_intake": state.get("needs_intake", True),
+                    "needs_retrieval": state.get("needs_retrieval", True),
+                    "correlation_id": correlation_id,
+                },
+            )
+        )
+
+    def _emit_route_decision(
+        state: GraphState,
+        decision: SupervisorDecision,
+        reason: ReasonCode,
+        started_ns: int,
+    ) -> None:
+        """Route decisions reach the structured EVENT lane, not only the Langfuse sink
+        (R03 item 3): one HANDOFF_COMPLETED per supervisor decision, correlation-tagged."""
+
+        if events is None:
+            return
+        events.emit(
+            EventType.HANDOFF_COMPLETED,
+            {
+                "turn": state["turn"],
+                "decision": decision.value,
+                "reason_code": reason.value,
+                "worker": _SUPERVISOR_NAME,
+                "latency_ms": max((time.time_ns() - started_ns) / 1_000_000, 0.0),
+            },
+            component=EventComponent.ORCHESTRATOR,
+            correlation_id=correlation_id,
+        )
+
     async def supervisor_node(state: GraphState) -> dict:
+        started_ns = time.time_ns()
         turn = state["turn"]
         if turn >= STEP_BUDGET:
             # §2 step budget: the hop counter hit the working value 8 — refuse.
+            _record_decision_span(state, SupervisorDecision.REFUSE,
+                                  ReasonCode.STEP_BUDGET_EXCEEDED, started_ns)
             return _terminal(state, SupervisorDecision.REFUSE,
                              ReasonCode.STEP_BUDGET_EXCEEDED)
         decision = policy(state)
         if decision is SupervisorDecision.REFUSE:
+            _record_decision_span(state, SupervisorDecision.REFUSE,
+                                  ReasonCode.STEP_BUDGET_EXCEEDED, started_ns)
             return _terminal(state, SupervisorDecision.REFUSE,
                              ReasonCode.STEP_BUDGET_EXCEEDED)
         if decision is SupervisorDecision.DONE:
+            _record_decision_span(state, SupervisorDecision.DONE,
+                                  ReasonCode.TURN_COMPLETE, started_ns)
             return _terminal(state, SupervisorDecision.DONE, ReasonCode.TURN_COMPLETE)
         if decision is SupervisorDecision.CRITIC_APPROVE:
+            _record_decision_span(state, SupervisorDecision.CRITIC_APPROVE,
+                                  ReasonCode.CRITIC_APPROVED, started_ns)
             return _record_critic_outcome(
                 state, SupervisorDecision.CRITIC_APPROVE, ReasonCode.CRITIC_APPROVED
             )
         if decision is SupervisorDecision.CRITIC_REJECT:
+            _record_decision_span(state, SupervisorDecision.CRITIC_REJECT,
+                                  ReasonCode.CRITIC_REJECTED, started_ns)
             return _record_critic_outcome(
                 state, SupervisorDecision.CRITIC_REJECT, ReasonCode.CRITIC_REJECTED
             )
+        # Conditional routing hop (extract/retrieve/compose/review): record the
+        # decision span AND emit the route-decision event before the hop executes.
+        reason = _REASON_FOR_DECISION[decision]
+        _record_decision_span(state, decision, reason, started_ns)
+        _emit_route_decision(state, decision, reason, started_ns)
         return {"next_decision": decision}
 
     async def _worker_hop(
@@ -393,9 +488,14 @@ async def run_graph_turn(
         for attempt in range(2):
             payload = state["worker_input"].model_copy(update={"turn": turn})
             input_ref = refs.put(payload, kind=f"{ref_kind}-input")
+            # REQ-74: each worker invocation gets its own sub-span recorder so the
+            # worker's sub-calls (OCR/VLM/schema/write; hybrid retrieval) nest inside
+            # THIS hop's span — including the sub-calls of a hop that then fails.
+            recorder = SubSpanRecorder()
             started_ns = time.time_ns()
             try:
-                raw_output = await runner(payload)
+                with recording(recorder):
+                    raw_output = await runner(payload)
                 output = (
                     raw_output
                     if isinstance(raw_output, WorkerOutput)
@@ -415,7 +515,8 @@ async def run_graph_turn(
                 )
                 records.append(record)
                 hop_spans.append(
-                    (f"graph.worker.{output.worker}", started_ns, time.time_ns(), record)
+                    (f"graph.worker.{output.worker}", started_ns, time.time_ns(),
+                     record, tuple(recorder.spans))
                 )
                 _emit_handoff(
                     record, (time.time_ns() - started_ns) / 1_000_000
@@ -445,7 +546,8 @@ async def run_graph_turn(
                 )
                 records.append(record)
                 hop_spans.append(
-                    (f"graph.worker.{worker_name}", started_ns, time.time_ns(), record)
+                    (f"graph.worker.{worker_name}", started_ns, time.time_ns(),
+                     record, tuple(recorder.spans))
                 )
                 _emit_handoff(
                     record, (time.time_ns() - started_ns) / 1_000_000
@@ -514,7 +616,8 @@ async def run_graph_turn(
         record = _record(correlation_id, turn, SupervisorDecision.COMPOSE_ANSWER,
                          ReasonCode.WORKERS_COMPLETE, worker=_COMPOSER_NAME,
                          input_ref=input_ref, output_ref=output_ref)
-        hop_spans.append((f"graph.{_COMPOSER_NAME}", started_ns, time.time_ns(), record))
+        hop_spans.append(
+            (f"graph.{_COMPOSER_NAME}", started_ns, time.time_ns(), record, ()))
         _emit_handoff(record, (time.time_ns() - started_ns) / 1_000_000)
         return {
             "handoffs": [record],
@@ -558,7 +661,7 @@ async def run_graph_turn(
             input_ref=input_ref,
             output_ref=output_ref,
         )
-        hop_spans.append(("graph.critic", started_ns, time.time_ns(), record))
+        hop_spans.append(("graph.critic", started_ns, time.time_ns(), record, ()))
         _emit_handoff(record, (time.time_ns() - started_ns) / 1_000_000)
         return {
             "handoffs": [record],
@@ -623,6 +726,8 @@ async def run_graph_turn(
         "extracted_ref": None,
         "retrieved_ref": None,
         "routing_failed": False,
+        "needs_intake": needs_intake,
+        "needs_retrieval": needs_retrieval,
         "verified_facts": (),
         "evidence_snippets": (),
         "citations": (),
@@ -670,7 +775,7 @@ async def run_graph_turn(
 
     if tracer is not None and accountability is not None:
         _emit_graph_trace(tracer, accountability, correlation_id, result, hop_spans,
-                          turn_started_ns, time.time_ns())
+                          decision_spans, turn_started_ns, time.time_ns())
     if events is not None:
         try:
             cost = estimate_cost(result.brief.usage, getattr(result.brief, "model", "claude-sonnet-4-6"))
@@ -680,7 +785,7 @@ async def run_graph_turn(
             except Exception:
                 cost = 0.0
         summary_steps: list[tuple[str, float]] = []
-        for name, start, end, _hop_record in hop_spans:
+        for name, start, end, _hop_record, _sub_spans in hop_spans:
             if name == f"graph.{_COMPOSER_NAME}":
                 summary_steps.extend(result.brief.observability_steps)
             summary_steps.append((name, (end - start) / 1_000_000))
@@ -711,13 +816,17 @@ async def run_graph_turn(
 def _emit_graph_trace(tracer: RequestTracer, acct: AccountabilityContext,
                       correlation_id: str,
                       result: GraphTurnResult,
-                      hop_spans: list[tuple[str, int, int, HandoffRecord]],
+                      hop_spans: list[
+                          tuple[str, int, int, HandoffRecord, tuple[WorkerSubSpan, ...]]
+                      ],
+                      decision_spans: list[tuple[str, int, int, dict[str, object]]],
                       started_ns: int, ended_ns: int) -> None:
-    """Emit one Langfuse trace for the turn: supervisor span ⊃ worker spans (§6), the
-    correlation id on the trace so the flow reconstructs from one ID. Post-hoc replay,
-    exactly like the W1 sink (tree built at turn end). Soft dependency: any failure is
-    counted on `tracer.dropped`, never raised into serving. PHI-minimized: hashed
-    user/patient ids, sanitized URL, refs — no clinical content (D16 posture)."""
+    """Emit one Langfuse trace for the turn: supervisor span ⊃ {route-decision spans,
+    worker spans ⊃ worker sub-call spans} (§6; W2-REQ-74), the correlation id on the
+    trace so the flow reconstructs from one ID. Post-hoc replay, exactly like the W1
+    sink (tree built at turn end). Soft dependency: any failure is counted on
+    `tracer.dropped`, never raised into serving. PHI-minimized: hashed user/patient
+    ids, sanitized URL, refs — no clinical content (D16 posture)."""
     sink = tracer.sink
     if not isinstance(sink, LangfuseSink):
         # The span-nesting spike targets the Langfuse sink; other sinks consume flat
@@ -750,6 +859,13 @@ def _emit_graph_trace(tracer: RequestTracer, acct: AccountabilityContext,
             "degraded": result.brief.degraded,
             "latency_ms": (ended_ns - started_ns) / 1_000_000,
         }
+        # Interleave route-decision and worker-hop spans chronologically so the
+        # exported tree reads as the turn actually executed (decision → hop → …).
+        ordered: list[tuple[int, str, tuple]] = sorted(
+            [(entry[1], "decision", entry) for entry in decision_spans]
+            + [(entry[1], "hop", entry) for entry in hop_spans],
+            key=lambda item: item[0],
+        )
         with propagate_attributes(
                 user_id=hash_identifier(acct.user_id),
                 session_id=correlation_id,
@@ -759,13 +875,36 @@ def _emit_graph_trace(tracer: RequestTracer, acct: AccountabilityContext,
             with client.start_as_current_observation(
                     name="graph.supervisor", as_type="span", metadata=metadata,
                     end_on_exit=False) as supervisor_span:
-                for name, span_start_ns, span_end_ns, record in hop_spans:
+                for _start, span_kind, entry in ordered:
+                    if span_kind == "decision":
+                        name, span_start_ns, span_end_ns, decision_meta = entry
+                        decision_span = supervisor_span.start_observation(
+                            name=name, as_type="span",
+                            metadata={
+                                "latency_ms":
+                                    (span_end_ns - span_start_ns) / 1_000_000,
+                                **decision_meta,
+                            })
+                        decision_span.end(end_time=span_end_ns)
+                        continue
+                    name, span_start_ns, span_end_ns, record, sub_spans = entry
                     hop = supervisor_span.start_observation(
                         name=name, as_type="span",
                         metadata={
                             "latency_ms": (span_end_ns - span_start_ns) / 1_000_000,
                             **record.model_dump(mode="json"),
                         })
+                    # REQ-74: extraction/retrieval sub-calls are children of THEIR
+                    # worker span — never flat siblings beside it.
+                    for sub in sub_spans:
+                        child = hop.start_observation(
+                            name=sub.name, as_type="span",
+                            metadata={
+                                "latency_ms":
+                                    (sub.ended_ns - sub.started_ns) / 1_000_000,
+                                **dict(sub.metadata),
+                            })
+                        child.end(end_time=sub.ended_ns)
                     hop.end(end_time=span_end_ns)
             supervisor_span.end(end_time=ended_ns)
     except Exception:

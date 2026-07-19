@@ -760,10 +760,10 @@ def _fhir_field_matches(
             and _quantity_matches(component.get("valueQuantity"), standard.value)
             for component in components
         )
-    wanted = _VITAL_CODES.get(standard.field_id)
+    vital_code = _VITAL_CODES.get(standard.field_id)
     return (
-        wanted is not None
-        and wanted in _codes(resource)
+        vital_code is not None
+        and vital_code in _codes(resource)
         and _quantity_matches(resource.get("valueQuantity"), standard.value)
     )
 

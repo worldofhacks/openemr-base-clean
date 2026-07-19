@@ -71,9 +71,25 @@ class _IntakeExtractionShape(_StrictShape):
     source_document_id: str = Field(min_length=1)
 
 
+class _MedicationEntryShape(_StrictShape):
+    medication_name: str | None
+    strength: str | None
+    dose: str | None
+    route: str | None
+    frequency: str | None
+    status: str | None
+
+
+class _MedicationListExtractionShape(_StrictShape):
+    medications: list[_MedicationEntryShape]
+    as_of_date: str | None
+    source_document_id: str = Field(min_length=1)
+
+
 _SCHEMAS: dict[str, type[BaseModel]] = {
     "lab_pdf": _LabExtractionShape,
     "intake_form": _IntakeExtractionShape,
+    "medication_list": _MedicationListExtractionShape,
 }
 
 

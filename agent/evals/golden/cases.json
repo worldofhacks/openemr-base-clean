@@ -154,78 +154,6 @@
     }
   },
   {
-    "case_id": "lab-clean-potassium-low",
-    "category": "boundary",
-    "doc_type": "lab_pdf",
-    "fixture_path": "agent/evals/fixtures/golden/lab-clean-potassium-low.pdf",
-    "expected_fields": {
-      "results": [
-        {
-          "test_name": "Potassium",
-          "value": "3.2",
-          "unit": "mmol/L",
-          "reference_range": "3.5-5.1",
-          "collection_date": "2026-06-03",
-          "abnormal_flag": "L"
-        }
-      ],
-      "source_document_id": "fixture:lab-clean-potassium-low"
-    },
-    "expected_citations": [
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:lab-clean-potassium-low",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "results[0].test_name",
-        "quote_or_value": "Potassium"
-      },
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:lab-clean-potassium-low",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "results[0].value",
-        "quote_or_value": "3.2"
-      },
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:lab-clean-potassium-low",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "results[0].unit",
-        "quote_or_value": "mmol/L"
-      },
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:lab-clean-potassium-low",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "results[0].reference_range",
-        "quote_or_value": "3.5-5.1"
-      },
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:lab-clean-potassium-low",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "results[0].collection_date",
-        "quote_or_value": "2026-06-03"
-      },
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:lab-clean-potassium-low",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "results[0].abnormal_flag",
-        "quote_or_value": "L"
-      }
-    ],
-    "expected_verdict": "extract",
-    "guards": "Low potassium being copied with the wrong flag or unit.",
-    "pass_criteria": [
-      "Extracted clinical leaves match expected_fields exactly without invented values.",
-      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
-      "Missing leaves remain null or empty and carry no fabricated citation.",
-      "The low result preserves both mmol/L and the L flag."
-    ],
-    "maps_to": "factually_consistent"
-  },
-  {
     "case_id": "lab-clean-creatinine-decimal",
     "category": "boundary",
     "doc_type": "lab_pdf",
@@ -1201,71 +1129,6 @@
       "Every expected citation is a complete CitationV2 that resolves to visible source content.",
       "Missing leaves remain null or empty and carry no fabricated citation.",
       "reference_range is null and has no citation."
-    ],
-    "maps_to": "factually_consistent"
-  },
-  {
-    "case_id": "lab-missing-unit",
-    "category": "invariant",
-    "doc_type": "lab_pdf",
-    "fixture_path": "agent/evals/fixtures/golden/lab-missing-unit.pdf",
-    "expected_fields": {
-      "results": [
-        {
-          "test_name": "Vitamin D",
-          "value": "31",
-          "unit": null,
-          "reference_range": "30-100",
-          "collection_date": "2026-06-13",
-          "abnormal_flag": "N"
-        }
-      ],
-      "source_document_id": "fixture:lab-missing-unit"
-    },
-    "expected_citations": [
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:lab-missing-unit",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "results[0].test_name",
-        "quote_or_value": "Vitamin D"
-      },
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:lab-missing-unit",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "results[0].value",
-        "quote_or_value": "31"
-      },
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:lab-missing-unit",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "results[0].reference_range",
-        "quote_or_value": "30-100"
-      },
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:lab-missing-unit",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "results[0].collection_date",
-        "quote_or_value": "2026-06-13"
-      },
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:lab-missing-unit",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "results[0].abnormal_flag",
-        "quote_or_value": "N"
-      }
-    ],
-    "expected_verdict": "extract",
-    "guards": "Guessing a unit absent from the source document.",
-    "pass_criteria": [
-      "Extracted clinical leaves match expected_fields exactly without invented values.",
-      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
-      "Missing leaves remain null or empty and carry no fabricated citation.",
-      "unit is null and has no citation."
     ],
     "maps_to": "factually_consistent"
   },
@@ -3106,99 +2969,6 @@
       "All six non-BP vital candidates preserve their source units."
     ],
     "maps_to": "schema_valid"
-  },
-  {
-    "case_id": "intake-missing-contact-honesty",
-    "category": "invariant",
-    "doc_type": "intake_form",
-    "fixture_path": "agent/evals/fixtures/golden/intake-missing-contact-honesty.pdf",
-    "expected_fields": {
-      "demographics": {
-        "name": "ZZPHI-intake-missing-contact-honesty",
-        "dob": "1987-04-12",
-        "sex": "X",
-        "contact": null
-      },
-      "chief_concern": "Routine intake review.",
-      "current_medications": [
-        "Vitamin D 1000 IU daily"
-      ],
-      "allergies": [
-        "Latex - contact rash"
-      ],
-      "family_history": "Sibling: asthma.",
-      "vitals": {
-        "bps": null,
-        "bpd": null,
-        "weight": null,
-        "height": null,
-        "temperature": null,
-        "pulse": null,
-        "respiration": null,
-        "oxygen_saturation": null
-      },
-      "source_document_id": "fixture:intake-missing-contact-honesty"
-    },
-    "expected_citations": [
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:intake-missing-contact-honesty",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "demographics.name",
-        "quote_or_value": "ZZPHI-intake-missing-contact-honesty"
-      },
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:intake-missing-contact-honesty",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "demographics.dob",
-        "quote_or_value": "1987-04-12"
-      },
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:intake-missing-contact-honesty",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "demographics.sex",
-        "quote_or_value": "X"
-      },
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:intake-missing-contact-honesty",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "chief_concern",
-        "quote_or_value": "Routine intake review."
-      },
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:intake-missing-contact-honesty",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "current_medications[0]",
-        "quote_or_value": "Vitamin D 1000 IU daily"
-      },
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:intake-missing-contact-honesty",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "allergies[0]",
-        "quote_or_value": "Latex - contact rash"
-      },
-      {
-        "source_type": "uploaded_document",
-        "source_id": "fixture:intake-missing-contact-honesty",
-        "page_or_section": "page 1",
-        "field_or_chunk_id": "family_history",
-        "quote_or_value": "Sibling: asthma."
-      }
-    ],
-    "expected_verdict": "extract",
-    "guards": "A missing contact field being synthesized from other demographics.",
-    "pass_criteria": [
-      "Extracted clinical leaves match expected_fields exactly without invented values.",
-      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
-      "Missing leaves remain null or empty and carry no fabricated citation.",
-      "demographics.contact is null and uncited."
-    ],
-    "maps_to": "factually_consistent"
   },
   {
     "case_id": "intake-missing-dob-honesty",
@@ -5130,5 +4900,237 @@
       "The format override is ignored; the answer carries only cited, grounded facts."
     ],
     "maps_to": "no_phi_in_logs"
+  },
+  {
+    "case_id": "med-list-clean-grounded",
+    "category": "boundary",
+    "doc_type": "medication_list",
+    "fixture_path": "agent/evals/fixtures/golden/med-list-clean-grounded.pdf",
+    "expected_fields": {
+      "medications": [
+        {
+          "medication_name": "Synthetic Multivitamin",
+          "strength": "500 mg",
+          "dose": "1 tablet",
+          "route": "oral",
+          "frequency": "once daily",
+          "status": "active"
+        }
+      ],
+      "as_of_date": "2026-07-01",
+      "source_document_id": "fixture:med-list-clean-grounded"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-clean-grounded",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "medications[0].medication_name",
+        "quote_or_value": "Synthetic Multivitamin"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-clean-grounded",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "medications[0].strength",
+        "quote_or_value": "500 mg"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-clean-grounded",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "medications[0].dose",
+        "quote_or_value": "1 tablet"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-clean-grounded",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "medications[0].route",
+        "quote_or_value": "oral"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-clean-grounded",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "medications[0].frequency",
+        "quote_or_value": "once daily"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-clean-grounded",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "medications[0].status",
+        "quote_or_value": "active"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-clean-grounded",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "as_of_date",
+        "quote_or_value": "2026-07-01"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "The third document type losing rows, magnitudes, or citations on a clean medication list.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "The clean text-layer PDF validates as one complete MedicationListExtraction.",
+      "Persistence stays source + grounded artifact only: no vitals write and no MedicationRequest is derived.",
+      "No PHI-free clinical query can be derived from a medication list, so production retrieval is never attempted and no guideline evidence appears anywhere in the answer surfaces."
+    ],
+    "maps_to": "factually_consistent",
+    "expected_retrieval": {
+      "outcome": "no_query"
+    }
+  },
+  {
+    "case_id": "med-list-wrapped-frequency-unverified",
+    "category": "invariant",
+    "doc_type": "medication_list",
+    "fixture_path": "agent/evals/fixtures/golden/med-list-wrapped-frequency-unverified.pdf",
+    "expected_fields": {
+      "medications": [
+        {
+          "medication_name": "Synthetic Saline Spray",
+          "strength": "10 mg",
+          "dose": "2 sprays",
+          "route": "nasal",
+          "frequency": "two sprays each nostril morning and evening",
+          "status": "active"
+        }
+      ],
+      "as_of_date": "2026-07-02",
+      "source_document_id": "fixture:med-list-wrapped-frequency-unverified"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-wrapped-frequency-unverified",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "medications[0].medication_name",
+        "quote_or_value": "Synthetic Saline Spray"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-wrapped-frequency-unverified",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "medications[0].strength",
+        "quote_or_value": "10 mg"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-wrapped-frequency-unverified",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "medications[0].dose",
+        "quote_or_value": "2 sprays"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-wrapped-frequency-unverified",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "medications[0].route",
+        "quote_or_value": "nasal"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-wrapped-frequency-unverified",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "medications[0].status",
+        "quote_or_value": "active"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-wrapped-frequency-unverified",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "as_of_date",
+        "quote_or_value": "2026-07-02"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "A wrapped frequency instruction being silently dropped, truncated, or given a fabricated citation.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "The line-wrapped frequency value stays visible-and-unverified: the full phrase is extracted, persists ungrounded, and carries no citation (R08/G-D3 evidence-quality gate).",
+      "Every other leaf remains grounded with a complete CitationV2."
+    ],
+    "maps_to": "factually_consistent"
+  },
+  {
+    "case_id": "med-list-missing-as-of-date-honesty",
+    "category": "invariant",
+    "doc_type": "medication_list",
+    "fixture_path": "agent/evals/fixtures/golden/med-list-missing-as-of-date-honesty.pdf",
+    "expected_fields": {
+      "medications": [
+        {
+          "medication_name": "Synthetic Chewable Antacid",
+          "strength": "200 mg",
+          "dose": "1 tablet",
+          "route": "oral",
+          "frequency": "after meals",
+          "status": "on hold"
+        }
+      ],
+      "as_of_date": null,
+      "source_document_id": "fixture:med-list-missing-as-of-date-honesty"
+    },
+    "expected_citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-missing-as-of-date-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "medications[0].medication_name",
+        "quote_or_value": "Synthetic Chewable Antacid"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-missing-as-of-date-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "medications[0].strength",
+        "quote_or_value": "200 mg"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-missing-as-of-date-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "medications[0].dose",
+        "quote_or_value": "1 tablet"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-missing-as-of-date-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "medications[0].route",
+        "quote_or_value": "oral"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-missing-as-of-date-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "medications[0].frequency",
+        "quote_or_value": "after meals"
+      },
+      {
+        "source_type": "uploaded_document",
+        "source_id": "fixture:med-list-missing-as-of-date-honesty",
+        "page_or_section": "page 1",
+        "field_or_chunk_id": "medications[0].status",
+        "quote_or_value": "on hold"
+      }
+    ],
+    "expected_verdict": "extract",
+    "guards": "Inventing an as-of date absent from the source medication list.",
+    "pass_criteria": [
+      "Extracted clinical leaves match expected_fields exactly without invented values.",
+      "Every expected citation is a complete CitationV2 that resolves to visible source content.",
+      "Missing leaves remain null or empty and carry no fabricated citation.",
+      "The absent as-of date stays null and carries no fabricated citation."
+    ],
+    "maps_to": "factually_consistent"
   }
 ]

@@ -108,7 +108,7 @@ def _categories(
     ]
 
 
-def _metrics(case_count: int, *, retrieval_hit_count: int = 31) -> dict[str, object]:
+def _metrics(case_count: int, *, retrieval_hit_count: int = 38) -> dict[str, object]:
     return {
         "elapsed_seconds": 899.0,
         "p50_ms": 100.0,
@@ -123,9 +123,11 @@ def _metrics(case_count: int, *, retrieval_hit_count: int = 31) -> dict[str, obj
 
 
 def _failed_live_result() -> dict[str, object]:
-    # This is the retained shape of the real regression: citation 31/50. The 31 True
-    # and 19 False case booleans intentionally agree with the category arithmetic.
-    rows = _case_rows(citation_passes=31)
+    # This is the retained shape of the real regression: a failing citation category
+    # whose numerator collides with a two-digit clinical signature from the golden
+    # manifest (38, the lab-multi-lipid-panel HDL value). The 38 True and 12 False
+    # case booleans intentionally agree with the category arithmetic.
+    rows = _case_rows(citation_passes=38)
     return {
         "schema_version": 1,
         "status": "FAIL",
@@ -203,7 +205,7 @@ def _write(path: Path, value: object) -> None:
     )
 
 
-def test_explicit_eval_result_exempts_validated_31_of_50_numeric_collision_only(
+def test_explicit_eval_result_exempts_validated_38_of_50_numeric_collision_only(
     tmp_path: Path,
 ) -> None:
     artifact = tmp_path / "results-tier2.json"
@@ -292,7 +294,7 @@ def test_runner_error_aggregate_rejects_noncanonical_shape(tmp_path: Path) -> No
 @pytest.mark.parametrize(
     "string_value",
     [
-        "31",
+        "38",
         "ZZPHI-lab-missing-unit",
         "ANTHROPIC_API_KEY=test-only",
     ],
@@ -312,7 +314,7 @@ def test_explicit_eval_result_still_scans_every_string(
 
 def test_generic_json_never_receives_eval_numeric_sanitization(tmp_path: Path) -> None:
     artifact = tmp_path / "generic.json"
-    _write(artifact, {"operational_looking_number": 31})
+    _write(artifact, {"operational_looking_number": 38})
 
     assert scan_paths([artifact]) == (False, 1, 1)
     with pytest.raises(ArtifactScanError, match="closed-schema"):

@@ -38,3 +38,46 @@ The existing one-request trace is dominated by answer-model time, while the prev
 public burst saturated uncached readiness probes. The final profile must separately measure
 OCR/VLM, grounding, sparse/dense retrieval, reranking, writes/readback, critic verification,
 and composition before assigning a Week 2 bottleneck.
+
+## O02-lite — partial datapoints (2026-07-19) — **partial, NOT AF-P1-08 closure**
+
+Everything in this section is explicitly labeled partial: the four-flow k6 profile
+(`agent/load/k6/w2_profiles.js`), Railway CPU/memory, W1 comparison, and billing
+reconciliation still require owner-provisioned access (61 non-reused synthetic session
+contexts, `ALLOW_PROVIDER_SPEND`, Railway metrics/billing exports — plan A-8 / W2-O4)
+and land with full O02 against the accepted release SHA.
+
+### Committed exact-SHA live Tier-2 aggregates (durable copies, see W2_CI_EVIDENCE.md E01-lite)
+
+Source: green `agent-eval-gate` run 29553727457 on `main`, `source_sha = 6583079…`
+(= deployed `/health` SHA), 50 live cases (VLM + answer + judge legs included):
+
+| Measure | Value |
+|---|---:|
+| Cost (50 cases) | $3.0658 |
+| p50 / p95 (full case) | 5 611 ms / 12 266 ms |
+| Tokens in / out | 621 426 / 58 404 |
+| Retrieval hits | 202 |
+| Extraction grounding rate | 0.9596 |
+
+### Public deployed retrieval probe (2026-07-19, ~18:10 UTC)
+
+`POST /evidence/search` (public, anonymous; query "lipid statin therapy primary
+prevention", k=5, 5 items returned every hit), n=30 sequential with 0.5 s gaps, fresh
+HTTPS connection per request, against `/health` = `6583079…` with `/ready` all-green at
+probe time:
+
+| Measure | Value |
+|---|---:|
+| errors | 0 / 30 |
+| p50 | 4 937 ms |
+| p95 | 6 488 ms |
+| min / max | 4 001 ms / 6 562 ms |
+
+**Signal:** the working retrieval SLO target (p95 ≤ 2 s) FAILS on this measurement.
+Corroborating R07's finding that a fresh `HybridRetriever` + ONNX session load costs
+~4.5 s even warm on dev hardware, the deployed per-request latency points at
+reranker/model-session cost dominating the search path on Railway's shared vCPU.
+Full O02 must separate sparse/dense/rerank legs before locking SLOs; R07's follow-up
+note (probe/session reuse) is the candidate fix. This measurement is a bottleneck-
+analysis input, not an SLO lock.

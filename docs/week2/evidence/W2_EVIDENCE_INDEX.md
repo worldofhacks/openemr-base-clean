@@ -43,3 +43,29 @@ file or directly in the checklist.
 - **PR 0b:** https://github.com/worldofhacks/openemr-base-clean/pull/24 — merge waits on
   C02 phase-1 protection (owner admin) + review; §8 R08 box stays unchecked until merged
   through the protected flow.
+
+## Track A batch — C02-p1 prep, A01 draft, D01-lite, E01-lite, O02-lite, R07 (2026-07-19)
+
+- **C02 phase-1 prep (owner applies):** `docs/week2/evidence/c02/W2_C02_PHASE1_RUNBOOK.md`
+  + ready-to-POST `github-ruleset-main.json` (five required checks verified live on PR
+  #24's head). Committed `0f33d75`. GitHub protection/rulesets confirmed absent at prep
+  time (404 / `[]`).
+- **A01 draft (owner sends):** `docs/week2/evidence/W2_A01_GRADER_QUESTIONS.md`
+  (`0f33d75`). Answers append to `W2_DECISIONS.md`.
+- **D01-lite:** dated known-gaps banner in `docs/week2/W2_gap-audit.md` (`72f9792`);
+  verdict remains Not Ready.
+- **E01-lite:** exact-SHA green Tier-1 + live Tier-2 results committed with digests +
+  run URL (`7bbf079`); see `W2_CI_EVIDENCE.md` E01-lite section.
+- **O02-lite:** partial datapoints + deployed retrieval probe recorded in
+  `W2_COST_LATENCY.md` (labeled not-closure). Deployed `/evidence/search`
+  p50 4.94 s / p95 6.49 s (n=30) — retrieval SLO risk flagged for O02/R07 follow-up.
+- **R07 (code complete; production probes pending merge+deploy):** branch
+  `fix/w2-reranker-warmup` @ `3e828a0`, PR #25
+  (https://github.com/worldofhacks/openemr-base-clean/pull/25). Offline proofs: both
+  pinned snapshots baked (306 MB); 3 consecutive fresh reranker probes ok at
+  4.47/4.67/4.35 s with `--network none`; suite 941 passed / 5 skipped; recorded gate
+  PASS zero delta. §8 box stays unchecked until 3× cache-busted all-green `/ready`
+  post-deploy.
+- **DEVLOG note:** Track-A DEVLOG entries are batched until PR 0b merges — PR 0b's
+  branch already appends to `W2_DEVLOG.md` and parallel EOF appends on main would
+  guarantee a merge conflict (single-writer discipline).

@@ -222,9 +222,11 @@ class AgentServices:
             max_tool_iterations=settings.llm_max_tool_iterations,
         )
         # W2-D4: shared by POST /evidence/search and the graph retrieval worker, but built
-        # only on the first feature-flagged turn/search request. App boot remains model-free.
+        # only on the first feature-flagged turn/search request. App boot remains model-free
+        # unless the deploy opts into the R07 background warmup (RETRIEVAL_WARMUP).
         self._evidence_retriever: HybridRetriever | None = None
         self._evidence_retriever_lock = threading.Lock()
+        self._retrieval_warmup_thread: threading.Thread | None = None
         if settings.w2_document_runtime_enabled:
             credential_vault = _build_job_credential_vault(
                 settings=settings,
@@ -261,6 +263,34 @@ class AgentServices:
                 self._document_schema_ready = False
             else:
                 self._document_schema_ready = True
+        # R07: opt-in background retrieval warmup. A cold container paid the
+        # first-use ONNX model load inside the active_reranker soft-probe budget
+        # (`/ready` -> `active_reranker: timeout`). The deploy image sets
+        # RETRIEVAL_WARMUP=1 so boot loads the pre-baked weights off the boot
+        # path; default-off keeps local/test boots model-free (W2-D4).
+        if os.getenv("RETRIEVAL_WARMUP", "").strip().casefold() in {"1", "true", "yes", "on"}:
+            thread = threading.Thread(
+                target=self._warm_retrieval_sync,
+                name="retrieval-warmup",
+                daemon=True,
+            )
+            self._retrieval_warmup_thread = thread
+            thread.start()
+
+    def _warm_retrieval_sync(self) -> None:
+        """Best-effort load of the pinned retrieval models (R07).
+
+        Runs the same synthetic, non-clinical search as the `active_reranker`
+        readiness probe (`"hypertension"`, k=2), so the shared retriever, the
+        pinned bge-small embedder, and the local mxbai ONNX reranker are loaded
+        (and the weight files OS-cache warm) before the first cache-busted
+        `/ready` probe. Failures stay silent by design: warmup must never crash
+        or delay boot — the soft readiness probe owns failure reporting.
+        """
+        try:
+            self.get_evidence_retriever().search("hypertension", k=2)
+        except Exception:  # noqa: BLE001 - warmup is best-effort by design
+            pass
 
     async def shutdown(self) -> None:
         """Web owns no clinical worker task; kept for explicit lifespan symmetry."""

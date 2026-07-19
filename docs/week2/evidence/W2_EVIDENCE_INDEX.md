@@ -141,3 +141,25 @@ file or directly in the checklist.
   notes in the PR: single hybrid-search sub-span (corpus instrumentation deferred),
   dynamic-pipeline path uses INGESTION_STAGE events + per-document sub-span. Deployed
   trace lands with O01.
+
+## R02 — code complete, PR open (2026-07-19) — P0 long pole
+
+- **R02 (AF-P0-02):** branch `fix/w2-eval-production-retrieval` @ `c447ec6` (3 commits),
+  PR #31 (https://github.com/worldofhacks/openemr-base-clean/pull/31). Production
+  HybridRetriever in the accepted route (both tiers); recorded embedding/rerank
+  adapters, byte-replay, network-free, fail-closed; term-overlap retired (poisoned-path
+  proof); retrieval pins enforced by artifact_scan; **recorded tier now loads the
+  committed baseline — >5pp rule binds at PR time**; two mutation drills red
+  (transcripts in PR; permanent pytest drills; drill branches
+  `drill/w2-red-retrieval-{ranking,availability}` pushed).
+- **Golden-set change flagged for owner/V01:** two byte-equivalent cases replaced
+  (no-query behavior; embedder-outage replay), three strengthened with
+  expected_retrieval blocks; manifest exactly 50; denominators now factual 22 /
+  safe_refusal 9. Justifications in the PR body.
+- **Critical-path consequence:** committed live `w2_baseline.json` +
+  `results-tier2.json` are stale for the new manifest — live tier fails closed on main
+  post-merge until a green live run at the merged SHA regenerates them (C02-p2/E01;
+  owner Tier-2 credentials).
+- Verification (agent + orchestrator re-run): corpus+evals 237/1; full suite 936/5;
+  CI suite 1207/6; gate PASS with `baseline=1.0 delta_pp=0.0` per category;
+  artifact-scan PASS scanned=3.

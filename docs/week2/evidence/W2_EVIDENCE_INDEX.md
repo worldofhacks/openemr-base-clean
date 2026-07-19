@@ -107,3 +107,14 @@ file or directly in the checklist.
   ~60–90 s (narrate over poll).
 - **Owner actions remaining for the §8 S01 box:** record (kit makes it one sitting),
   frame/transcript PHI scan, publishing decision, link into README + this index.
+
+## R04 — code complete, PR open (2026-07-19)
+
+- **R04 (AF-P1-03):** branch `fix/w2-authority-typing` @ `11e7c16`, PR #28
+  (https://github.com/worldofhacks/openemr-base-clean/pull/28). Authority ledger in
+  `artifacts.py` + new `agent/migrations/README.md` (inventory 001, 003–007; 002 never
+  existed); typed `WritePayload` union across the write facades; service.py seams
+  typed; 3 fail-closed divergence tests. Suite 939/5; mypy CI invocation + typed files
+  Success; gate PASS zero delta. Authority-ledger decision note deferred to the docs
+  sync batch (W2_DECISIONS.md contended by PR #24 EOF appends). R05 rebases on this
+  (§4b order R04 → R05).

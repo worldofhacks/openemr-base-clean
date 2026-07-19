@@ -69,3 +69,20 @@ file or directly in the checklist.
 - **DEVLOG note:** Track-A DEVLOG entries are batched until PR 0b merges — PR 0b's
   branch already appends to `W2_DEVLOG.md` and parallel EOF appends on main would
   guarantee a merge conflict (single-writer discipline).
+
+## R01 + R06 — code complete, PRs open (2026-07-19)
+
+- **R01 (AF-P0-03):** branch `fix/w2-claim-citation-contract` @ `fdbe789`, PR #26
+  (https://github.com/worldofhacks/openemr-base-clean/pull/26). Per-claim
+  `ResponseClaim` lane in JSON + initial SSE + fallback UI; fail-closed 503 with zero
+  clinical bytes on uncited/ambiguous claims; OpenAPI/Bruno synced. Suite 943/5
+  (independently re-run); gate PASS zero delta. Frozen W1-envelope pins honored via a
+  presence-conditional lane (decision note to ride docs sync). §8 box unchecked until
+  merged + deployed click-to-source smoke (O01).
+- **R06 (AF-P1-10):** branch `fix/w2-cohere-retry` @ `6cedec6`, PR #27
+  (https://github.com/worldofhacks/openemr-base-clean/pull/27). Bounded jittered retry
+  (max 2 attempts, 8 s deadline), permanent-vs-retryable classification, breaker per
+  attempt, content-free telemetry; 31 fake-clock tests in 0.04 s. Suite 936/5 (=
+  baseline; corpus dir 106 passed explicitly); gate PASS zero delta.
+- Dispatched next: R03 (`fix/w2-conditional-routing`), R04 (`fix/w2-authority-typing`).
+  R02 (long pole) and the S01 dry-run kit still in flight.

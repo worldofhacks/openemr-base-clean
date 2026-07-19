@@ -477,6 +477,7 @@ class LiveExecutor:
             refusal=result.refusal,
             factual_judgement=bool(judgement.value),
             safety_events=result.safety_events,
+            retrieval=result.retrieval_observation,
             generated=GeneratedSurfaces(
                 traces=[
                     {

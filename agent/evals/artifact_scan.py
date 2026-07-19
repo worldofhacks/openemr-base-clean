@@ -76,6 +76,7 @@ _RESULT_TOP_KEYS = frozenset(
         "source_sha",
         "manifest_sha256",
         "recordings_sha256",
+        "retrieval",
         "case_count",
         "executor_call_count",
         "inconclusive_reason",
@@ -83,6 +84,15 @@ _RESULT_TOP_KEYS = frozenset(
         "categories",
         "cases",
         "metrics",
+    }
+)
+_RETRIEVAL_KEYS = frozenset(
+    {
+        "corpus_version",
+        "corpus_manifest_sha256",
+        "embedder",
+        "reranker",
+        "retrieval_recordings_sha256",
     }
 )
 _RUNNER_ERROR_KEYS = frozenset(
@@ -365,6 +375,17 @@ def _applicable_rubrics(case: GoldenCase) -> frozenset[str]:
     return _UNIVERSAL_RUBRICS | {case.maps_to.value}
 
 
+def _validate_retrieval(value: object) -> None:
+    """The result must pin the exact committed retrieval corpus/model configuration."""
+
+    from evals.retrieval_adapters import retrieval_provenance
+
+    if not _exact_keys(value, _RETRIEVAL_KEYS):
+        raise _schema_error()
+    if value != retrieval_provenance():
+        raise _schema_error()
+
+
 def _validate_limits(tier: str, value: object) -> None:
     if tier == "recorded":
         if value is not None:
@@ -531,7 +552,11 @@ def _validate_categories(
 
         baseline_score = raw["baseline_score"]
         delta = raw["percentage_point_delta"]
-        if tier in {"recorded", "live_subset"} and baseline_score is not None:
+        if tier == "live_subset" and baseline_score is not None:
+            raise _schema_error()
+        # The recorded (PR) tier must load the committed baseline so the ">5
+        # percentage-point regression" rule binds at PR time (R02 point 7).
+        if tier == "recorded" and baseline_score is None:
             raise _schema_error()
         if baseline_score is None:
             if delta is not None:
@@ -698,6 +723,7 @@ def _validate_eval_result(value: dict[str, Any]) -> dict[str, Any]:
     elif recordings_sha is not None:
         raise _schema_error()
 
+    _validate_retrieval(value["retrieval"])
     _validate_limits(tier, value["limits"])
     rows = _validate_case_rows(
         tier=tier,

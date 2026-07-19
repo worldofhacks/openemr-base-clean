@@ -279,6 +279,7 @@ class RecordedExecutor:
             verdict=result.verdict,
             refusal=result.refusal,
             safety_events=result.safety_events,
+            retrieval=result.retrieval_observation,
             generated=GeneratedSurfaces(recordings=[metadata], traces=traces),
         )
 

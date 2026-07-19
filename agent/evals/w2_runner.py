@@ -36,16 +36,22 @@ from evals.recorded_executor import (
     RecordingIntegrityError,
     make_recorded_executor,
 )
+from evals.retrieval_adapters import (
+    DEFAULT_RETRIEVAL_RECORDINGS,
+    retrieval_provenance,
+)
 from evals.w2_models import (
     BaselineCategory,
     EvalBaseline,
     HarnessReport,
+    RecordedEvalBaseline,
     Rubric,
     RunStatus,
 )
 
 
 DEFAULT_BASELINE = Path(__file__).parent / "w2_baseline.json"
+DEFAULT_RECORDED_BASELINE = Path(__file__).parent / "w2_recorded_baseline.json"
 MIN_GRADED_CASES = 50
 MAX_DIAGNOSTIC_CASES = 20
 DEFAULT_LIVE_MAX_COST_USD = 10.0
@@ -107,6 +113,27 @@ def _load_baseline(path: Path) -> EvalBaseline | None:
     return EvalBaseline.model_validate_json(path.read_text(encoding="utf-8"))
 
 
+def _load_recorded_baseline(path: Path) -> RecordedEvalBaseline | None:
+    if not path.is_file():
+        return None
+    return RecordedEvalBaseline.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def _validate_recorded_baseline(
+    baseline: RecordedEvalBaseline,
+    *,
+    manifest_path: Path,
+    case_count: int,
+) -> None:
+    """The committed recorded baseline must bind the exact manifest it grades."""
+
+    if baseline.case_count != case_count:
+        raise ValueError("recorded baseline case count does not match the manifest")
+    if baseline.manifest_sha256 != _sha256(manifest_path):
+        raise ValueError("recorded baseline is stale for the manifest")
+    _validate_baseline_categories(baseline)
+
+
 def _canonical_result_sha256(result: dict[str, object]) -> str:
     payload = json.dumps(
         result, sort_keys=True, separators=(",", ":"), ensure_ascii=True
@@ -129,7 +156,9 @@ def _validate_reviewed_baseline(
     _validate_baseline_categories(baseline)
 
 
-def _validate_baseline_categories(baseline: EvalBaseline) -> None:
+def _validate_baseline_categories(
+    baseline: EvalBaseline | RecordedEvalBaseline,
+) -> None:
     categories = {item.rubric: item for item in baseline.categories}
     if set(categories) != set(Rubric) or len(categories) != len(baseline.categories):
         raise ValueError("reviewed live baseline does not contain every rubric exactly once")
@@ -226,6 +255,11 @@ def _aggregate_result(
         "source_sha": _source_sha(),
         "manifest_sha256": _sha256(manifest_path),
         "recordings_sha256": recordings_sha,
+        # Pinned corpus version and model/config hashes of the production retrieval
+        # stack every graded case traverses (AF-P0-02, plan R02 point 5).
+        "retrieval": retrieval_provenance(
+            recordings_path=DEFAULT_RETRIEVAL_RECORDINGS
+        ),
         "case_count": case_count,
         "executor_call_count": int(getattr(executor, "call_count", 0)),
         "inconclusive_reason": inconclusive_reason,
@@ -327,6 +361,8 @@ async def run_gate(
     baseline_path: Path,
     require_reviewed_baseline: bool = False,
     live_limits: LiveGateLimits | None = None,
+    recorded_baseline_path: Path | None = None,
+    allow_missing_recorded_baseline: bool = False,
 ) -> tuple[HarnessReport, dict[str, object]]:
     cases = load_golden_cases(manifest_path)
     if len(cases) < MIN_GRADED_CASES:
@@ -344,7 +380,23 @@ async def run_gate(
                 raise RecordingIntegrityError(
                     "recording index does not exactly match the loaded manifest"
                 )
-            baseline = None
+            # The committed recorded baseline activates the PDF's ">5 percentage-point
+            # category regression" rule at PR time, not only live-tier (R02 point 7).
+            baseline = _load_recorded_baseline(
+                recorded_baseline_path or DEFAULT_RECORDED_BASELINE
+            )
+            if baseline is None:
+                if _is_ci() or not allow_missing_recorded_baseline:
+                    raise ValueError(
+                        "recorded tier requires the committed recorded baseline; "
+                        "bootstrap explicitly with --bootstrap-recorded-baseline"
+                    )
+            else:
+                _validate_recorded_baseline(
+                    baseline,
+                    manifest_path=manifest_path,
+                    case_count=len(cases),
+                )
         elif tier == "live":
             baseline = _load_baseline(baseline_path)
             if baseline is None and require_reviewed_baseline:
@@ -550,6 +602,78 @@ def baseline_from_result(result: dict[str, object]) -> EvalBaseline:
     return candidate
 
 
+def recorded_baseline_from_result(result: dict[str, object]) -> RecordedEvalBaseline:
+    """Build the committed recorded-tier baseline from a complete green recorded run.
+
+    Provenance requirements: the result must be PASS, cover the full graded manifest with
+    one executor call per case, be bound to an exact 40-hex source SHA, and match the
+    committed manifest, recording index, and retrieval-recording hashes exactly.
+    """
+
+    raw_case_count = result.get("case_count")
+    if (
+        result.get("status") != RunStatus.PASS.value
+        or result.get("tier") != "recorded"
+        or not isinstance(raw_case_count, int)
+        or raw_case_count != MIN_GRADED_CASES
+        or result.get("executor_call_count") != raw_case_count
+        or result.get("inconclusive_reason") is not None
+    ):
+        raise ValueError("recorded baseline requires a complete green recorded result")
+    source_sha = result.get("source_sha")
+    if not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise ValueError("recorded baseline requires a result bound to an exact SHA")
+    if result.get("manifest_sha256") != _sha256(DEFAULT_MANIFEST):
+        raise ValueError("recorded baseline requires the canonical Week 2 manifest")
+    recordings_sha = result.get("recordings_sha256")
+    if recordings_sha != _sha256(DEFAULT_RECORDINGS):
+        raise ValueError("recorded baseline requires the committed recording index")
+    retrieval = result.get("retrieval")
+    if retrieval != retrieval_provenance(
+        recordings_path=DEFAULT_RETRIEVAL_RECORDINGS
+    ):
+        raise ValueError("recorded baseline requires the committed retrieval pins")
+    raw_categories = result.get("categories")
+    if not isinstance(raw_categories, list) or not raw_categories:
+        raise ValueError("recorded baseline result has no category arithmetic")
+    categories: list[BaselineCategory] = []
+    seen_rubrics: set[Rubric] = set()
+    try:
+        for raw in raw_categories:
+            if not isinstance(raw, dict) or raw.get("passed") is not True:
+                raise ValueError("recorded baseline result contains a failing category")
+            rubric = Rubric(str(raw["rubric"]))
+            if rubric in seen_rubrics:
+                raise ValueError("recorded baseline result repeats a category")
+            seen_rubrics.add(rubric)
+            categories.append(
+                BaselineCategory(
+                    rubric=rubric,
+                    numerator=int(raw["numerator"]),
+                    denominator=int(raw["denominator"]),
+                    score=float(raw["current_score"]),
+                )
+            )
+    except (KeyError, TypeError, ValueError) as exc:
+        if isinstance(exc, ValueError) and str(exc).startswith("recorded baseline"):
+            raise
+        raise ValueError("recorded baseline category arithmetic is invalid") from exc
+    if seen_rubrics != set(Rubric):
+        raise ValueError("recorded baseline result does not contain every rubric")
+    assert isinstance(retrieval, dict)
+    candidate = RecordedEvalBaseline(
+        case_count=raw_case_count,
+        manifest_sha256=str(result["manifest_sha256"]),
+        recordings_sha256=str(recordings_sha),
+        retrieval_recordings_sha256=str(retrieval["retrieval_recordings_sha256"]),
+        source_sha=source_sha,
+        generated_from_result_sha256=_canonical_result_sha256(result),
+        categories=categories,
+    )
+    _validate_baseline_categories(candidate)
+    return candidate
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m evals.w2_runner")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -558,6 +682,17 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     run.add_argument("--recordings", type=Path, default=DEFAULT_RECORDINGS)
     run.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
+    run.add_argument(
+        "--recorded-baseline", type=Path, default=DEFAULT_RECORDED_BASELINE
+    )
+    run.add_argument(
+        "--bootstrap-recorded-baseline",
+        action="store_true",
+        help=(
+            "allow one local recorded run without the committed recorded baseline "
+            "(refused in CI; used only to generate the first baseline)"
+        ),
+    )
     run.add_argument(
         "--require-reviewed-baseline",
         action="store_true",
@@ -589,18 +724,27 @@ def _parser() -> argparse.ArgumentParser:
     baseline = commands.add_parser("baseline")
     baseline.add_argument("--results", type=Path, required=True)
     baseline.add_argument("--output", type=Path, default=DEFAULT_BASELINE)
+    recorded_baseline = commands.add_parser("recorded-baseline")
+    recorded_baseline.add_argument("--results", type=Path, required=True)
+    recorded_baseline.add_argument(
+        "--output", type=Path, default=DEFAULT_RECORDED_BASELINE
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if args.command == "baseline":
+    if args.command in {"baseline", "recorded-baseline"}:
         if _is_ci():
             print("baseline=REFUSED reason=ci_compare_only", file=sys.stderr)
             return 1
         try:
             result = json.loads(args.results.read_text(encoding="utf-8"))
-            baseline = baseline_from_result(result)
+            baseline = (
+                baseline_from_result(result)
+                if args.command == "baseline"
+                else recorded_baseline_from_result(result)
+            )
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(
                 baseline.model_dump_json(indent=2) + "\n", encoding="utf-8"
@@ -652,6 +796,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             and args.baseline.resolve() != DEFAULT_BASELINE.resolve()
         ):
             raise ValueError("CI/main live gates require the canonical reviewed baseline")
+        if args.bootstrap_recorded_baseline and _is_ci():
+            raise ValueError("recorded-baseline bootstrap is refused in CI")
+        if (
+            args.tier == "recorded"
+            and _is_ci()
+            and args.recorded_baseline.resolve() != DEFAULT_RECORDED_BASELINE.resolve()
+        ):
+            raise ValueError("CI recorded gates require the committed recorded baseline")
         report, result = asyncio.run(
             run_gate(
                 tier=args.tier,
@@ -663,6 +815,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     max_cost_usd=args.max_cost_usd,
                     max_seconds=args.max_seconds,
                 ),
+                recorded_baseline_path=args.recorded_baseline,
+                allow_missing_recorded_baseline=args.bootstrap_recorded_baseline,
             )
         )
     except Exception as exc:

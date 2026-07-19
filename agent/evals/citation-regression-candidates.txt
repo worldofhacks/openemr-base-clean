@@ -2,6 +2,7 @@ lab-multi-cmp-all-results
 lab-multi-lipid-panel
 lab-repeat-test-two-results
 lab-result-level-distinct-dates
+intake-followup-no-retrieval-query
 intake-full-valid
 intake-demographics-leaf-citations
 intake-chief-concern-verbatim
@@ -11,7 +12,6 @@ intake-family-history
 intake-bp-separate-candidates
 intake-other-vitals-us-units
 intake-bps-out-of-range-skipped
-intake-bpd-out-of-range-skipped
 intake-temperature-out-of-range-skipped
 intake-spo2-out-of-range-skipped
 intake-vital-missing-measurement-date

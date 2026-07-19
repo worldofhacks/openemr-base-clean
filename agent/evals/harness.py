@@ -17,6 +17,7 @@ from evals.w2_models import (
     EvalBaseline,
     GoldenCase,
     HarnessReport,
+    RecordedEvalBaseline,
     Rubric,
     RubricSummary,
     RunStatus,
@@ -63,7 +64,7 @@ def _applicable(case: GoldenCase) -> tuple[Rubric, ...]:
 def aggregate_scores(
     rows: Iterable[CaseRubricResult],
     *,
-    baseline: EvalBaseline | None = None,
+    baseline: EvalBaseline | RecordedEvalBaseline | None = None,
 ) -> dict[Rubric, RubricSummary]:
     """Aggregate only applicable cases and encode the frozen threshold arithmetic."""
 
@@ -123,7 +124,7 @@ async def run_harness(
     *,
     executor: Executor,
     manifest_path: str | Path = DEFAULT_MANIFEST,
-    baseline: EvalBaseline | None = None,
+    baseline: EvalBaseline | RecordedEvalBaseline | None = None,
     required_min_cases: int = 0,
     case_ids: frozenset[str] | None = None,
 ) -> HarnessReport:

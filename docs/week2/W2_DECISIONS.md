@@ -485,3 +485,41 @@
   trustworthy evidence (frozen tests 17/17 + 7/7 green). Full record: W2_DEVLOG.md
   2026-07-19 G-fix entry; pinned by tests/test_vlm_evidence_gate.py (12) and
   tests/test_image_intake_robustness.py (4).
+- A01-RES. **Six P2 ambiguities resolved by the owner without grader contact
+  (2026-07-19, finishing run):** basis — early-submission feedback treats the p.5
+  bullets as rubric rows, so the conservative readings resolve as follows.
+  (1) AF-P2-01 critic: graded core; the critic is already always-on post-composition —
+  satisfied, demonstrate in the trace. (2) AF-P2-02 third type: `medication_list` as
+  source + grounded artifact (no clinical write) is the accepted third document type.
+  (3) AF-P2-03: click-to-source overlay and contextual-retrieval improvements are
+  shown, not asked — demonstrate live (overlay verified in the S01 dry run;
+  section-aware chunking + deterministic query building stand as the improvements).
+  (4) AF-P2-04 trend chart: stays artifact-backed per W2-D10/W2-F3 — no FHIR
+  Observation write; R04's conservative authority ledger stands unchanged.
+  (5) AF-P2-05: synthetic fixtures satisfy the p.7 eval-data wording; the no-PHI rule
+  binds generated logs/traces/results (enforced by artifact_scan).
+  (6) AF-P2-06 calendar: schedule conformance is handled by the owner's
+  late-submission note. The A01 draft (W2_A01_GRADER_QUESTIONS.md) is retained as the
+  record of the questions; no send occurred.
+- G-D5. **medication_list is grounding-only by design (R09, 2026-07-19):** the third
+  document type persists as source + grounded extraction artifact ONLY — never a
+  vitals write, never a MedicationRequest, and deliberately no completeness validator.
+  Ungrounded leaves persist visible-and-unverified (no citation, never invented,
+  never dropped — the G-D3 evidence-quality gate), and no PHI-free clinical query is
+  derived from a medication list, so retrieval is never attempted for this doc type.
+  Pinned by frozen `tests/test_medication_list.py` and golden cases
+  `med-list-clean-grounded`, `med-list-wrapped-frequency-unverified`,
+  `med-list-missing-as-of-date-honesty` (PR #33).
+- R04-LEDGER. **Authority ledger recorded in code (2026-07-19):** Agent PostgreSQL is
+  the single authority for extraction artifacts/citation refs; the OpenEMR
+  `/AI-Extractions` copy is a digest-verified projection (never a read path); OpenEMR
+  stays authoritative for source documents and written vitals. Full ledger text:
+  `agent/app/ingestion/artifacts.py` docstrings + `agent/migrations/README.md`
+  (inventory 001, 003–007; migration 002 never existed). Divergence fails closed
+  (`tests/test_artifact_authority_divergence.py`, PR #28). Conservative wording now
+  final per A01-RES(4).
+- R01-VER. **Response versioning (2026-07-19):** the per-claim contract ships as an
+  additive, presence-conditional `claims[]` lane (present iff at least one composed
+  claim was served), not a versioned endpoint — preserves the frozen W1 envelope
+  key-set contracts; `brief`/`citations` remain derived, documented-non-authoritative
+  (PR #26).

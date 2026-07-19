@@ -263,3 +263,22 @@
   R08 acceptance demands zero rubric-category movement.
 - Result: R08 meets its acceptance; PR 0b ready for review pending C02 phase-1 protection.
 - Stage: REMEDIATION — PR 0b verified.
+
+## [2026-07-19] Remediation day — full code train delivered as PRs 24–33 · type: milestone
+- What: executed W2_IMPLEMENTATION_PLAN.md end-to-end with parallel worktree sub-agents
+  under §4d discipline. W00 tree hygiene (doc set on main; G-D2+R08 isolated); Track A
+  salvage (C02-p1 runbooks, A01 draft, D01-lite banner, E01-lite exact-SHA evidence,
+  O02-lite partial datapoints incl. deployed retrieval probe p50 4.94 s/p95 6.49 s,
+  S01 dry run verifying all six PDF demo elements live incl. the bbox click-to-source
+  overlay); then R08/R07/R01/R06/R04/C01/R03/R02/R05/R09 — every lane RED-first,
+  full-suite ≥ baseline, recorded gate zero-delta, independently re-verified before
+  push. Two golden-set changes (R02: 2 swaps, R09: 3 swaps) byte-equivalence-justified
+  and flagged for V01. Per-lane evidence: docs/week2/evidence/W2_EVIDENCE_INDEX.md.
+- Why: close every P0/P1 finding with exact-SHA evidence per the audit RTM.
+- Result: ten green PRs; C02 phase-1 protection applied on both hosts (GitHub ruleset
+  19180393, five required checks, bypass=never; GitLab main Maintainers-only +
+  pipeline-required merges — found already protected at Maintainers, momentarily
+  stricter, restored to preserve the mirror-push flow); merge train begun (#24 merged
+  43605c2 through the protected flow). Owner resolved the six P2s (A01-RES).
+- Stage: REMEDIATION — merge train in progress; REL1 + evidence ops next; Tier-2 mint,
+  S01 recording, and V01 remain handed back.

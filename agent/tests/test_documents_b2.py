@@ -741,6 +741,19 @@ async def test_document_dedup_is_patient_scoped_and_retry_reuses_logical_job():
     assert await repo.count_outstanding() == 2
 
 
+def _intake_box_ocr_runner(_image):
+    # Module-level so it pickles into the spawned OCR child — image intake runs OCR
+    # under the shared kill-safe subprocess budget since the G-fix (owner decision
+    # G-D3, 2026-07-19); a test-local closure cannot cross the spawn boundary.
+    return {
+        "text": ["synthetic"],
+        "left": [10],
+        "top": [5],
+        "width": [20],
+        "height": [10],
+    }
+
+
 def test_intake_image_reader_emits_canonical_ocr_boxes():
     from app.ingestion.image_reader import read_image_words_and_boxes
 
@@ -748,16 +761,7 @@ def test_intake_image_reader_emits_canonical_ocr_boxes():
     buffer = BytesIO()
     image.save(buffer, format="PNG")
 
-    def fake_ocr(_image):
-        return {
-            "text": ["synthetic"],
-            "left": [10],
-            "top": [5],
-            "width": [20],
-            "height": [10],
-        }
-
-    result = read_image_words_and_boxes(buffer.getvalue(), ocr_runner=fake_ocr)
+    result = read_image_words_and_boxes(buffer.getvalue(), ocr_runner=_intake_box_ocr_runner)
     assert len(result.pages) == 1
     page = result.pages[0]
     assert page.source == "ocr"

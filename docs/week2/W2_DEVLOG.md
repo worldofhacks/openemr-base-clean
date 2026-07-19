@@ -215,3 +215,51 @@
   (byte-attested artifacts only). Tier-2 `ANTHROPIC_API_KEY`, `RAILWAY_TOKEN`, the GitLab
   status/mirror credential, and Railway backups are blocking owner actions (W2-O4).
 - Stage: PLANNING RECONCILED — closeout implementation (W2-C1..C13) pending against Early/Final.
+- 2026-07-19 — **G-D2: PyMuPDF/AGPL ban removed (owner decision).** Traced the ban to the
+  2026-07-13 /arch-finalize pass (W2_RESEARCH.md W2-R6) and verified the AgentForge Week 2
+  PDF imposes no dependency-license requirement. Removed the ban from gates.md, the AC-5
+  test (renamed `test_reader_deps_declare_license_metadata` — now asserts license-metadata
+  completeness for the per-PR dep audit), pyproject comments, reader/ingestion docstrings,
+  and TICKETS.md hard rules. W2-R6 library selection unchanged; plan §9 (G-tasks:
+  tables/figures/image intake) unaffected in substance — G-D1's "PyMuPDF not adopted"
+  rationale is now purely capability-based. Full record: W2_DECISIONS.md G-D2.
+- 2026-07-19 — **G-fix: cursive/handwritten forms and PNG uploads no longer fail extraction.**
+  Root cause: `vlm.py` source-completeness validators compared VLM output against OCR
+  evidence that could not read the document (Tesseract cannot read handwriting; photo
+  PNGs OCR to garbage) and raised `VlmResponseRejected` on the resulting mismatch —
+  rejecting VALID extractions of exactly the imperfect documents the W2 PDF requires
+  (W2-REQ-91). Pattern informed by the reference implementation analyzed today
+  (VLM-first extraction, evidence used to verify only where it could actually read).
+  Changes: (1) document-level evidence-quality gate (`reader.evidence_is_trustworthy`,
+  W2-D3 heuristics) — garbage/unreadable evidence skips the veto entirely; (2) per-value
+  mercy — printed-label/garbled-value rows and digit-free vital evidence no longer veto
+  (`token_is_wordlike`); (3) lab row check is now an in-order subsequence match: VLM may
+  report rows degraded OCR could not parse, may never drop or reorder OCR-readable rows;
+  (4) `image_reader.py` hardened — undecodable bytes → typed unreadable page (never
+  raises), OCR runs under the shared kill-safe subprocess budget
+  (`reader._run_ocr_with_timeout`, dead-child fast-path) — parity with the PDF path.
+  Anti-invention posture unchanged on trustworthy evidence (clean conflicting values,
+  dropped rows, reordering, vital rescale/omission all still reject; grounding still
+  decides visibility per W2-REQ-97). New frozen tests: `tests/test_vlm_evidence_gate.py`
+  (12), `tests/test_image_intake_robustness.py` (4). Verified green alongside the
+  untouched contracts: `test_vlm_provider.py` 17/17, `test_reader_geometry.py` 7/7
+  (AC-4 kill path exercises the refactor; real Tesseract). Full-suite run in the repo
+  venv (`cd agent && .venv/bin/pytest -q`, baseline 936+5) still owed before merge.
+
+## [2026-07-19] R08 verification — full suite + recorded gate green · type: milestone
+- What: the owed full-suite + recorded-gate verification of the G-fix (plan task R08, PR 0b),
+  on `feat/g-d2-reader` rebased onto main @ `93ab760`. First run: 951 passed / 1 failed —
+  `test_documents_b2.py::test_intake_image_reader_emits_canonical_ocr_boxes` defined its fake
+  OCR runner as a test-local closure, which cannot pickle into the spawned OCR child the
+  G-fix introduced for image intake (G-D3; the new robustness tests already use module-level
+  fakes for exactly this reason). Fix: hoisted the fake to module level
+  (`_intake_box_ocr_runner`) — every assertion byte-identical; the pinned box contract is
+  unchanged. Second run: **952 passed / 5 skipped** (baseline 936+5 plus the 16 new frozen
+  tests). Recorded 50-case gate (`make eval-tier1`): **gate=PASS, zero category delta** —
+  schema 50/50, citation 50/50, factual 23/23, safe_refusal 10/10, no_phi 50/50;
+  artifact-scan PASS (scanned=2, failing=0). Generated `evals/results-tier1.json` timing
+  jitter reverted (E01 owns evidence commits).
+- Why: plan §4d.3 — full suite ≥ baseline and the recorded gate must be green before any PR;
+  R08 acceptance demands zero rubric-category movement.
+- Result: R08 meets its acceptance; PR 0b ready for review pending C02 phase-1 protection.
+- Stage: REMEDIATION — PR 0b verified.

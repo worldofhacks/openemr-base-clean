@@ -22,7 +22,12 @@ from typing import Any, Protocol
 
 from pydantic import ValidationError
 
-from app.ingestion.reader import Word, WordsBoxes
+from app.ingestion.reader import (
+    Word,
+    WordsBoxes,
+    evidence_is_trustworthy,
+    token_is_wordlike,
+)
 from app.ingestion.repository import DocumentType
 from app.llm.provider import (
     LLMError,
@@ -313,17 +318,35 @@ def _validate_lab_completeness(
     rows = _lab_source_rows(lines)
     if not rows:
         return
-    if len(extraction.results) != len(rows):
-        raise VlmResponseRejected("invalid VLM response")
-    for source_row, result in zip(rows, extraction.results, strict=True):
-        if result.test_name.value is None or _normalized(result.test_name.value) != _normalized(
-            source_row["test_name"]
-        ):
+    # G-fix (2026-07-19): OCR-readable rows must all appear IN ORDER within the VLM
+    # results (dropping a visible row still rejects — "every visible row" contract), but
+    # the VLM may report MORE rows than degraded OCR could parse: garbled rows are
+    # invisible to the evidence layer, not absent from the document. Surplus VLM rows
+    # face deterministic grounding individually (unverified-and-visible, never silently
+    # trusted). Rows whose OCR test-name is itself garbage cannot demand a name match.
+    checkable = [row for row in rows if token_is_wordlike(row["test_name"])]
+    cursor = 0
+    for source_row in checkable:
+        match = None
+        while cursor < len(extraction.results):
+            result = extraction.results[cursor]
+            cursor += 1
+            if result.test_name.value is not None and _normalized(
+                result.test_name.value
+            ) == _normalized(source_row["test_name"]):
+                match = result
+                break
+        if match is None:
             raise VlmResponseRejected("invalid VLM response")
         source_value = source_row.get("value")
         if source_value is None:
             continue
-        proposed_value = result.value.value
+        if not token_is_wordlike(source_value):
+            # OCR read the printed label but the VALUE glyphs are garbage (handwritten
+            # value under a printed label — the common intake/lab form). Garbage can
+            # neither corroborate nor contradict; grounding decides visibility. (G-fix)
+            continue
+        proposed_value = match.value.value
         if proposed_value is None:
             raise VlmResponseRejected("invalid VLM response")
         source_numbers = _numeric_signature(source_value)
@@ -372,10 +395,16 @@ def _validate_intake_completeness(
         # rows cannot be faithfully represented, so ambiguity is rejected.
         if len(source_values) != 1:
             raise VlmResponseRejected("invalid VLM response")
+        source_value = source_values[0]
+        if not token_is_wordlike(source_value):
+            # G-fix (2026-07-19): printed label read cleanly, but the recognized VALUE is
+            # OCR garbage (handwritten entry). Garbage evidence can neither demand a
+            # candidate nor contradict one — grounding marks whatever the VLM proposed as
+            # unverified-and-visible. Do not veto on glyph noise.
+            continue
         candidate = getattr(extraction.vitals, slot)
         if candidate is None:
             raise VlmResponseRejected("invalid VLM response")
-        source_value = source_values[0]
         if kind == "measurement_date":
             proposed_date = candidate.measurement_date.value
             if proposed_date is None:
@@ -387,12 +416,18 @@ def _validate_intake_completeness(
 
         proposed_number = candidate.value.value
         source_numbers = _numeric_signature(source_value)
+        if not source_numbers:
+            # G-fix: the label is readable but OCR found no digits in the value — a number
+            # cannot be corroborated from digit-free evidence; grounding decides. (The
+            # previous behavior vetoed here, rejecting valid readings of handwritten
+            # vitals.)
+            continue
         if proposed_number is None or source_numbers != (proposed_number,):
             raise VlmResponseRejected("invalid VLM response")
         number_match = _NUMBER_RE.search(source_value)
         assert number_match is not None
         source_unit = source_value[number_match.end() :].strip()
-        if source_unit and (
+        if source_unit and token_is_wordlike(source_unit) and (
             candidate.unit.value is None
             or _normalized(candidate.unit.value) != _normalized(source_unit)
         ):
@@ -405,6 +440,16 @@ def _validate_source_completeness(
     doc_type: DocumentType,
     words_boxes: WordsBoxes,
 ) -> None:
+    if not evidence_is_trustworthy(words_boxes):
+        # G-fix (owner-directed, 2026-07-19): the local words+boxes layer could not
+        # plausibly READ this document — cursive/handwritten forms, photographed or
+        # degraded images, unreadable pages. Cross-checking the VLM's reading against
+        # evidence that saw nothing vetoed VALID extractions (the "cursive intake form /
+        # PNG rejected" failure). Skip the completeness veto; every proposed field still
+        # passes through deterministic grounding, which marks what the evidence cannot
+        # support as unverified-and-visible (W2-REQ-97 — visible, never invented). The
+        # veto below stays fully armed whenever the evidence layer is trustworthy.
+        return
     lines = _source_lines(words_boxes)
     if doc_type == "lab_pdf":
         assert isinstance(extraction, LabPdfExtraction)

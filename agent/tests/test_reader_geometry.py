@@ -6,7 +6,7 @@ W2_ARCHITECTURE.md §2 (the single canonical NormBBox coordinate space — norma
 ∈[0,1], origin top-left, y-down; RENDER_DPI locked at 200; page pixel dims recorded)
 and §3 (read step: text-layer first | junk-density → OCR fallback), plus W2-D3
 (text-layer first, OCR fallback, junk-layer sanity check) and W2-R6 (pypdfium2 +
-pdfplumber + Tesseract only; PyMuPDF/AGPL ban is binding).
+pdfplumber + Tesseract; PyMuPDF/AGPL ban removed by owner decision G-D2, 2026-07-19).
 
 FROZEN PUBLIC CONTRACT these tests pin (module ``app.ingestion.reader``). The
 implementation conforms to these tests, never the other way around. When W2-M6 freezes
@@ -101,34 +101,13 @@ NORMBBOX_TOL = 0.02
 # assertion is robust to fixture layout, but well under 0.5.
 TOP_OF_PAGE_Y_MAX = 0.35
 
-# Reader deps whose license we assert are permissive Apache/BSD/MIT-family (AC-5 scope).
+# Reader deps whose declared license metadata AC-5 inventories. AMENDED by owner decision
+# G-D2 (2026-07-19, docs/week2/W2_DECISIONS.md): the permissive-only policy, copyleft
+# prohibition, and PyMuPDF/AGPL ban were REMOVED — the AgentForge Week 2 PDF imposes no
+# dependency-license requirement. AC-5 now asserts the inventory is COMPLETE (every reader
+# dep declares license metadata) so the per-PR dependency audit always has data to audit.
 # Distribution names as seen by importlib.metadata.
 READER_DEPS = ("pypdfium2", "pdfplumber", "pdfminer.six", "pillow", "pytesseract")
-
-# Permissive identifiers we accept for the reader stack. Substring match, case-insensitive,
-# against the dist's declared license (License-Expression, License field, or a
-# "License :: OSI Approved :: ..." classifier). Apache/BSD/MIT family only.
-PERMISSIVE_LICENSE_MARKERS = (
-    "mit",
-    "bsd",
-    "apache",
-)
-
-# Explicit allowlist for a permissive-EQUIVALENT identifier that is not literally in the
-# Apache/BSD/MIT family but is non-copyleft and accepted (AC-5, proposed). Each entry
-# carries a justification. pillow ships as "MIT-CMU" (a.k.a. HPND — Historical Permission
-# Notice and Disclaimer): a permissive, non-copyleft, MIT-derived license. It is the
-# required imaging dependency of the pdfplumber/pytesseract stack and mirrors the
-# agent/pyproject.toml W2-M1 allowlist note.
-LICENSE_ALLOWLIST: dict[str, str] = {
-    # dist name -> justification
-    "pillow": "MIT-CMU/HPND — permissive, non-copyleft, MIT-derived; imaging dep of the "
-              "pdfplumber/pytesseract reader stack (mirrors pyproject W2-M1 allowlist).",
-}
-
-# Forbidden copyleft identifiers for the reader stack — an AGPL/GPL/LGPL leak here is the
-# exact W2-R6 violation (PyMuPDF is AGPL and is why it is banned).
-FORBIDDEN_COPYLEFT_MARKERS = ("agpl", "gpl", "lgpl")
 
 # Known synthetic, NON-CLINICAL content markers the generator must emit (AC-7). No PHI,
 # no real-looking patient data — deliberately obvious placeholder tokens.
@@ -416,49 +395,24 @@ def test_slow_ocr_runner_is_killed_page_marked_unreadable_no_hang():
 
 
 # ======================================================================================
-# AC-5 — reader-stack license verification: permissive family, PyMuPDF absent, no copyleft
+# AC-5 — reader-stack license inventory (amended by owner decision G-D2, 2026-07-19)
 # ======================================================================================
 
 
-def test_reader_deps_are_permissive_and_pymupdf_is_absent():
-    # spec(W2-M4:AC-5)
-    # guards: a GPL/AGPL dependency (the exact reason PyMuPDF is banned, W2-R6) sneaking
-    # into the reader stack, or PyMuPDF/fitz being present at all — either would poison the
-    # license posture of the whole shipped agent.
+def test_reader_deps_declare_license_metadata():
+    # spec(W2-M4:AC-5) — AMENDED per G-D2 (docs/week2/W2_DECISIONS.md, 2026-07-19): the
+    # permissive-only rule, the copyleft prohibition, and the PyMuPDF-absence assertions
+    # were REMOVED. The ban was self-imposed at the 2026-07-13 /arch-finalize pass
+    # (W2_RESEARCH.md W2-R6), not an AgentForge Week 2 requirement. What remains
+    # load-bearing: every reader dep must DECLARE license metadata, so the per-PR
+    # dependency audit (an actual AgentForge W2 engineering requirement) always has a
+    # complete inventory to audit.
     for dist_name in READER_DEPS:
         declared = _declared_licenses(dist_name)
         assert declared, (
-            f"{dist_name} declared no license metadata at all — cannot verify AC-5"
+            f"{dist_name} declared no license metadata at all — the per-PR dependency "
+            "audit cannot inventory it"
         )
-
-        # No copyleft identifier anywhere in the reader stack.
-        for forbidden in FORBIDDEN_COPYLEFT_MARKERS:
-            assert forbidden not in declared, (
-                f"{dist_name} declares a copyleft license ({forbidden!r} in {declared!r}) "
-                "— forbidden for the reader stack (W2-R6)"
-            )
-
-        # Either an Apache/BSD/MIT-family marker, or an explicit allowlist entry.
-        permissive = any(marker in declared for marker in PERMISSIVE_LICENSE_MARKERS)
-        allowlisted = dist_name in LICENSE_ALLOWLIST
-        assert permissive or allowlisted, (
-            f"{dist_name} license {declared!r} is neither Apache/BSD/MIT-family nor on the "
-            f"justified allowlist {sorted(LICENSE_ALLOWLIST)}"
-        )
-        # A dist may only be on the allowlist WITH a justification comment / value.
-        if allowlisted:
-            assert LICENSE_ALLOWLIST[dist_name].strip(), (
-                f"{dist_name} allowlist entry must carry a justification"
-            )
-
-    # PyMuPDF is ABSENT from the environment: the import fails AND no dist metadata exists
-    # under either of its distribution names.
-    with pytest.raises(ImportError):
-        import fitz  # noqa: F401  (PyMuPDF's import name — must NOT be installed)
-
-    for banned_dist in ("PyMuPDF", "fitz"):
-        with pytest.raises(importlib_metadata.PackageNotFoundError):
-            importlib_metadata.metadata(banned_dist)
 
 
 # ======================================================================================

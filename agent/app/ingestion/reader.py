@@ -21,8 +21,8 @@ The single ingestion read path behind ``read_words_and_boxes``:
   ``unreadable=True`` with an empty word list and ``source="ocr"``, and the reader
   CONTINUES to the remaining pages; it never raises or hangs.
 
-The reader stack is **pypdfium2 + pdfplumber + Tesseract only**. PyMuPDF is banned
-(AGPL, W2-R6) and is never imported here.
+The reader stack is **pypdfium2 + pdfplumber + Tesseract** (W2-R6 selection; the former
+PyMuPDF/AGPL ban was removed by owner decision G-D2, 2026-07-19).
 
 ``NormBBox`` is the canonical §2 box, defined in ``app.schemas.extraction`` (W2-M6) and
 re-exported here by identity — the M4 reader and the schema inventory share ONE class
@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import multiprocessing
 import re
+import time
 from io import BytesIO
 from pathlib import Path
 from typing import Callable, Literal, Optional
@@ -199,6 +200,33 @@ def _text_layer_is_trustworthy(word_texts: list[str]) -> bool:
     )
 
 
+def token_is_wordlike(token: str) -> bool:
+    """Public wordlike heuristic (W2-D3 family) for evidence-quality checks.
+
+    True when ``token`` carries enough alphanumeric signal to be treated as something the
+    evidence layer actually READ (vs. OCR garbage from handwriting/noise). Shared with the
+    VLM completeness gate (G-fix, 2026-07-19) so "what counts as readable" has one home.
+    """
+    return _is_wordlike(token)
+
+
+def evidence_is_trustworthy(words_boxes: WordsBoxes) -> bool:
+    """True when the words+boxes layer plausibly READ the document (G-fix, 2026-07-19).
+
+    Applies the W2-D3 junk-density heuristic to the WHOLE extracted evidence layer
+    (readable pages only). Cursive/handwritten forms, photographed documents, and
+    unreadable pages yield sparse or garbage tokens — evidence that saw nothing must not
+    be used to veto a VLM extraction (it can still refuse to GROUND it, which keeps
+    unsupported values visible-and-unverified per W2-REQ-97)."""
+    texts = [
+        word.text
+        for page in words_boxes.pages
+        if not page.unreadable
+        for word in page.words
+    ]
+    return _text_layer_is_trustworthy(texts)
+
+
 def _extract_text_layer_words(
     plumber_page: "pdfplumber.page.Page",
 ) -> list[tuple[str, float, float, float, float]]:
@@ -304,23 +332,30 @@ def _unreadable_page(page_index: int, width_px: int, height_px: int) -> PageWord
     )
 
 
-def _ocr_page(
-    pdfium_page: "pdfium.PdfPage",
-    page_index: int,
-    ocr_runner: OcrRunner,
-    per_page_ocr_timeout_s: float,
-    width_px: int,
-    height_px: int,
-) -> PageWords:
-    """OCR a single page under a HARD per-page timeout that genuinely kills a runaway.
+#: Sentinel returned by ``_run_ocr_with_timeout`` when the child was killed (timeout) or
+#: died without producing a result. Never crosses the process boundary.
+_OCR_TIMEOUT_SENTINEL: object = object()
 
-    The runner runs in a SPAWNED ``multiprocessing.Process``; on timeout the child is
-    ``terminate()``-d (SIGTERM) and joined, so a runaway page cannot outlive the call —
-    a thread cannot be force-killed, so a process is used. On timeout the page is marked
-    unreadable (empty words, ``source="ocr"``) and the caller continues; never raises on
-    timeout, never hangs.
+#: Poll interval while waiting on the OCR child — lets a crashed child surface as
+#: unreadable immediately instead of burning the full per-page budget.
+_QUEUE_POLL_S: float = 0.1
+
+
+def _run_ocr_with_timeout(
+    image: Image.Image,
+    runner: OcrRunner,
+    timeout_s: float,
+) -> object:
+    """Run ``runner`` over ``image`` in a SPAWNED, genuinely killable child (G-fix refactor).
+
+    Shared by the PDF OCR path (``_ocr_page``) and the image intake path
+    (``app.ingestion.image_reader``) so BOTH enjoy the same hard per-page discipline:
+    on timeout the child is ``terminate()``-d (SIGTERM), then ``kill()``-ed if needed —
+    a thread cannot be force-killed, so a process is used. A child that dies without a
+    result (crashing runner) is detected via ``is_alive`` polling and returns promptly.
+    Returns the runner's result, or ``_OCR_TIMEOUT_SENTINEL`` on timeout/child-death.
+    Never raises on timeout, never hangs.
     """
-    image = _render_page_to_image(pdfium_page)
     image_bytes = image.tobytes()
     image_mode = image.mode
     image_width, image_height = image.size
@@ -331,7 +366,7 @@ def _ocr_page(
         target=_ocr_subprocess_entry,
         args=(
             result_queue,
-            ocr_runner,
+            runner,
             image_width,
             image_height,
             image_mode,
@@ -341,15 +376,28 @@ def _ocr_page(
     )
     process.start()
 
-    data: object = None
-    timed_out = False
-    try:
-        data = result_queue.get(timeout=per_page_ocr_timeout_s)
-    except Exception:
-        # queue.Empty (no result within the budget) — treat as a runaway page.
-        timed_out = True
+    data: object = _OCR_TIMEOUT_SENTINEL
+    received = False
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            data = result_queue.get(timeout=_QUEUE_POLL_S)
+            received = True
+            break
+        except Exception:
+            # queue.Empty this poll. A dead child will never produce a result — stop
+            # waiting out the budget (one final drain below absorbs the put/exit race).
+            if not process.is_alive():
+                break
 
-    if timed_out:
+    if not received:
+        try:
+            data = result_queue.get_nowait()
+            received = True
+        except Exception:
+            received = False
+
+    if not received:
         # Genuine kill: SIGTERM the child, then reap it so nothing lingers.
         process.terminate()
         process.join(_TERMINATE_JOIN_GRACE_S)
@@ -357,10 +405,31 @@ def _ocr_page(
             process.kill()
             process.join(_TERMINATE_JOIN_GRACE_S)
         result_queue.close()
-        return _unreadable_page(page_index, width_px, height_px)
+        return _OCR_TIMEOUT_SENTINEL
 
     process.join(_TERMINATE_JOIN_GRACE_S)
     result_queue.close()
+    return data
+
+
+def _ocr_page(
+    pdfium_page: "pdfium.PdfPage",
+    page_index: int,
+    ocr_runner: OcrRunner,
+    per_page_ocr_timeout_s: float,
+    width_px: int,
+    height_px: int,
+) -> PageWords:
+    """OCR a single page under a HARD per-page timeout that genuinely kills a runaway.
+
+    Delegates the spawn/kill mechanics to ``_run_ocr_with_timeout`` (shared with the
+    image intake path). On timeout the page is marked unreadable (empty words,
+    ``source="ocr"``) and the caller continues; never raises on timeout, never hangs.
+    """
+    image = _render_page_to_image(pdfium_page)
+    data = _run_ocr_with_timeout(image, ocr_runner, per_page_ocr_timeout_s)
+    if data is _OCR_TIMEOUT_SENTINEL:
+        return _unreadable_page(page_index, width_px, height_px)
 
     if not isinstance(data, dict):
         words: list[Word] = []

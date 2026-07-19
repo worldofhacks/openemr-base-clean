@@ -36,32 +36,36 @@ RUN_LIVE/[ui] extra).
 |---|---|
 | Full suite ≥ baseline | fresh venv in integration worktree; `pytest -q` count ≥ 238 passed |
 | Container build | `docker build agent/` succeeds locally (W2-M1 adds native deps); Railway build green (M1 evidence) |
-| Dependency check | `pip check` clean; **two-tier license gate (amended 2026-07-14, W2 Wave 0 — see note below):** FIRST-PARTY + DIRECT deps strict-permissive (Apache/BSD/MIT family; permissive-equivalent identifiers e.g. pillow HPND only via explicit allowlist + justification; no GPL/LGPL/MPL identifier on a direct dep); documented non-infecting TRANSITIVE runtime deps accepted by owner exception per a **criterion** (MPL-2.0 file-level weak copyleft on unmodified wheels — tqdm/certifi/orjson; and libgfortran in the Linux numpy wheel under `GCC-exception-3.1`); **AGPL hard-banned at every level (W2-R6 — PyMuPDF)**; no torch anywhere (W2-M1 AC-2) |
+| Dependency check | `pip check` clean; **license gate superseded by owner decision G-D2 (2026-07-19 — see note below):** no license-family ban; every direct dep's declared license is inventoried and documented (pyproject comments + AC-5 metadata-completeness test); per-PR dependency audit + security scan (AgentForge W2 engineering requirement) unchanged; no torch anywhere (W2-M1 AC-2) |
 | Secret scan | `gitleaks detect` (if installed) else `git diff main...HEAD` grep for key patterns (sk-ant-, api key literals, Bearer); `.env` files never committed |
 | PHI check | wave diff + fixtures are synthetic/non-clinical only; no PHI in logs/traces/fixtures |
 | Write-surface freeze | wave diff contains NO OpenEMR PHP/routes/schema file and NO OpenEMR write-path enablement (W2-D2/D9; W2-M8/M11 out of scope) |
 | Architecture drift | wave-built shape vs W2_ARCHITECTURE.md §2/§2a/§6/§9 — undeclared deps/boundary crossings are findings |
 | Regression on main-merge readiness | integration branch merges clean onto current main |
 
-### Dependency-license gate — refined criterion (amended 2026-07-14, W2 Wave 0)
+### Dependency-license gate — SUPERSEDED by owner decision G-D2 (2026-07-19)
 
-Owner-granted documented exception (W2-M1 license resolution). This is an owner-directed
-acceptance-criteria change, re-frozen with rationale; it weakens no frozen test — the
-license gate is a DoD/doc clause, not a pytest. The gate is two-tier:
+**G-D2 (owner, 2026-07-19):** the license-FAMILY rules below (strict-permissive direct
+deps, copyleft prohibitions, and the AGPL/PyMuPDF hard ban) are REMOVED. The ban was
+self-imposed at the 2026-07-13 /arch-finalize pass (W2_RESEARCH.md W2-R6); the AgentForge
+Week 2 PDF contains no dependency-license requirement. What the gate still requires:
+`pip check` clean; every DIRECT dep's declared license inventoried and documented
+(pyproject comment + the AC-5 metadata-completeness test); the per-PR dependency audit +
+security scan (an actual AgentForge W2 engineering requirement); no `torch` anywhere
+(frozen AC-2 test — a size/execution-path rule, not a license rule). Compliance note for
+any future AGPL dep (e.g. PyMuPDF): this repo is a public GPL-3 fork, which satisfies
+AGPL source-availability; revisit only if the repo ever goes private/proprietary.
 
-- **First-party + direct deps — strict.** Every dependency declared directly in
-  `agent/pyproject.toml` must carry a permissive OSI license in the Apache-2.0 / BSD / MIT
-  family. A permissive-equivalent identifier (e.g. pillow's `MIT-CMU`/HPND) is admitted
-  only via an explicit allowlist entry with a justification comment. No GPL/LGPL/MPL/AGPL
-  identifier on any direct dep. PyMuPDF is banned (AGPL, W2-R6). No `torch` anywhere
-  (frozen AC-2 test enforces torch absence).
-- **Transitive runtime deps — documented accepted exceptions for non-infecting licenses,
-  by criterion (non-exhaustive).** ACCEPTANCE RULE: a transitive dep whose only
-  non-permissive identifier is file-level weak copyleft (MPL-2.0) on an unmodified wheel,
-  or a runtime-library GPL exception, is accepted; AGPL and viral/strong copyleft
-  (GPL/LGPL without a runtime exception) are never accepted. Full `importlib.metadata`
-  scan of the installed environment (2026-07-14, 94 dists — the only MPL/copyleft
-  identifiers found):
+The 2026-07-14 two-tier criterion below is retained as HISTORY (it documents why
+tqdm/certifi/orjson/libgfortran were accepted at the time; those acceptances stand):
+
+- **[HISTORICAL] First-party + direct deps — strict.** Permissive Apache/BSD/MIT family;
+  allowlisted permissive-equivalents (pillow `MIT-CMU`/HPND) with justification; no
+  GPL/LGPL/MPL/AGPL on a direct dep; PyMuPDF banned (AGPL, W2-R6). *(Superseded by G-D2.)*
+- **[HISTORICAL] Transitive runtime deps — documented accepted exceptions.** MPL-2.0
+  file-level weak copyleft on unmodified wheels, or runtime-library GPL exceptions,
+  accepted; AGPL never. Full `importlib.metadata` scan of the installed environment
+  (2026-07-14, 94 dists — the only MPL/copyleft identifiers found):
   - **MPL-2.0, file-level weak copyleft, unmodified wheels** — its obligations attach only
     to modified MPL-covered files that are redistributed, never to the combined/larger
     work: **tqdm** `MPL-2.0 AND MIT` (via fastembed), **certifi** `MPL-2.0` (via httpx),
@@ -76,8 +80,8 @@ license gate is a DoD/doc clause, not a pytest. The gate is two-tier:
   - *Scan hygiene for the future automated gate (W2-M20):* a naive substring scan
     false-positives on `mmh3` (its MIT license text contains "IMPLIED" ⊃ "MPL"); mmh3 is
     MIT, not MPL.
-- **AGPL is hard-banned at every level** (direct or transitive) — the one license no
-  exception covers (PyMuPDF, W2-R6).
+- **[HISTORICAL] AGPL hard-banned at every level** — the one license no exception covered
+  (PyMuPDF, W2-R6). *(Removed by G-D2, 2026-07-19.)*
 
 Posture: production-grade (carried from W1 — `.tdd-swarm/posture.md`). Performance
 smoke: Wave 0 IS the performance measurement (M1 RSS ceiling, M24 timing/cost);

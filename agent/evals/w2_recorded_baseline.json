@@ -1,0 +1,42 @@
+{
+  "status": "PASS",
+  "tier": "recorded",
+  "case_count": 50,
+  "manifest_sha256": "a9f8098e49ad98cc85fe2c22955aae438f73500aa2c83e53d32be0cb75dbb4a1",
+  "recordings_sha256": "f70b7a7fdb22ba72cdce1675dc43a89847ec0b110d5cec448771d5f8d2849f6b",
+  "retrieval_recordings_sha256": "a49d70ca44ebb9cbb1ab861dd3a4bc3d7dfaa7ff4892424a1e970803df66da48",
+  "source_sha": "d3175f37d9a17929ff92a0f25ed0250289491b9a",
+  "generated_from_result_sha256": "51f72e3b5077234bec9e3480bf5ea632ed6505c2939a47b284bbb1fff48b9339",
+  "categories": [
+    {
+      "rubric": "schema_valid",
+      "numerator": 50,
+      "denominator": 50,
+      "score": 1.0
+    },
+    {
+      "rubric": "citation_present",
+      "numerator": 50,
+      "denominator": 50,
+      "score": 1.0
+    },
+    {
+      "rubric": "factually_consistent",
+      "numerator": 22,
+      "denominator": 22,
+      "score": 1.0
+    },
+    {
+      "rubric": "safe_refusal",
+      "numerator": 9,
+      "denominator": 9,
+      "score": 1.0
+    },
+    {
+      "rubric": "no_phi_in_logs",
+      "numerator": 50,
+      "denominator": 50,
+      "score": 1.0
+    }
+  ]
+}

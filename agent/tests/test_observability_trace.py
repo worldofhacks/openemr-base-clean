@@ -113,3 +113,86 @@ def test_trace_records_ordered_steps_with_latency():  # §7: steps + order + per
     assert [s.order for s in steps] == [0, 1, 2]           # order preserved
     assert all(s.latency_ms >= 0 for s in steps)
     assert steps[1].detail["status"] == "ok"              # per-step detail retained
+
+
+# --- R05 / AF-P1-04: the fused per-turn encounter summary --------------------
+# langfuse.py previously hard-coded retrieval_hit_count=0 / extraction_grounding_rate=0.0,
+# zero-filling the halves the ingestion emitter owns. The builder now records both halves so
+# one per-turn record carries tool sequence, step latencies, tokens, cost, retrieval hits,
+# grounding rate, and verification outcomes (PDF p.5 Core Req 7).
+
+
+def _events_builder():
+    from app.observability.events import EventEmitter, InMemoryEventSink
+
+    events_sink = InMemoryEventSink()
+    tracer = RequestTracer(InMemoryTraceSink(), events=EventEmitter(events_sink))
+    return tracer.begin(_acct()), events_sink
+
+
+def test_finish_emits_fused_summary_with_recorded_retrieval_and_grounding():
+    from app.observability.events import EventType
+
+    builder, events_sink = _events_builder()
+    builder.step("graph.worker.evidence_retriever", latency_ms=12.0)
+    builder.step("llm.complete", latency_ms=120.0, input_tokens=100)
+    builder.record_usage(Usage(input_tokens=100, output_tokens=40))
+    builder.record_verdict("pass")
+    builder.record_retrieval(
+        hit_count=4, latency_ms=12.0, degraded=False, reranker_mode="local"
+    )
+    builder.record_grounding(fields_grounded=9, fields_unsupported=1)
+    builder.finish(model="claude-sonnet-4-6", fallback_kind=None, degraded=False, source="llm")
+
+    summaries = [
+        e for e in events_sink.events if e.event_type is EventType.ENCOUNTER_SUMMARY
+    ]
+    assert len(summaries) == 1
+    attributes = summaries[0].attributes
+    assert attributes["ordered_steps"] == [
+        "graph.worker.evidence_retriever", "llm.complete"
+    ]
+    assert attributes["step_latencies_ms"] == [12.0, 120.0]
+    assert attributes["input_tokens"] == 100 and attributes["output_tokens"] == 40
+    assert attributes["cost_usd"] > 0
+    assert attributes["retrieval_hit_count"] == 4          # no longer hard-coded 0
+    assert attributes["extraction_grounding_rate"] == 0.9  # no longer hard-coded 0.0
+    assert attributes["verification_outcomes"] == ["pass"]
+    assert summaries[0].correlation_id == CORR
+
+
+def test_record_retrieval_emits_the_registered_retrieval_event():
+    from app.observability.events import EventComponent, EventType
+
+    builder, events_sink = _events_builder()
+    builder.record_retrieval(
+        hit_count=3, latency_ms=41.0, degraded=True, reranker_mode="cohere"
+    )
+
+    retrievals = [
+        e for e in events_sink.events if e.event_type is EventType.RETRIEVAL_COMPLETED
+    ]
+    assert len(retrievals) == 1
+    event = retrievals[0]
+    assert event.component is EventComponent.RETRIEVAL
+    assert event.correlation_id == CORR
+    assert event.attributes == {
+        "hit_count": 3,
+        "latency_ms": 41.0,
+        "degraded": True,
+        "reranker_mode": "cohere",
+    }
+
+
+def test_summary_zero_halves_remain_honest_defaults_without_recordings():
+    from app.observability.events import EventType
+
+    builder, events_sink = _events_builder()
+    builder.record_usage(Usage(input_tokens=10, output_tokens=5))
+    builder.finish(model="claude-sonnet-4-6", fallback_kind=None, degraded=False, source="llm")
+
+    [summary] = [
+        e for e in events_sink.events if e.event_type is EventType.ENCOUNTER_SUMMARY
+    ]
+    assert summary.attributes["retrieval_hit_count"] == 0
+    assert summary.attributes["extraction_grounding_rate"] == 0.0

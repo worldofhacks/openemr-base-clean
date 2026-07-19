@@ -9,9 +9,11 @@ event lane.
 from __future__ import annotations
 
 import enum
+import json
+import sys
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated, Literal, Optional, Protocol, Union, runtime_checkable
+from typing import Annotated, Literal, Optional, Protocol, TextIO, Union, runtime_checkable
 
 from pydantic import (
     BaseModel,
@@ -362,6 +364,28 @@ class InMemoryEventSink:
 
     def emit(self, event: LogEventEnvelope) -> None:
         self.events.append(event)
+
+
+class StructuredLogEventSink:
+    """Production sink: one PHI-free JSON line per validated envelope on the log lane.
+
+    Only ``EventEmitter``-validated envelopes reach a sink, so every attribute has
+    already passed the closed registry — clinical values, free text, and unknown keys
+    were rejected upstream. Each line lands on the same stdout stream as the
+    structured application logs (§7), so the platform log export makes every W2 event
+    searchable by ``correlation_id``, ``job_id``, and ``case_id`` (AF-P1-04).
+    """
+
+    def __init__(self, stream: TextIO | None = None) -> None:
+        self._stream = stream
+
+    def emit(self, event: LogEventEnvelope) -> None:
+        # Resolve lazily so pytest's stdout capture and process-level redirection work.
+        stream = self._stream if self._stream is not None else sys.stdout
+        payload: dict[str, object] = {"log_type": "w2.event"}
+        payload.update(event.model_dump(mode="json", exclude_none=True))
+        stream.write(json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n")
+        stream.flush()
 
 
 class EventEmitter:

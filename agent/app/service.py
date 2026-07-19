@@ -52,7 +52,8 @@ from app.observability.langfuse import (
     RequestTracer,
     TraceSink,
 )
-from app.observability.events import EventEmitter, EventSink, NullEventSink
+from app.observability.events import EventEmitter, EventSink, StructuredLogEventSink
+from app.observability.retrieval import observe_retrieval_worker, resolve_reranker_mode
 from app.observability.trace import AccountabilityContext
 from app.orchestrator import graph as orchestrator_graph
 from app.orchestrator.loop import BriefResult, Orchestrator, ToolRegistry
@@ -214,7 +215,12 @@ class AgentServices:
             timeout=settings.llm_timeout_seconds,
         )
         self.cost_cap = DailyCostCap(cap_usd=settings.daily_cost_cap_usd)
-        self.events = EventEmitter(event_sink or NullEventSink())
+        # R05 / AF-P1-04: production composition previously defaulted to NullEventSink,
+        # silently discarding every W2 structured event. The default is now the PHI-safe
+        # structured-log lane (stdout JSON lines, §7); tests keep the injectable seam.
+        self.events = EventEmitter(
+            event_sink if event_sink is not None else StructuredLogEventSink()
+        )
         self.tracer = _build_tracer(settings, events=self.events)
         self.orchestrator = Orchestrator(
             self.provider,
@@ -662,14 +668,25 @@ class AgentServices:
             request_kind="previsit_brief",
         )
 
+        # R05 / AF-P1-04: retrieval completion emits the registered retrieval.completed
+        # event. Wrapping happens here in the composition root; partial test fixtures
+        # without an event emitter keep the unwrapped worker (same seam as the graph's
+        # `events=getattr(...)` below).
+        events = getattr(self, "events", None)
         try:
             retrieval_worker = build_evidence_worker(
                 self.get_evidence_retriever(), refs
             )
+            if events is not None:
+                retrieval_worker = observe_retrieval_worker(
+                    retrieval_worker,
+                    events=events,
+                    reranker_mode=resolve_reranker_mode(os.environ),
+                )
         except RetrievalUnavailableError:
             # Retrieval is a soft dependency (§6). Preserve the W1 grounded chart brief
             # while making the worker degradation explicit in its canonical envelope.
-            async def retrieval_worker(payload: WorkerInput) -> WorkerOutput:
+            async def degraded_retrieval(payload: WorkerInput) -> WorkerOutput:
                 return WorkerOutput(
                     correlation_id=payload.correlation_id,
                     worker="evidence_retriever",
@@ -677,6 +694,14 @@ class AgentServices:
                     artifact_refs=[],
                     citation_refs=[],
                     reason_code=None,
+                )
+
+            # Even an unavailable retriever completes retrieval (degraded), so the
+            # registered retrieval.completed event still records the outcome.
+            retrieval_worker = degraded_retrieval
+            if events is not None:
+                retrieval_worker = observe_retrieval_worker(
+                    degraded_retrieval, events=events, reranker_mode="disabled"
                 )
 
         async def run_brief_pinned() -> BriefResult:

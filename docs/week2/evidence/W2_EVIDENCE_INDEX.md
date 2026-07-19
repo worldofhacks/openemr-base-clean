@@ -118,3 +118,14 @@ file or directly in the checklist.
   Success; gate PASS zero delta. Authority-ledger decision note deferred to the docs
   sync batch (W2_DECISIONS.md contended by PR #24 EOF appends). R05 rebases on this
   (§4b order R04 → R05).
+
+## C01 — code complete, stacked PR open (2026-07-19)
+
+- **C01 (AF-P1-05):** branch `ci/w2-image-smoke-mypy-ratchet` @ `1e7b13d`, PR #29
+  (https://github.com/worldofhacks/openemr-base-clean/pull/29; stacked on R07's branch,
+  retargets to main when #25 merges). New required-check candidates:
+  `quality-security-contracts / image-build-smoke` + ratchet-backed
+  `ruff-mypy-coverage`. Three red drills proven locally (type error, startup crash,
+  malformed readiness) then restored green; smoke proves R07's offline weight
+  resolution in-image. Suite 946/5 (941 base + 5 ratchet tests); gate PASS zero delta.
+  Smoke boots with RETRIEVAL_WARMUP=0 (documented memory-bound rationale).

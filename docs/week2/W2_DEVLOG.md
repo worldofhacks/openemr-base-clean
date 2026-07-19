@@ -245,3 +245,21 @@
   untouched contracts: `test_vlm_provider.py` 17/17, `test_reader_geometry.py` 7/7
   (AC-4 kill path exercises the refactor; real Tesseract). Full-suite run in the repo
   venv (`cd agent && .venv/bin/pytest -q`, baseline 936+5) still owed before merge.
+
+## [2026-07-19] R08 verification — full suite + recorded gate green · type: milestone
+- What: the owed full-suite + recorded-gate verification of the G-fix (plan task R08, PR 0b),
+  on `feat/g-d2-reader` rebased onto main @ `93ab760`. First run: 951 passed / 1 failed —
+  `test_documents_b2.py::test_intake_image_reader_emits_canonical_ocr_boxes` defined its fake
+  OCR runner as a test-local closure, which cannot pickle into the spawned OCR child the
+  G-fix introduced for image intake (G-D3; the new robustness tests already use module-level
+  fakes for exactly this reason). Fix: hoisted the fake to module level
+  (`_intake_box_ocr_runner`) — every assertion byte-identical; the pinned box contract is
+  unchanged. Second run: **952 passed / 5 skipped** (baseline 936+5 plus the 16 new frozen
+  tests). Recorded 50-case gate (`make eval-tier1`): **gate=PASS, zero category delta** —
+  schema 50/50, citation 50/50, factual 23/23, safe_refusal 10/10, no_phi 50/50;
+  artifact-scan PASS (scanned=2, failing=0). Generated `evals/results-tier1.json` timing
+  jitter reverted (E01 owns evidence commits).
+- Why: plan §4d.3 — full suite ≥ baseline and the recorded gate must be green before any PR;
+  R08 acceptance demands zero rubric-category movement.
+- Result: R08 meets its acceptance; PR 0b ready for review pending C02 phase-1 protection.
+- Stage: REMEDIATION — PR 0b verified.

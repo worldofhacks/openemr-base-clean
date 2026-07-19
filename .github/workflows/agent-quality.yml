@@ -49,28 +49,26 @@ jobs:
           python -m pip install --disable-pip-version-check ruff==0.15.21 mypy==2.3.0 coverage==7.15.2
       - name: Ruff
         run: ruff check --output-format concise app evals scripts tests ops bruno corpus
-      - name: Mypy (typed closeout safety surface)
-        run: >-
-          mypy
-          --follow-imports=skip
-          --ignore-missing-imports
-          --check-untyped-defs
-          --disallow-untyped-defs
-          --no-implicit-optional
-          --warn-redundant-casts
-          --warn-unused-ignores
-          --warn-unreachable
-          --strict-equality
-          scripts/dependency_audit.py
-          scripts/restore_drill.py
-          scripts/verify_deployed_sha.py
-          scripts/static_security_gate.py
-          evals/artifact_scan.py
-          evals/w2_models.py
-          app/schemas/answers.py
-          app/schemas/lab_trends.py
-          app/orchestrator/critic.py
-          app/observability/events.py
+      - name: Mypy (typed closeout safety surface, ratcheted module list)
+        # C01/AF-P1-05: the module list lives in the tracked ratchet file; the
+        # frozen test tests/test_mypy_ratchet.py enforces that it only grows.
+        # The strict flag set is pinned — do not weaken.
+        run: |
+          RATCHET="$(grep -vE '^[[:space:]]*(#|$)' mypy-ratchet.txt)"
+          test -n "$RATCHET"
+          # Word-splitting is intended: entries are single-word module paths.
+          # shellcheck disable=SC2086
+          mypy \
+            --follow-imports=skip \
+            --ignore-missing-imports \
+            --check-untyped-defs \
+            --disallow-untyped-defs \
+            --no-implicit-optional \
+            --warn-redundant-casts \
+            --warn-unused-ignores \
+            --warn-unreachable \
+            --strict-equality \
+            $RATCHET
       - name: Coverage (locked floor 83 percent)
         env:
           RUN_LIVE: '0'
@@ -151,3 +149,145 @@ jobs:
           python -m evals.artifact_scan --eval-result evals/results-tier1.json evals/recordings
       - name: Verify committed corpus integrity and dependency bans
         run: python -m pytest corpus/tests tests/test_reader_geometry.py tests/test_app_boot.py --tb=no --show-capture=no -q
+
+  image-smoke:
+    name: image-build-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SMOKE_IMAGE: agentforge-agent:ci-smoke
+      SMOKE_CONTAINER: agent-smoke
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Build agent image (GHA layer cache)
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: agent
+          tags: ${{ env.SMOKE_IMAGE }}
+          load: true
+          cache-from: type=gha,scope=agent-image
+          cache-to: type=gha,mode=max,scope=agent-image
+      - name: Boot container with deterministic offline test config
+        # RFC 2606 .invalid hosts + an unreachable DSN: hard readiness probes
+        # fail by design (no external services in CI). The smoke asserts
+        # liveness plus a WELL-FORMED readiness report, not all-green.
+        # RETRIEVAL_WARMUP=0 overrides the image default via the documented
+        # default-off switch (R07/W2-D4): the smoke's /ready probe still
+        # performs one full retrieval model load from the baked cache (proving
+        # offline weight resolution) without a background warmup thread racing
+        # the poll, keeping boot deterministic and the memory envelope bounded
+        # (one model copy instead of warmup + per-probe copies).
+        run: |
+          docker run --detach --name "$SMOKE_CONTAINER" \
+            --publish 8000:8000 \
+            --env RETRIEVAL_WARMUP=0 \
+            --env OPENEMR_FHIR_BASE_URL=https://openemr.invalid/apis/default/fhir \
+            --env OPENEMR_OAUTH_BASE_URL=https://openemr.invalid/oauth2/default \
+            --env SMART_CLIENT_ID=ci-smoke-client \
+            --env SMART_CLIENT_SECRET=ci-smoke-secret \
+            --env ANTHROPIC_API_KEY=sk-ant-ci-smoke-not-a-real-key \
+            --env SESSION_STORE_DSN=postgresql://smoke:smoke@127.0.0.1:5432/smoke \
+            "$SMOKE_IMAGE"
+      - name: Poll /health liveness and /ready readiness shape (bounded)
+        run: |
+          python3 - <<'PYEOF'
+          import json
+          import sys
+          import time
+          import urllib.error
+          import urllib.request
+
+          BASE = "http://127.0.0.1:8000"
+          DEADLINE = time.monotonic() + 120.0
+
+          def fetch(path: str) -> tuple[int, bytes]:
+              request = urllib.request.Request(
+                  BASE + path, headers={"Accept": "application/json"}
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=20) as response:
+                      return response.status, response.read()
+              except urllib.error.HTTPError as error:
+                  return error.code, error.read()
+
+          # 1) Liveness: /health must answer 200 {"status": "alive", "sha": <str>}.
+          while True:
+              try:
+                  status, body = fetch("/health")
+              except Exception as exc:  # noqa: BLE001 - container still booting
+                  if time.monotonic() > DEADLINE:
+                      print(f"FAIL: /health unreachable within budget: {exc!r}",
+                            file=sys.stderr)
+                      sys.exit(1)
+                  time.sleep(2.0)
+                  continue
+              try:
+                  payload = json.loads(body)
+              except ValueError:
+                  payload = None
+              if (
+                  status == 200
+                  and isinstance(payload, dict)
+                  and payload.get("status") == "alive"
+                  and isinstance(payload.get("sha"), str)
+                  and payload["sha"]
+              ):
+                  print(f"OK /health: {payload}")
+                  break
+              print(f"FAIL: malformed /health: HTTP {status} {body[:300]!r}",
+                    file=sys.stderr)
+              sys.exit(1)
+
+          # 2) Readiness shape: 200 or 503 with a schema-valid report. Hard deps
+          #    are absent in CI, so not_ready/degraded is acceptable — malformed
+          #    or missing structure is not.
+          status, body = fetch("/ready")
+          try:
+              payload = json.loads(body)
+          except ValueError:
+              print(f"FAIL: /ready is not JSON: HTTP {status} {body[:300]!r}",
+                    file=sys.stderr)
+              sys.exit(1)
+          problems = []
+          if status not in (200, 503):
+              problems.append(f"unexpected HTTP status {status}")
+          if not isinstance(payload, dict):
+              problems.append("body is not an object")
+              payload = {}
+          if payload.get("status") not in ("ready", "degraded", "not_ready"):
+              problems.append(f"unexpected status field {payload.get('status')!r}")
+          elif (status == 503) != (payload["status"] == "not_ready"):
+              problems.append(
+                  f"HTTP {status} inconsistent with status {payload['status']!r}"
+              )
+          checks = payload.get("checks")
+          if not isinstance(checks, list) or not checks:
+              problems.append("checks is not a non-empty list")
+          else:
+              for check in checks:
+                  if (
+                      not isinstance(check, dict)
+                      or set(check) != {"name", "kind", "ok", "detail"}
+                      or not isinstance(check.get("name"), str)
+                      or not check.get("name")
+                      or check.get("kind") not in ("hard", "soft")
+                      or not isinstance(check.get("ok"), bool)
+                      or not isinstance(check.get("detail"), str)
+                  ):
+                      problems.append(f"malformed check entry: {check!r}")
+          if problems:
+              print("FAIL: /ready readiness report is malformed:", file=sys.stderr)
+              for problem in problems:
+                  print(f"  - {problem}", file=sys.stderr)
+              print(f"  body: {json.dumps(payload)[:1000]}", file=sys.stderr)
+              sys.exit(1)
+          print(f"OK /ready: HTTP {status} status={payload['status']} "
+                f"checks={[c['name'] for c in checks]}")
+          PYEOF
+      - name: Collect container logs
+        if: always()
+        run: docker logs "$SMOKE_CONTAINER" || true
+      - name: Remove smoke container
+        if: always()
+        run: docker rm --force "$SMOKE_CONTAINER" || true

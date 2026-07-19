@@ -53,6 +53,26 @@ class _ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class RetrievalExpectation(_ClosedModel):
+    """A required production-retrieval behavior for one golden case (AF-P0-02).
+
+    ``outcome`` is the closed retrieval result class the case pins:
+
+    - ``hit``: the production retriever must return guideline evidence, with the exact
+      ordered ``expected_top_chunk_ids`` prefix (rank stability), without degradation.
+    - ``miss``: a healthy zero-hit answer with no degradation and no fabricated
+      guideline evidence anywhere in the answer surfaces.
+    - ``no_query``: no PHI-free clinical query can be built, so retrieval is never
+      attempted and no guideline evidence may appear.
+    - ``unavailable``: the retrieval dependency fails; the failure must surface
+      explicitly and must never be replaced by fabricated or silent evidence.
+    """
+
+    outcome: Literal["hit", "miss", "no_query", "unavailable"]
+    expected_top_chunk_ids: list[str] = Field(default_factory=list)
+    require_rendered_guideline: bool = False
+
+
 class GoldenCase(_ClosedModel):
     """One manifest entry, validated without assuming a fixed case count or ID set."""
 
@@ -67,6 +87,7 @@ class GoldenCase(_ClosedModel):
     pass_criteria: list[str] = Field(min_length=1)
     maps_to: Rubric
     safety_expectations: list["SafetyExpectation"] = Field(default_factory=list)
+    expected_retrieval: RetrievalExpectation | None = None
 
 
 class SafetyExpectation(_ClosedModel):
@@ -130,6 +151,21 @@ class CanonicalAnswerEvidenceObservation(_CitationSurfaceObservation):
     """
 
 
+class RetrievalObservation(_ClosedModel):
+    """Metadata-only evidence of the production retrieval traversal for one case.
+
+    Chunk identifiers, degradation reason codes, and corpus/index versions are
+    operational metadata; guideline quotes and clinical values never enter this lane.
+    """
+
+    attempted: bool
+    unavailable: bool = False
+    hit_chunk_ids: list[str] = Field(default_factory=list)
+    degraded_reasons: list[str] = Field(default_factory=list)
+    corpus_version: str | None = None
+    manifest_hash: str | None = None
+
+
 class CaseObservation(_ClosedModel):
     """Executor-produced result plus generated telemetry/artifact surfaces.
 
@@ -153,6 +189,7 @@ class CaseObservation(_ClosedModel):
     output: Any = None
     factual_judgement: bool | None = None
     safety_events: list[SafetyEvent] = Field(default_factory=list)
+    retrieval: RetrievalObservation | None = None
     generated: GeneratedSurfaces = Field(default_factory=GeneratedSurfaces)
 
 
@@ -206,5 +243,24 @@ class EvalBaseline(_ClosedModel):
     case_count: int = Field(ge=50)
     manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_sha: str = Field(min_length=1)
+    generated_from_result_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    categories: list[BaselineCategory] = Field(min_length=1)
+
+
+class RecordedEvalBaseline(_ClosedModel):
+    """Committed recorded-tier baseline for the PR-blocking delta rule (PDF p.5 req 6).
+
+    Generated only by the explicit local ``recorded-baseline`` command from a complete
+    green recorded 50-case result bound to an exact source SHA; CI reads it and applies
+    the ">5 percentage-point category regression" rule at PR time but never writes it.
+    """
+
+    status: Literal[RunStatus.PASS] = RunStatus.PASS
+    tier: Literal["recorded"] = "recorded"
+    case_count: int = Field(ge=50)
+    manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    recordings_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    retrieval_recordings_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
     generated_from_result_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     categories: list[BaselineCategory] = Field(min_length=1)

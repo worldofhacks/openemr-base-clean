@@ -28,6 +28,69 @@ git diff -- evals/recordings/index.json
 This command is offline and clears live-provider credentials. It records no prompts, model
 output, transcripts, document text, extracted values, or clinical claim text.
 
+## Production retrieval in the gate (R02 / AF-P0-02)
+
+Every graded case traverses the production `corpus.retrieval.HybridRetriever` over the
+committed corpus/index: real BM25, the committed dense matrix, reciprocal-rank fusion, the
+real reranker seam with its score floor, and the real `RetrievalUnavailableError` contract.
+Offline determinism comes from recorded model adapters (`evals/retrieval_adapters.py`): the
+pinned bge query vectors and mxbai rerank scores are replayed byte-identically from
+`evals/recordings/retrieval.json`, which binds the corpus manifest hash and both model
+revisions and fails closed when stale. The retired term-overlap pseudo-retrieval
+(`evals.execution._local_retrieve`) is never an accepted evaluator route.
+
+Golden retrieval behaviors are pinned as `expected_retrieval` blocks in
+`evals/golden/cases.json`: a relevant guideline hit with exact ordered chunk ids and a
+rendered-guideline association (`lab-clean-hba1c-high`), rank stability over fused lipid
+candidates (`lab-multi-lipid-panel`), a healthy zero-hit miss (`lab-missing-collection-date`),
+a no-query boundary (`intake-followup-no-retrieval-query`), and an explicit
+retrieval-unavailable degradation (`lab-retrieval-unavailable-degraded`).
+
+Regenerate the retrieval recording only after a reviewed corpus/model/case change. This is
+an EXPLICIT ONLINE owner step (downloads the pinned model revisions; never run in CI):
+
+```bash
+python -m evals.record_retrieval --write   # online, owner-only
+python -m evals.record_retrieval --check   # offline coverage check
+```
+
+The aggregate result pins the retrieval configuration (`retrieval` block: corpus version,
+corpus manifest hash, embedder/reranker revisions, retrieval-recording hash); the artifact
+scanner fails any result whose pins drift from the committed corpus.
+
+### Recorded-tier baseline (PR-time delta rule)
+
+The recorded tier loads the committed `evals/w2_recorded_baseline.json` on every run, so the
+PDF's "fail if any category regresses by more than 5% or drops below the pass threshold"
+rule binds at PR time, not only live-tier. A missing baseline fails closed in CI. Regenerate
+only from a complete green recorded run bound to an exact SHA (refused in CI):
+
+```bash
+SOURCE_SHA=<40-hex-commit-sha> \
+  python -m evals.w2_runner run --tier recorded --bootstrap-recorded-baseline \
+  --output /tmp/results-tier1-candidate.json
+python -m evals.w2_runner recorded-baseline \
+  --results /tmp/results-tier1-candidate.json \
+  --output evals/w2_recorded_baseline.json
+```
+
+### Retrieval mutation drills (must turn the gate red)
+
+Two documented drills prove the gate detects production-retrieval regressions, mirroring the
+`drill/w2-red-*` pattern (temporary branch, one mutating commit, red gate evidence, then
+restore). Permanent pytest equivalents live in `evals/test_retrieval_gate.py`.
+
+1. **Break ranking** — invert the reranker ordering in `corpus/retrieval.py`
+   (`RerankerSeam.rerank`: return `1.0 - score` per score). Run
+   `make eval-tier1`: `citation_present` drops below its 100% invariant (ordered-chunk and
+   rendered-guideline cases fail) and the gate exits red.
+2. **Break availability** — make retrieval construction unavailable (raise
+   `RetrievalUnavailableError` from `evals.retrieval_adapters.default_eval_retriever`).
+   Run `make eval-tier1`: hit-expectation cases observe `unavailable` instead of their
+   pinned hits, `citation_present` fails, and the gate exits red.
+
+Restore the mutation and rerun `make eval-tier1` to green before merging anything.
+
 For a reviewed, exact-SHA diagnosis, use `diagnose-live` locally with one or more explicit
 `--case-id` arguments (20 maximum). It emits `tier=live_subset`, cannot generate a baseline,
 and cannot satisfy the required `eval-tier2-live` status. This diagnostic path is not a

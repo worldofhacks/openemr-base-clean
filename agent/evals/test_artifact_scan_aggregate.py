@@ -15,6 +15,7 @@ from evals.artifact_scan import (
     scan_paths,
 )
 from evals.golden_loader import DEFAULT_MANIFEST, load_golden_cases
+from evals.retrieval_adapters import retrieval_provenance
 from evals.w2_models import Rubric
 
 
@@ -132,6 +133,7 @@ def _failed_live_result() -> dict[str, object]:
         "source_sha": _SOURCE_SHA,
         "manifest_sha256": _sha256(DEFAULT_MANIFEST),
         "recordings_sha256": None,
+        "retrieval": retrieval_provenance(),
         "case_count": 50,
         "executor_call_count": 50,
         "inconclusive_reason": None,
@@ -151,11 +153,14 @@ def _recorded_result() -> dict[str, object]:
         "source_sha": "local-uncommitted",
         "manifest_sha256": _sha256(DEFAULT_MANIFEST),
         "recordings_sha256": _sha256(_RECORDINGS),
+        "retrieval": retrieval_provenance(),
         "case_count": 50,
         "executor_call_count": 50,
         "inconclusive_reason": None,
         "limits": None,
-        "categories": _categories(rows, baseline_score=None),
+        # The recorded (PR) tier now always loads the committed recorded baseline,
+        # so its categories must carry baseline/delta arithmetic (R02 point 7).
+        "categories": _categories(rows, baseline_score=1.0),
         "cases": [],
         "metrics": _metrics(50, retrieval_hit_count=202),
     }
@@ -170,6 +175,7 @@ def _live_subset_result(count: int) -> dict[str, object]:
         "source_sha": _SOURCE_SHA,
         "manifest_sha256": _sha256(DEFAULT_MANIFEST),
         "recordings_sha256": None,
+        "retrieval": retrieval_provenance(),
         "case_count": count,
         "executor_call_count": count,
         "inconclusive_reason": None,

@@ -236,10 +236,10 @@
       "recording_sha256": "9d1c896831db1c091020b05df0d08251b18ba6f523558b2449920402c8238090"
     },
     {
-      "case_id": "lab-missing-abnormal-flag",
-      "fixture_sha256": "05c1c7b690e12e62faab4f2657723bbc5fe0ab5afa9ed83f83cff0bed2efdfd1",
+      "case_id": "intake-followup-no-retrieval-query",
+      "fixture_sha256": "aa5fcf9ae9a44d7942269988f5f5fd89ece3e562f7b1c591a3e7eeab41cb1947",
       "prompt_hash": "2ef842a281d3e588628fece3e6baf000a3ba57160a52b62c28c9bed82b16ca7f",
-      "tool_schema_hash": "4907eb3a6fd221062990c5368cc35e00fae71f764e18b76c186ca7e677bd7eb7",
+      "tool_schema_hash": "ba9eaac80f5eba4b0407d7bbcbcad844ea8850fe2bfd16b252196834ea2cad79",
       "answer_prompt_hash": "f738552b341e5a4f75207dbf6f3f50541ef4d4c8000e0fb16308b4299de8fe9f",
       "answer_question_hash": "7a3c02008af405271a2562a1a68e1db9e2060684e990f45d3050c1feb3cdaf1b",
       "answer_context_schema_hash": "b78e98cddd817d50c20d1199977770a002158ee3863557fba6c36bdbbb7be3ee",
@@ -248,10 +248,10 @@
       "model": "claude-sonnet-4-6",
       "sanitizer_version": "metadata-only-v1",
       "parser_version": "labeled-provider-tool-v2",
-      "source_document_anchor": "fixture:lab-missing-abnormal-flag",
+      "source_document_anchor": "fixture:intake-followup-no-retrieval-query",
       "page_selector": "all-readable-pages",
       "bbox_selector": "label-value-lines",
-      "recording_sha256": "96a0ffb14972628780eebb491a6bf6be111efaa73b6c33f61e5e21e46ac649fa"
+      "recording_sha256": "5c1c1c7dec58c02e1714131252c6ec20270b335645d6060483558562f5ab7c1b"
     },
     {
       "case_id": "lab-degraded-scan-readable",
@@ -614,10 +614,10 @@
       "recording_sha256": "36cc20a23b728b4f9498d560eade9dde83718b16d2c0e1abc3ebab3a17d663b5"
     },
     {
-      "case_id": "intake-bpd-out-of-range-skipped",
-      "fixture_sha256": "e20c7612116867c0e0378795c7c23b067ba65c31d33e3428bb42a2d7a5242fc5",
+      "case_id": "lab-retrieval-unavailable-degraded",
+      "fixture_sha256": "7a27106b52eac7962f458561ab30f44c57c20cc760a1843fff6aa9b2553b3187",
       "prompt_hash": "2ef842a281d3e588628fece3e6baf000a3ba57160a52b62c28c9bed82b16ca7f",
-      "tool_schema_hash": "ba9eaac80f5eba4b0407d7bbcbcad844ea8850fe2bfd16b252196834ea2cad79",
+      "tool_schema_hash": "4907eb3a6fd221062990c5368cc35e00fae71f764e18b76c186ca7e677bd7eb7",
       "answer_prompt_hash": "f738552b341e5a4f75207dbf6f3f50541ef4d4c8000e0fb16308b4299de8fe9f",
       "answer_question_hash": "7a3c02008af405271a2562a1a68e1db9e2060684e990f45d3050c1feb3cdaf1b",
       "answer_context_schema_hash": "b78e98cddd817d50c20d1199977770a002158ee3863557fba6c36bdbbb7be3ee",
@@ -626,10 +626,10 @@
       "model": "claude-sonnet-4-6",
       "sanitizer_version": "metadata-only-v1",
       "parser_version": "labeled-provider-tool-v2",
-      "source_document_anchor": "fixture:intake-bpd-out-of-range-skipped",
+      "source_document_anchor": "fixture:lab-retrieval-unavailable-degraded",
       "page_selector": "all-readable-pages",
       "bbox_selector": "label-value-lines",
-      "recording_sha256": "508ce90a77b1e4ce41a96d7c47a94c0ce187f46d60ef70261e55fa648af22045"
+      "recording_sha256": "31a593bbf08453d3f2a27947aeb4b63f9a4877a70892de8681a47ff469a17c88"
     },
     {
       "case_id": "intake-temperature-out-of-range-skipped",

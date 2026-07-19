@@ -66,19 +66,19 @@
   "executor_call_count": 50,
   "inconclusive_reason": null,
   "limits": null,
-  "manifest_sha256": "a9f8098e49ad98cc85fe2c22955aae438f73500aa2c83e53d32be0cb75dbb4a1",
+  "manifest_sha256": "74726474a93c74cc7d25737be1ffc7862b2bd157b79311dcc2cc01f1ca7fea9d",
   "metrics": {
     "cost_usd": 0.0,
-    "elapsed_seconds": 3.880317,
-    "extraction_grounding_rate": 0.9629761904761905,
+    "elapsed_seconds": 3.591697,
+    "extraction_grounding_rate": 0.9630952380952381,
     "input_tokens": 0,
     "output_tokens": 0,
-    "p50_ms": 26.339624999309308,
-    "p95_ms": 258.63708300130384,
+    "p50_ms": 26.735749999716063,
+    "p95_ms": 255.1469169993652,
     "retries": 0,
-    "retrieval_hit_count": 98
+    "retrieval_hit_count": 90
   },
-  "recordings_sha256": "f70b7a7fdb22ba72cdce1675dc43a89847ec0b110d5cec448771d5f8d2849f6b",
+  "recordings_sha256": "8f46a0d945cc566b4dace166688eaf2a852a004f1efae1e931a8ca70e173ea49",
   "retrieval": {
     "corpus_manifest_sha256": "1e2d3ea56ab126fefe227afe73fc6ccc10be0741f66fd2d818c012efc6208d39",
     "corpus_version": "vadod-cpg-trio@d80c45f784072b051e542785aadaea851b8564c60123fa0bb1365e750d391fb7",

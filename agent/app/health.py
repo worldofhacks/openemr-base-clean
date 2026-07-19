@@ -245,7 +245,14 @@ class CachedReadinessRunner:
         self,
         *,
         ttl_seconds: float = 10.0,
-        probe_timeout_seconds: float = 8.0,
+        # R07/REL1 (2026-07-19): raised 8.0 -> 20.0 on measured production data. With
+        # the retrieval weights pre-baked into the image (no downloads at probe time),
+        # the active_reranker probe's real fresh-retriever rerank still measured
+        # 8.5-10.7 s on Railway's shared vCPU, so 8 s flagged a WORKING reranker as
+        # `timeout` on every TTL refresh. Hard probes self-bound at <=5 s via their
+        # inner httpx/asyncpg timeouts, so this budget effectively bounds only the
+        # reranker probe (plan §5 R07: budget raise with documented rationale).
+        probe_timeout_seconds: float = 20.0,
     ) -> None:
         if ttl_seconds <= 0 or probe_timeout_seconds <= 0:
             raise ValueError("readiness cache and timeout bounds must be positive")

@@ -33,7 +33,14 @@ from corpus.retrieval import (
     build_clinical_query,
     _tokenize,
 )
-from evals.execution import _intake, _lab, _lines, _retrieval_terms, fixture_path
+from evals.execution import (
+    _intake,
+    _lab,
+    _lines,
+    _medication,
+    _retrieval_terms,
+    fixture_path,
+)
 from evals.golden_loader import DEFAULT_MANIFEST, load_golden_cases
 from evals.retrieval_adapters import (
     CORPUS_DIR,
@@ -70,6 +77,10 @@ def eval_queries(
         source_id = f"fixture:{case.case_id}"
         if case.doc_type == "lab_pdf":
             _, fields = _lab(lines, words_boxes, source_id)
+        elif case.doc_type == "medication_list":
+            # Grounding-only posture: no PHI-free clinical query is derived from a
+            # medication list, so these cases never contribute retrieval recordings.
+            _, fields = _medication(lines, words_boxes, source_id)
         else:
             _, fields, _ = _intake(lines, words_boxes, source_id)
         terms = _retrieval_terms(fields, case.doc_type)

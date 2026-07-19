@@ -28,9 +28,9 @@ from app.llm.vlm import (
 from app.orchestrator.composer import compose_answer
 from app.orchestrator.loop import BriefResult, Orchestrator, ToolRegistry
 from app.schemas.answers import GroundedAnswerContext
-from app.schemas.extraction import IntakeFormExtraction, LabPdfExtraction
 from evals.execution import (
     EVAL_ANSWER_QUESTION,
+    _EXTRACTION_SCHEMAS,
     _HEADINGS,
     _lines,
     finalize_typed_extraction,
@@ -384,7 +384,7 @@ class LiveExecutor:
         assert extracted is not None
         self._record(extracted)
 
-        schema = LabPdfExtraction if case.doc_type == "lab_pdf" else IntakeFormExtraction
+        schema = _EXTRACTION_SCHEMAS[case.doc_type]
         proposed = schema.model_validate(extracted.value, strict=True)
         grounded, _ = _reground(
             proposed,

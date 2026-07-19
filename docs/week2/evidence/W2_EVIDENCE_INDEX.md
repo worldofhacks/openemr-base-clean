@@ -175,3 +175,23 @@ file or directly in the checklist.
   alerts, ten dashboard panels documented. Suite 952/5 (939+13); gate PASS zero delta;
   mypy/ruff green. Production verification (one-ID reconstruction, panel data, webhook
   delivery) lands with O01/post-REL1.
+
+## R09 — code complete, stacked PR open (2026-07-19) — CODE TRAIN COMPLETE
+
+- **R09 (third document type):** branch `feat/w2-medication-golden-cases` @ `06a82b9`
+  (2 commits), PR #33 (https://github.com/worldofhacks/openemr-base-clean/pull/33;
+  stacked on R02's branch — sequential recordings ownership, retargets when #31
+  merges). Three medication-list golden cases through the production replay path
+  (clean grounded / wrapped-frequency visible-unverified / missing-date honesty);
+  three byte-equivalence-justified replacements; manifest exactly 50; denominators
+  unchanged (50/50/22/9/50); recorded baseline regenerated with provenance;
+  RED→GREEN transcript in PR. CI suite 1207/6; gate PASS 0.0pp deltas.
+- **Queued decision notes for the post-#24 docs sync** (W2_DECISIONS.md is contended
+  by PR #24's EOF appends — apply immediately after it merges): (1) **G-D5** —
+  medication_list grounding-only posture (text in PR #33 report); (2) R04 authority
+  ledger pointer (ledger recorded in artifacts.py + agent/migrations/README.md);
+  (3) R01 response-versioning note (additive presence-conditional `claims[]` lane,
+  not a versioned endpoint).
+- **S01 final-pass fixtures (post-merge):** `evals/fixtures/golden/
+  med-list-clean-grounded.pdf` (clean beat) + `med-list-wrapped-frequency-unverified.pdf`
+  (degraded beat) — supersede the kit's junk_layer.pdf medication beat.

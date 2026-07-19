@@ -698,14 +698,25 @@ train before the P0s merge; any G recordings regeneration rebases onto PR 2's.
 
 ### Track A (submission salvage — may all complete today)
 
-- [ ] W00: doc set committed; G-D2 code edits isolated; local tool state excluded.
-- [ ] GitLab mirror at HEAD; final docs pushed to both remotes.
+- [x] W00: doc set committed; G-D2 code edits isolated; local tool state excluded.
+  *(2026-07-19: commits `6301e2f`+`a9e5b75` on main; G-D2+R08 on `feat/g-d2-reader`;
+  evidence: W2_EVIDENCE_INDEX.md §W00.)*
+- [x] GitLab mirror at HEAD; final docs pushed to both remotes. *(Both remotes verified
+  equal after every docs push — `git ls-remote` records in W2_EVIDENCE_INDEX.md.)*
 - [ ] C02 phase-1 protection enabled on GitHub and GitLab (config exports archived).
-- [ ] R07: cache-busted `/ready` all-green, three consecutive probes.
-- [ ] S01 first-pass video recorded, scanned, linked (six PDF elements).
-- [ ] E01-lite: current sanitized eval evidence + run URLs + digests committed.
-- [ ] O02-lite partial report committed, labeled not-closure.
-- [ ] D01-lite: dated known-gaps banner in the gap audit; verdict remains Not Ready.
+  *(OWNER: ready-to-apply runbook + ruleset JSON at docs/week2/evidence/c02/.)*
+- [ ] R07: cache-busted `/ready` all-green, three consecutive probes. *(Code merged-ready
+  on PR #25 with offline 3× probe proof; production probes land post-deploy.)*
+- [ ] S01 first-pass video recorded, scanned, linked (six PDF elements). *(OWNER records:
+  all six elements verified working live-authenticated 2026-07-19 — kit + 8 dry-run
+  screenshots at docs/week2/evidence/W2_S01_RECORDING_KIT.md.)*
+- [x] E01-lite: current sanitized eval evidence + run URLs + digests committed.
+  *(2026-07-19: `7bbf079` — exact-SHA Tier-1 + live Tier-2 copies + digests,
+  W2_CI_EVIDENCE.md §E01-lite.)*
+- [x] O02-lite partial report committed, labeled not-closure. *(2026-07-19: `36ec240` —
+  W2_COST_LATENCY.md §O02-lite incl. deployed retrieval probe p50 4.94 s / p95 6.49 s.)*
+- [x] D01-lite: dated known-gaps banner in the gap audit; verdict remains Not Ready.
+  *(2026-07-19: `72f9792`.)*
 
 ### P0
 

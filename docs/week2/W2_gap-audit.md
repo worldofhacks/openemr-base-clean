@@ -8,6 +8,20 @@
 
 **Verdict:** **Not Ready**
 
+> **Known gaps at submission (dated banner — D01-lite, 2026-07-19).** This submission is
+> late (owner-accepted; see the deadline model in `W2_IMPLEMENTATION_PLAN.md`) and is
+> published with its gaps stated honestly rather than hidden. As of this banner's date the
+> open items are: AF-P0-01 (no enforced merge gate on either host), AF-P0-02 (golden gate
+> does not traverse production retrieval), AF-P0-03 (final responses flatten claim→citation
+> association), and AF-P1-01…11 (authenticated production journey, routing/trace nesting,
+> data authority, operational observability, CI image/type gates, committed eval evidence,
+> demo video, performance/cost report, backup/restore drill, Cohere retry, GitLab
+> enforcement). Remediation is in flight on the tracks defined in
+> `docs/week2/W2_IMPLEMENTATION_PLAN.md` (Track A salvage + Track B Ready; closure
+> checklist §8 with per-task evidence in `docs/week2/evidence/W2_EVIDENCE_INDEX.md`).
+> The verdict flips to Ready only through V01 — an independent verification pass on the
+> release SHA — never by an implementing agent. Until then it stays **Not Ready**.
+
 This is a current-state implementation and deployment audit, not a plan-coverage review. The
 earlier 99-row planning matrix is retained by ID, re-evaluated against code/tests/runtime, and
 extended with four suggested-schedule rows so every normative or schedule statement in the PDF

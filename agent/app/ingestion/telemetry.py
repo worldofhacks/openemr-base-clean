@@ -21,9 +21,11 @@ from app.observability.events import (
     EventType,
     IngestionStageCode,
     OperationalStepCode,
+    RerankerModeCode,
     VerificationOutcomeCode,
     WriteStateCode,
 )
+from app.observability.summary import encounter_summary_attributes
 from app.schemas.writeback import WriteLeg, WriteResult
 
 
@@ -46,6 +48,7 @@ class DocumentTelemetry:
     _usage: Usage = field(default_factory=Usage)
     _cost_usd: float = 0.0
     _grounding_rate: float = 0.0
+    _retrieval_hit_count: int = 0
     _verification_outcomes: list[VerificationOutcomeCode] = field(default_factory=list)
     _finished: bool = False
 
@@ -126,6 +129,36 @@ class DocumentTelemetry:
             component=EventComponent.WORKER,
         )
 
+    def record_retrieval(
+        self,
+        *,
+        hit_count: int,
+        latency_ms: float,
+        degraded: bool,
+        reranker_mode: RerankerModeCode,
+    ) -> None:
+        """Record a retrieval completion for this job (R05 fused summary).
+
+        Emits ``retrieval.completed`` at completion time and retains the hit count so
+        the terminal summary carries it — the previous emitter structurally pinned
+        ``retrieval_hit_count`` to zero even for lanes that had retrieval data.
+        """
+
+        self._retrieval_hit_count = min(
+            self._retrieval_hit_count + max(int(hit_count), 0), 20
+        )
+        self._emit(
+            EventType.RETRIEVAL_COMPLETED,
+            {
+                "hit_count": min(max(int(hit_count), 0), 20),
+                "latency_ms": max(latency_ms, 0.0),
+                "degraded": degraded,
+                "reranker_mode": reranker_mode,
+            },
+            component=EventComponent.RETRIEVAL,
+            severity=EventSeverity.WARNING if degraded else EventSeverity.INFO,
+        )
+
     def record_write_result(
         self,
         leg: WriteLeg,
@@ -196,18 +229,15 @@ class DocumentTelemetry:
             self._verification_outcomes.append(outcome)
         self._emit(
             EventType.ENCOUNTER_SUMMARY,
-            {
-                "ordered_steps": [name for name, _latency in self._steps[:64]],
-                "step_latencies_ms": [
-                    latency for _name, latency in self._steps[:64]
-                ],
-                "input_tokens": self._usage.input_tokens,
-                "output_tokens": self._usage.output_tokens,
-                "cost_usd": self._cost_usd,
-                "retrieval_hit_count": 0,
-                "extraction_grounding_rate": self._grounding_rate,
-                "verification_outcomes": self._verification_outcomes[:64],
-            },
+            encounter_summary_attributes(
+                steps=list(self._steps),
+                input_tokens=self._usage.input_tokens,
+                output_tokens=self._usage.output_tokens,
+                cost_usd=self._cost_usd,
+                retrieval_hit_count=self._retrieval_hit_count,
+                extraction_grounding_rate=self._grounding_rate,
+                verification_outcomes=list(self._verification_outcomes),
+            ),
             component=EventComponent.WORKER,
             severity=EventSeverity.INFO if success else EventSeverity.ERROR,
         )

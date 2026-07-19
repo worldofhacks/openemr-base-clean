@@ -1,0 +1,68 @@
+name: agent-w2-alerts
+
+# R05 / AF-P1-04: the SCHEDULED evaluator for agent/ops/w2_alerts.json.
+# Every run loads the committed W2 alert definitions, derives eval metrics from the
+# committed gate artifacts (evals/results-tier1.json vs evals/w2_baseline.json), and —
+# when a structured-event export is available — event-lane metrics (extraction failure
+# rate, retrieval p95, ingestion p95, queue age). Alerts deliver to
+# COPILOT_ALERT_WEBHOOK_URL with a runbook link per alert
+# (docs/week2/evidence/W2_RUNBOOKS.md); without that secret the run is an explicit
+# dry-run evaluation. The checker is stdlib-only: no pip install required.
+
+on:
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  evaluate-w2-alerts:
+    name: w2-alert-checker
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: agent
+    env:
+      COPILOT_ALERT_WEBHOOK_URL: ${{ secrets.COPILOT_ALERT_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      # Restore the firing-alert state between stateless scheduled runs so a sustained
+      # breach notifies once and a recovery reports as resolved.
+      - name: Restore alert state
+        uses: actions/cache/restore@v5
+        with:
+          path: agent/.w2-alert-state.json
+          key: w2-alert-state-${{ github.run_id }}
+          restore-keys: |
+            w2-alert-state-
+      - name: Evaluate agent/ops/w2_alerts.json
+        run: |
+          FLAGS="--once"
+          if [ -z "$COPILOT_ALERT_WEBHOOK_URL" ]; then
+            FLAGS="$FLAGS --dry-run"
+          fi
+          # Event-lane metrics require a structured-event export from the deployment
+          # (see agent/ops/README.md); absent that file the checker reports those
+          # rules as no_data and still evaluates the eval-regression lane.
+          python -m ops.w2_alert_checker $FLAGS \
+            --alerts ops/w2_alerts.json \
+            --results evals/results-tier1.json \
+            --baseline evals/w2_baseline.json \
+            --events-file "$RUNNER_TEMP/w2-events.jsonl" \
+            --state-file .w2-alert-state.json
+      - name: Save alert state
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: agent/.w2-alert-state.json
+          key: w2-alert-state-${{ github.run_id }}

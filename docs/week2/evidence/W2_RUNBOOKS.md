@@ -44,3 +44,19 @@ response into an incident channel.
 2. Inspect aggregate case booleans and closed failure reasons. Provider exhaustion or a
    corrupt/missing recording is `INCONCLUSIVE`, not a pass.
 3. Reproduce the exact SHA. Never update the baseline from CI or reduce the case count.
+
+## Alert-to-runbook mapping
+
+Every rule in `agent/ops/w2_alerts.json` links its response actions here. The scheduled
+evaluator (`agent/ops/w2_alert_checker.py`, cron: `.github/workflows/agent-w2-alerts.yml`)
+includes the matching link in each notification.
+
+- `extraction-failure-rate` → [Extraction or ingestion](#extraction-or-ingestion)
+- `ingestion-p95` → [Extraction or ingestion](#extraction-or-ingestion)
+- `retrieval-p95` → [Retrieval or reranker](#retrieval-or-reranker)
+- `queue-oldest` → [Queue or worker](#queue-or-worker)
+- `worker-heartbeat` → [Queue or worker](#queue-or-worker)
+- `breaker-open` → [Breaker](#breaker)
+- `deterministic-eval` → [Evaluation](#evaluation)
+- `factual-eval-threshold` → [Evaluation](#evaluation)
+- `factual-eval-delta` → [Evaluation](#evaluation)

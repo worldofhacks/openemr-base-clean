@@ -279,6 +279,53 @@ async def test_sink_outage_never_changes_document_completion() -> None:
     assert emitter.dropped > 0
 
 
+@pytest.mark.asyncio
+async def test_document_summary_carries_recorded_retrieval_hits_and_event() -> None:
+    """R05 / AF-P1-04: telemetry.py previously hard-coded retrieval_hit_count=0. A job
+    lane that records retrieval now emits retrieval.completed and a fused summary."""
+
+    sink = InMemoryEventSink()
+    emitter = EventEmitter(sink)
+    telemetry = DocumentTelemetry(
+        emitter, correlation_id="persisted-correlation", job_id="job-fused"
+    )
+    async with telemetry.stage("ocr"):
+        pass
+    telemetry.record_usage(Usage(input_tokens=3, output_tokens=2), "claude-sonnet-4-6")
+    telemetry.record_grounding(fields_grounded=3, fields_unsupported=1)
+    telemetry.record_retrieval(
+        hit_count=2, latency_ms=15.0, degraded=False, reranker_mode="local"
+    )
+    telemetry.finish(success=True)
+
+    retrievals = [
+        event
+        for event in sink.events
+        if event.event_type is EventType.RETRIEVAL_COMPLETED
+    ]
+    assert len(retrievals) == 1
+    assert retrievals[0].correlation_id == "persisted-correlation"
+    assert retrievals[0].job_id == "job-fused"
+    assert retrievals[0].attributes == {
+        "hit_count": 2,
+        "latency_ms": 15.0,
+        "degraded": False,
+        "reranker_mode": "local",
+    }
+
+    [summary] = [
+        event
+        for event in sink.events
+        if event.event_type is EventType.ENCOUNTER_SUMMARY
+    ]
+    assert summary.attributes["retrieval_hit_count"] == 2
+    assert summary.attributes["extraction_grounding_rate"] == 0.75
+    assert summary.attributes["ordered_steps"] == ["ocr"]
+    assert summary.attributes["input_tokens"] == 3
+    assert summary.attributes["output_tokens"] == 2
+    assert summary.attributes["verification_outcomes"] == ["complete"]
+
+
 @pytest.mark.parametrize(
     ("field", "clinical_looking_value"),
     [

@@ -9,11 +9,16 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.evidence.packet import build_evidence_packet
 from app.llm.provider import LLMResponse, ToolUseBlock, Usage
 from app.orchestrator.composer import (
+    BBoxOverlay,
+    RenderedClaim,
+    VerifiedComposition,
     build_grounded_answer_context,
     citation_for_guideline,
     compose_answer,
@@ -21,7 +26,7 @@ from app.orchestrator.composer import (
 from app.orchestrator.graph import GraphTurnResult, run_graph_turn
 from app.orchestrator.loop import BriefResult, Orchestrator, ToolRegistry
 from app.orchestrator.refs import TurnRefRegistry
-from app.schemas.answers import VerifiedClinicalClaim
+from app.schemas.answers import CitationOverlay, ResponseClaim, VerifiedClinicalClaim
 from app.schemas.citations import CitationSourceType, CitationV2, EvidenceSnippet
 from app.schemas.extraction import NormBBox
 from app.schemas.workers import WorkerInput, WorkerOutput
@@ -691,3 +696,250 @@ def test_json_and_sse_http_boundaries_are_citation_v2_only(
         for citation in block["citations"]
     )
     assert "legacy:citation:string" not in stream.text
+
+
+# =======================================================================================
+# R01 (AF-P0-03; W2-REQ-27/28/98) — the public per-claim citation contract.
+# PDF p.5 Core Req 5: "Every clinical claim in the final response must include
+# machine-readable citation metadata."  claims[] is the authoritative lane; brief and
+# citations remain derived, non-authoritative compatibility fields.
+# =======================================================================================
+
+
+def _rendered_composition() -> VerifiedComposition:
+    document = _document_claim()
+    snippet = _snippet(1)
+    chart = _selected_chart_claim()
+    assert document.bbox is not None
+    return VerifiedComposition(
+        claims=(
+            RenderedClaim(
+                text=document.text,
+                citation=document.citation,
+                source_class=CitationSourceType.UPLOADED_DOCUMENT,
+                overlay=BBoxOverlay(
+                    source_id=document.citation.source_id,
+                    page=1,
+                    bbox=document.bbox,
+                ),
+            ),
+            RenderedClaim(
+                text=snippet.quote,
+                citation=citation_for_guideline(snippet),
+                source_class=CitationSourceType.GUIDELINE,
+            ),
+            RenderedClaim(
+                text=chart.text,
+                citation=chart.citation,
+                source_class=CitationSourceType.PATIENT_RECORD,
+            ),
+        )
+    )
+
+
+class _CompositionServices(_BoundaryServices):
+    def __init__(self, composition: VerifiedComposition) -> None:
+        super().__init__()
+        self.composition = composition
+
+    async def run_graph_turn(
+        self, _session, _message, *, request_url: str
+    ) -> GraphTurnResult:
+        return GraphTurnResult(
+            brief=self.result, handoffs=(), composition=self.composition
+        )
+
+
+def test_every_served_claim_owns_its_citation_set_in_json_and_initial_sse(
+    complete_env, monkeypatch
+) -> None:
+    from app.main import create_app
+
+    monkeypatch.setenv("W2_GRAPH_ENABLED", "1")
+    composition = _rendered_composition()
+    services = _CompositionServices(composition)
+    client = TestClient(create_app(services=services, readiness_checks=[]))
+
+    response = client.post(
+        "/chat",
+        json={"session_id": "synthetic-session", "message": "Magnesium"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    claims = body["claims"]
+    assert len(claims) == len(composition.claims)
+    for entry, rendered in zip(claims, composition.claims):
+        assert set(entry) == {"text", "source_class", "verdict", "citations", "overlay"}
+        assert entry["text"] == rendered.text
+        assert entry["source_class"] == rendered.source_class.value
+        assert entry["verdict"] == "pass"
+        assert entry["citations"] == [rendered.citation.model_dump(mode="json")]
+    assert claims[0]["overlay"] == {
+        "source_id": "document:synthetic-magnesium-lab",
+        "page": 1,
+        "bbox": {"x0": 0.42, "y0": 0.31, "x1": 0.51, "y1": 0.35},
+    }
+    assert claims[1]["overlay"] is None
+    assert claims[2]["overlay"] is None
+    assert claims[2]["citations"][0]["page_or_section"] is None
+    # brief/citations are DERIVED compatibility projections of the claims lane.
+    for entry in claims:
+        for citation in entry["citations"]:
+            assert citation in body["citations"]
+
+    stream = client.post(
+        "/chat",
+        json={"session_id": "synthetic-session", "message": "Magnesium"},
+        headers={"Accept": "text/event-stream"},
+    )
+    assert stream.status_code == 200
+    payloads = [
+        json.loads(line.removeprefix("data: "))
+        for line in stream.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    initial_blocks = [item for item in payloads if "claims" in item]
+    assert len(initial_blocks) == 1
+    # The initial SSE block serializes the claims lane IDENTICALLY to the JSON body.
+    assert initial_blocks[0]["claims"] == claims
+
+
+def test_response_without_composed_claims_keeps_the_w1_envelope(
+    complete_env, monkeypatch
+) -> None:
+    from app.main import create_app
+
+    monkeypatch.setenv("W2_GRAPH_ENABLED", "1")
+    client = TestClient(create_app(services=_BoundaryServices(), readiness_checks=[]))
+
+    response = client.post(
+        "/chat",
+        json={"session_id": "synthetic-session", "message": "Give me the brief."},
+    )
+
+    assert response.status_code == 200
+    assert "claims" not in response.json()
+
+
+def test_uncited_composed_claim_fails_closed_in_json_and_sse(
+    complete_env, monkeypatch, caplog
+) -> None:
+    from app.main import create_app
+
+    monkeypatch.setenv("W2_GRAPH_ENABLED", "1")
+    uncited = VerifiedComposition(
+        claims=(
+            RenderedClaim(
+                text="synthetic uncited clinical statement",
+                citation=None,  # type: ignore[arg-type]
+                source_class=CitationSourceType.UPLOADED_DOCUMENT,
+            ),
+        )
+    )
+    caplog.set_level("WARNING", logger="agent.routes.chat")
+    client = TestClient(
+        create_app(services=_CompositionServices(uncited), readiness_checks=[])
+    )
+
+    response = client.post(
+        "/chat", json={"session_id": "synthetic-session", "message": "Magnesium"}
+    )
+    stream = client.post(
+        "/chat",
+        json={"session_id": "synthetic-session", "message": "Magnesium"},
+        headers={"Accept": "text/event-stream"},
+    )
+
+    for refused in (response, stream):
+        assert refused.status_code == 503
+        assert refused.json()["detail"] == (
+            "claim citation contract failed — refusing to serve"
+        )
+        assert "synthetic uncited clinical statement" not in refused.text
+    assert any(
+        record.getMessage() == "chat_claims_refusal"
+        and getattr(record, "reason_code", None) == "claim_contract_violation"
+        for record in caplog.records
+    )
+
+
+def test_cross_source_composed_claim_fails_closed(complete_env, monkeypatch) -> None:
+    from app.main import create_app
+
+    monkeypatch.setenv("W2_GRAPH_ENABLED", "1")
+    ambiguous = VerifiedComposition(
+        claims=(
+            RenderedClaim(
+                text="synthetic ambiguous claim",
+                citation=_chart_citation(),
+                source_class=CitationSourceType.GUIDELINE,
+            ),
+        )
+    )
+    client = TestClient(
+        create_app(services=_CompositionServices(ambiguous), readiness_checks=[])
+    )
+
+    response = client.post(
+        "/chat", json={"session_id": "synthetic-session", "message": "Magnesium"}
+    )
+
+    assert response.status_code == 503
+    assert "synthetic ambiguous claim" not in response.text
+
+
+def test_response_claim_model_rejects_uncited_ambiguous_or_mismatched_overlay() -> None:
+    document = _document_claim()
+    overlay = CitationOverlay(
+        source_id="document:synthetic-magnesium-lab",
+        page=1,
+        bbox=NormBBox(x0=0.1, y0=0.1, x1=0.2, y1=0.2),
+    )
+    with pytest.raises(ValidationError):
+        ResponseClaim(
+            text="synthetic claim",
+            source_class=CitationSourceType.UPLOADED_DOCUMENT,
+            verdict="pass",
+            citations=[],
+        )
+    with pytest.raises(ValidationError):
+        ResponseClaim(
+            text="synthetic claim",
+            source_class=CitationSourceType.GUIDELINE,
+            verdict="pass",
+            citations=[document.citation],
+        )
+    with pytest.raises(ValidationError):
+        ResponseClaim(
+            text="synthetic claim",
+            source_class=CitationSourceType.PATIENT_RECORD,
+            verdict="pass",
+            citations=[_chart_citation()],
+            overlay=overlay,
+        )
+    with pytest.raises(ValidationError):
+        ResponseClaim(
+            text="synthetic claim",
+            source_class=CitationSourceType.UPLOADED_DOCUMENT,
+            verdict="pass",
+            citations=[document.citation],
+            overlay=CitationOverlay(
+                source_id="document:some-other-document",
+                page=1,
+                bbox=NormBBox(x0=0.1, y0=0.1, x1=0.2, y1=0.2),
+            ),
+        )
+    complete = ResponseClaim(
+        text="synthetic claim",
+        source_class=CitationSourceType.UPLOADED_DOCUMENT,
+        verdict="pass",
+        citations=[document.citation],
+        overlay=overlay,
+    )
+    assert set(complete.model_dump(mode="json")) == {
+        "text",
+        "source_class",
+        "verdict",
+        "citations",
+        "overlay",
+    }

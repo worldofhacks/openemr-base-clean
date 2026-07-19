@@ -268,6 +268,20 @@ _PAGE = """<!doctype html>
     return typeof citation.page_or_section === 'string' && Boolean(citation.page_or_section.trim());
   }
   function citationLabel(citation) { return CITATION_LABELS[citation.source_type]; }
+  // R01 (AF-P0-03): `claims[]` is the authoritative per-claim lane. Each entry must own
+  // at least one CitationV2 of ITS declared source class; anything else is invalid and
+  // never renders as fact (mirror of the server-side fail-closed contract).
+  var CLAIM_VERDICTS = ['pass', 'flagged'];
+  function validClaim(claim) {
+    if (!claim || typeof claim !== 'object' || Array.isArray(claim)) return false;
+    if (typeof claim.text !== 'string' || !claim.text.trim()) return false;
+    if (!Object.prototype.hasOwnProperty.call(CITATION_LABELS, claim.source_class)) return false;
+    if (CLAIM_VERDICTS.indexOf(claim.verdict) === -1) return false;
+    if (!Array.isArray(claim.citations) || !claim.citations.length) return false;
+    return claim.citations.every(function (citation) {
+      return validCitation(citation) && citation.source_type === claim.source_class;
+    });
+  }
   function compactEvidenceKey(citation) {
     var key = citation.field_or_chunk_id;
     return key.length > 22 ? '…' + key.slice(-21) : key;
@@ -369,8 +383,41 @@ _PAGE = """<!doctype html>
     var totalItems = SECTIONS.reduce(function (n, s) { return n + (sections[s.key] ? sections[s.key].length : 0); }, 0);
     if (!totalItems) body.appendChild(el('meta', 'No verified clinical lines to display — see the note above.'));
 
-    // citation chips (clickable + keyboard-accessible; full id on hover)
-    var cites = (Array.isArray(data.citations) ? data.citations : []).filter(validCitation);
+    function citationChip(citation) {
+      var chip = el('chip', citationLabel(citation) + ' · ' + compactEvidenceKey(citation));
+      chip.title = citation.source_id + ' · ' + citation.field_or_chunk_id;
+      chip.tabIndex = 0; chip.setAttribute('role', 'button');
+      chip.onclick = function (e) { e.stopPropagation(); showPop(chip, citation); };
+      chip.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showPop(chip, citation); } };
+      return chip;
+    }
+
+    // authoritative per-claim lane (R01/AF-P0-03): each served claim renders with ITS
+    // OWN citation chips, so which citation supports which claim is never ambiguous.
+    var claims = (Array.isArray(data.claims) ? data.claims : []).filter(validClaim);
+    if (claims.length) {
+      var csec = el('section');
+      var csh = el('sh'); csh.appendChild(el(null, '❋ Cited claims'));
+      csh.appendChild(Object.assign(el('n'), { textContent: claims.length })); csec.appendChild(csh);
+      claims.forEach(function (claim) {
+        var amber = claim.verdict === 'flagged';
+        var it = el('item' + (amber ? ' amber' : ''));
+        it.appendChild(Object.assign(el('ic'), { textContent: amber ? '⚠' : '✓' }));
+        var wrap = el(null);
+        wrap.appendChild(el(null, claim.text));
+        var cw = el('cites');
+        cw.appendChild(el('lbl', 'Cited from ' + CITATION_LABELS[claim.source_class] + ':'));
+        claim.citations.forEach(function (citation) { cw.appendChild(citationChip(citation)); });
+        wrap.appendChild(cw);
+        it.appendChild(wrap);
+        csec.appendChild(it);
+      });
+      body.appendChild(csec);
+    }
+
+    // legacy flat citation chips (derived, non-authoritative compatibility view) —
+    // only when the authoritative per-claim lane is absent from the response.
+    var cites = claims.length ? [] : (Array.isArray(data.citations) ? data.citations : []).filter(validCitation);
     if (cites.length) {
       var cw = el('cites'); cw.appendChild(el('lbl', 'Evidence:'));
       cites.slice(0, 30).forEach(function (citation) {

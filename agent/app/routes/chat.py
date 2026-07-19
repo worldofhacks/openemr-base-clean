@@ -20,7 +20,14 @@ from typing import Protocol
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    SerializerFunctionWrapHandler,
+    ValidationError,
+    field_validator,
+    model_serializer,
+)
 
 from app.logging import get_logger
 from app.middleware.correlation import correlation_id_var
@@ -33,6 +40,7 @@ from app.orchestrator import graph as orchestrator_graph
 from app.orchestrator.composer import VerifiedComposition
 from app.orchestrator.loop import BriefResult
 from app.routes.openapi_contract import documented_errors, documented_response
+from app.schemas.answers import CitationOverlay, ResponseClaim
 from app.schemas.citations import CitationSourceType, CitationV2
 from app.session.store import (
     CrossPatientError,
@@ -60,6 +68,10 @@ _SSE_EVENT_SCHEMAS: dict[str, object] = {
                 "items": {"$ref": "#/components/schemas/CitationV2"},
             },
             "verdict": {"type": "string"},
+            "claims": {
+                "type": "array",
+                "items": {"$ref": "#/components/schemas/ResponseClaim"},
+            },
             "source_class": {
                 "anyOf": [
                     {"$ref": "#/components/schemas/CitationSourceType"},
@@ -122,15 +134,97 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    brief: str  # the verified, re-rendered content — never raw model prose
+    """The /chat JSON envelope.
+
+    ``claims`` is the AUTHORITATIVE machine-readable lane (AF-P0-03; W2-REQ-27/98):
+    one entry per served W2 clinical claim, each owning exactly its CitationV2 set.
+    It is present iff at least one composed claim was served, which keeps the frozen
+    W1 envelope bit-identical on paths without a composition (AC-4/AC-6).
+
+    ``brief`` and ``citations`` are DERIVED, non-authoritative compatibility fields:
+    a display projection and a flattened de-duplicated union of the same citations.
+    Machine consumers must read claim→citation association from ``claims`` only.
+    """
+
+    brief: str  # DERIVED display text — verified, re-rendered; never raw model prose
     source: str  # "llm" | "deterministic_fallback" | "deterministic_refusal"
     degraded: bool
     verdicts: list[str]  # per-claim verification verdicts (§5)
-    citations: list[CitationV2]
+    citations: list[CitationV2]  # DERIVED flat compatibility list (non-authoritative)
+    claims: list[ResponseClaim] = Field(default_factory=list)
     patient: dict[str, str] | None = (
         None  # chart-header demographics (presentation-only, T-E9 UI)
     )
     correlation_id: str
+
+    @model_serializer(mode="wrap")
+    def _omit_empty_claims_lane(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, object]:
+        """Serialize `claims` only when a composed claim was served (W1 bit-identity)."""
+        data = handler(self)
+        if isinstance(data, dict) and not data.get("claims"):
+            data.pop("claims", None)
+        return data
+
+
+class ClaimContractViolation(ValueError):
+    """A served claim lost its citation or its source-class assignment (fail closed)."""
+
+
+def _response_claims(composition: VerifiedComposition) -> list[ResponseClaim]:
+    """Map the composed per-claim structure to the public claims[] contract.
+
+    One entry per rendered claim, carrying exactly its CitationV2 set (currently one
+    citation per composed claim — the composer's one-claim/one-citation invariant) and
+    the optional click-to-source overlay.  Any structural violation — an uncited claim,
+    a citation from a different source class, an overlay for an uncited document —
+    raises ``ClaimContractViolation`` so the route refuses to serve (REQ-27 fail-closed)
+    instead of presenting an uncited or ambiguous claim as fact.
+    """
+
+    claims: list[ResponseClaim] = []
+    for claim in composition.claims:
+        if claim.citation is None:
+            raise ClaimContractViolation("composed claim has zero citations")
+        try:
+            overlay = None
+            if claim.overlay is not None:
+                overlay = CitationOverlay(
+                    source_id=claim.overlay.source_id,
+                    page=claim.overlay.page,
+                    bbox=claim.overlay.bbox,
+                )
+            claims.append(
+                ResponseClaim(
+                    text=claim.text,
+                    source_class=claim.source_class,
+                    # Composed claims passed the final render gate; the per-claim SSE
+                    # lane serves the same constant verdict (§5 verify-then-flush).
+                    verdict="pass",
+                    citations=[claim.citation],
+                    overlay=overlay,
+                )
+            )
+        except ValidationError as exc:
+            raise ClaimContractViolation(
+                "composed claim violates the citation contract"
+            ) from exc
+    return claims
+
+
+def _claims_or_refuse(composition: VerifiedComposition) -> list[ResponseClaim]:
+    try:
+        return _response_claims(composition)
+    except ClaimContractViolation:
+        _log.warning(
+            "chat_claims_refusal",
+            extra={"reason_code": "claim_contract_violation"},
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="claim citation contract failed — refusing to serve",
+        )
 
 
 def _citations_for(result: BriefResult) -> list[CitationV2]:
@@ -219,22 +313,26 @@ def _sse_stream(
     result: BriefResult,
     correlation_id: str,
     composition: VerifiedComposition = VerifiedComposition(),
+    claims: list[ResponseClaim] | None = None,
 ) -> Iterator[str]:
     """The §2a stream, via the named V2-spike fallback: only the FINAL COMPOSER STAGE
     is streamed — one verified claim-block event, then the terminal `done` event. The
     W1 verify-then-flush gate holds ON THE STREAM: nothing is emitted until the brief
-    is verified, so an unsupported claim can never appear as a streamed token."""
-    yield _sse_event(
-        "claim_block",
-        {
-            "claim_block": result.text,
-            "citations": [
-                citation.model_dump(mode="json")
-                for citation in _citations_for(result)
-            ],
-            "verdict": _block_verdict(result),
-        },
-    )
+    is verified, so an unsupported claim can never appear as a streamed token.
+
+    The initial block carries the AUTHORITATIVE ``claims`` lane (when non-empty),
+    serialized identically to the JSON envelope's ``claims`` field (AF-P0-03)."""
+    initial: dict[str, object] = {
+        "claim_block": result.text,
+        "citations": [
+            citation.model_dump(mode="json")
+            for citation in _citations_for(result)
+        ],
+        "verdict": _block_verdict(result),
+    }
+    if claims:
+        initial["claims"] = [claim.model_dump(mode="json") for claim in claims]
+    yield _sse_event("claim_block", initial)
     for claim in composition.claims:
         event: dict[str, object] = {
             "claim_block": claim.text,
@@ -349,15 +447,20 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse | StreamingRe
         )
         result = graph_result.brief
         composition = graph_result.composition
+        # AF-P0-03: build the authoritative per-claim lane BEFORE any byte is flushed —
+        # an uncited or ambiguously cited composed claim refuses the whole turn (503),
+        # on the SSE stream exactly as on the JSON envelope.
+        claims = _claims_or_refuse(composition)
         if _wants_event_stream(request):
             return StreamingResponse(
-                _sse_stream(result, correlation_id_var.get(), composition),
+                _sse_stream(result, correlation_id_var.get(), composition, claims),
                 media_type="text/event-stream",
             )
     else:
         result = await services.run_brief(
             session, req.message, request_url=str(request.url)
         )
+        claims = _claims_or_refuse(composition)
 
     return ChatResponse(
         brief=_composition_brief(result, composition),
@@ -367,6 +470,7 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse | StreamingRe
         citations=_dedupe_citations(
             [*_citations_for(result), *_composition_citations(composition)]
         ),
+        claims=claims,
         patient=result.patient,
         correlation_id=correlation_id_var.get(),
     )

@@ -55,6 +55,36 @@ tests {
     expect(body.correlation_id).to.be.a("string").and.not.be.empty;
   });
 
+  test("every served claim owns its machine-readable citation set", function () {
+    const body = res.getBody();
+    const claims = body.claims === undefined ? [] : body.claims;
+
+    expect(claims).to.be.an("array");
+    claims.forEach(function (claim) {
+      expect(claim.text).to.be.a("string").and.not.be.empty;
+      expect(claim.source_class).to.be.oneOf([
+        "patient_record",
+        "uploaded_document",
+        "guideline"
+      ]);
+      expect(claim.verdict).to.be.oneOf(["pass", "flagged"]);
+      expect(claim.citations).to.be.an("array").and.not.be.empty;
+      claim.citations.forEach(function (citation) {
+        expect(citation.source_type).to.equal(claim.source_class);
+        expect(citation.source_id).to.be.a("string").and.not.be.empty;
+        expect(citation).to.have.property("page_or_section");
+        expect(citation.field_or_chunk_id).to.be.a("string").and.not.be.empty;
+        expect(citation.quote_or_value).to.be.a("string").and.not.be.empty;
+      });
+      if (claim.overlay !== null && claim.overlay !== undefined) {
+        expect(claim.source_class).to.equal("uploaded_document");
+        expect(claim.overlay.source_id).to.be.a("string").and.not.be.empty;
+        expect(claim.overlay.page).to.be.a("number");
+        expect(claim.overlay.bbox).to.be.an("object");
+      }
+    });
+  });
+
   test("chat never presents an empty brief", function () {
     expect(res.getBody().brief.trim()).to.not.equal("");
   });

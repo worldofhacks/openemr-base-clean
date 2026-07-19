@@ -195,3 +195,55 @@ file or directly in the checklist.
 - **S01 final-pass fixtures (post-merge):** `evals/fixtures/golden/
   med-list-clean-grounded.pdf` (clean beat) + `med-list-wrapped-frequency-unverified.pdf`
   (degraded beat) — supersede the kit's junk_layer.pdf medication beat.
+
+## Merge train complete (2026-07-19, owner-authorized finishing run)
+
+All ten code PRs merged into protected `main` in the ordered train, each after its
+required checks passed (one exception noted below, mitigated and root-caused):
+
+| PR | Task | Merge commit |
+|---|---|---|
+| #24 | R08 + G-D1..G-D3 | `43605c2` |
+| #34 | docs: A01-RES + decision notes + C02-p1 exports | (docs) |
+| #26 | R01 (P0) | `e26bd95` |
+| #31 | R02 (P0) | `090cac5` |
+| #35 | R09 (recreation of #33) | `1da141c` |
+| #30 | R03 | `943c142` |
+| #28 | R04 | `1b1591e` |
+| #27 | R06 | `103d059` |
+| #25 | R07 | `7b58b72` |
+| #36 | R05 (recreation of #32) | `4b7f5f2` |
+| #29 | C01 | `ae667aa` |
+
+- **Stacked-PR mishaps, both recovered:** #33 was auto-closed when its base branch was
+  deleted at #31's merge → branch replayed onto main, re-verified, merged as #35.
+  #32's `--base main` retarget silently failed (GraphQL projectCards deprecation bug in
+  `gh pr edit`) and the PR merged into its old UNPROTECTED base branch — main never
+  received it and no protection was bypassed; branch replayed onto main (full suite
+  1000/5 locally), merged as #36 after checks; the orphaned base branches
+  (`fix/w2-authority-typing`, `fix/w2-reranker-warmup`) were deleted. Root cause noted:
+  retargets must use the REST API (`gh api pulls/N -X PATCH -f base=main`) and the base
+  must be verified before merging (#29 followed this and merged cleanly).
+- Final suite on merged main (C01 tree): **1005 passed / 5 skipped**
+  (936 baseline + 69 new frozen tests across the train).
+- Post-merge main pushes: eval-tier1 + quality green; `eval-tier2-live` fails closed
+  pending the owner's live-gate mint (stale live baseline after the R02/R09 manifest
+  change — designed W2-O4 posture).
+
+## C02 phase 2 — required gates extended + red/green merge drills (2026-07-19)
+
+- **Phase-2 ruleset applied:** ruleset 19180393 PUT-updated to six required contexts
+  (adds `quality-security-contracts / image-build-smoke`). Export:
+  `gh api repos/worldofhacks/openemr-base-clean/rulesets/19180393`.
+- **GitHub red drill:** PR #37 (`drill/w2-red-c02p2-merge-block` — the documented
+  ranking-inversion mutation cherry-picked onto merged main). Result: `eval-tier1: fail`
+  (1m11s), `mergeStateStatus: BLOCKED`, merge attempt refused — *"Pull request #37 is
+  not mergeable: the base branch policy prohibits the merge."* `image-build-smoke`
+  passed on the same run (proving the red came from the eval gate, not infrastructure).
+  Bypass: `current_user_can_bypass: never` (API-attested). PR closed, branch deleted.
+- **GitHub green drill:** the ten train merges above — each merged only after all
+  required checks passed on the exact head SHA.
+- **GitLab red MR:** MR !2 on the mirror (same drill branch) — merge blocked
+  (`ci_still_running` → pipeline must succeed; terminal state recorded in
+  W2_CI_EVIDENCE.md when the shared runner completes). Protected-branch + merge-check
+  settings exports recorded in W2_CI_EVIDENCE.md §C02 phase 1.

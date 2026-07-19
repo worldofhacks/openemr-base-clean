@@ -171,3 +171,24 @@ GitHub artifact retention is ~14 days; these repository copies are the durable r
 - Exports (API responses captured at apply time): protected-branch and merge-check
   JSON archived in this commit's message context and reproducible via
   `GET /api/v4/projects/1537/protected_branches` + `GET /api/v4/projects/1537`.
+
+## C02 phase 2 — applied config + drill evidence (2026-07-19)
+
+- Ruleset 19180393 now requires SIX contexts on `main` (phase-2 JSON committed at
+  `docs/week2/evidence/c02/github-ruleset-main-phase2.json`; live export via
+  `gh api repos/worldofhacks/openemr-base-clean/rulesets/19180393`): `eval-tier1` +
+  `quality-security-contracts / {ruff-mypy-coverage, pip-audit, bandit-semgrep,
+  openapi-bruno-phi-corpus, image-build-smoke}`; strict up-to-date policy; PR-only
+  changes; no deletion; no force-push; `bypass_actors: []`.
+- **Red drill (GitHub):** https://github.com/worldofhacks/openemr-base-clean/pull/37 —
+  eval-tier1 red run
+  https://github.com/worldofhacks/openemr-base-clean/actions/runs/29706216600 ;
+  merge refused by base-branch policy (transcript in W2_EVIDENCE_INDEX.md).
+- **Green drills (GitHub):** train merges #24/#26/#31/#35/#30/#28/#27/#25/#36/#29 —
+  each merged post-checks through the ruleset; merge commits listed in
+  W2_EVIDENCE_INDEX.md.
+- **Red MR (GitLab):**
+  https://labs.gauntletai.com/alexander.miller/openemr-base-clean/-/merge_requests/2 —
+  blocked by "Pipelines must succeed" (pipeline 15838).
+- Tier-2 exact-SHA chain unchanged and observed failing closed on every main push
+  pending the owner's live-gate mint (W2-O4).

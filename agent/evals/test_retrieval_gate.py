@@ -32,7 +32,7 @@ from corpus.retrieval import (
     HybridRetriever,
     RetrievalUnavailableError,
 )
-from evals.execution import execute_source, finalize_typed_extraction
+from evals.execution import execute_source
 from evals.golden_loader import DEFAULT_MANIFEST, load_golden_cases
 from evals.recorded_executor import DEFAULT_RECORDINGS, network_disabled
 from evals.retrieval_adapters import (

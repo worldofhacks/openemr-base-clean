@@ -163,3 +163,15 @@ file or directly in the checklist.
 - Verification (agent + orchestrator re-run): corpus+evals 237/1; full suite 936/5;
   CI suite 1207/6; gate PASS with `baseline=1.0 delta_pp=0.0` per category;
   artifact-scan PASS scanned=3.
+
+## R05 — code complete, stacked PR open (2026-07-19)
+
+- **R05 (AF-P1-04):** branch `fix/w2-observability-wiring` @ `ddfacf4`, PR #32
+  (https://github.com/worldofhacks/openemr-base-clean/pull/32; stacked on R04's branch
+  per §4b merge order, retargets when #28 merges). All five verified root-cause sites
+  fixed: StructuredLogEventSink default, RETRIEVAL_COMPLETED emission, fused encounter
+  summary (PDF p.5 field-complete), scheduled nine-rule w2_alerts evaluator (new
+  agent-w2-alerts.yml cron) with fire/dedupe/clear drills for the three required
+  alerts, ten dashboard panels documented. Suite 952/5 (939+13); gate PASS zero delta;
+  mypy/ruff green. Production verification (one-ID reconstruction, panel data, webhook
+  delivery) lands with O01/post-REL1.

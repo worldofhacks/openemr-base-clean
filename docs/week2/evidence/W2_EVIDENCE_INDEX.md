@@ -129,3 +129,15 @@ file or directly in the checklist.
   malformed readiness) then restored green; smoke proves R07's offline weight
   resolution in-image. Suite 946/5 (941 base + 5 ratchet tests); gate PASS zero delta.
   Smoke boots with RETRIEVAL_WARMUP=0 (documented memory-bound rationale).
+
+## R03 — code complete, PR open (2026-07-19)
+
+- **R03 (AF-P1-02):** branch `fix/w2-conditional-routing` @ `724d0f4` (f0039fa + the
+  orchestrator-applied 5-line readiness wiring in app/main.py), PR #30
+  (https://github.com/worldofhacks/openemr-base-clean/pull/30). Need-sensitive routing
+  (four-route matrix, deterministic merge), nested sub-span tree + event-lane route
+  decisions, `probe_graph_state` readiness (soft; hard only under W2_GRAPH_REQUIRED).
+  Suite 956/5 (936+20, re-verified post-wiring); gate PASS zero delta. Honest scope
+  notes in the PR: single hybrid-search sub-span (corpus instrumentation deferred),
+  dynamic-pipeline path uses INGESTION_STAGE events + per-document sub-span. Deployed
+  trace lands with O01.

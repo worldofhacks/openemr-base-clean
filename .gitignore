@@ -54,3 +54,6 @@ tmp/
 
 # Playwright MCP browser-automation artifacts (snapshots, console logs, screenshots)
 .playwright-mcp/
+
+# Personal Claude Code overrides (never commit)
+.claude/settings.local.json

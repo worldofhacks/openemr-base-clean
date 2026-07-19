@@ -510,6 +510,9 @@ class RerankerSeam:
     ) -> tuple[list[float] | None, str | None]:
         if self.mode == "local":
             scores = self._local_scores(query, documents)
+            if scores is not None:
+                # DRILL w2-red-retrieval-ranking: invert reranker ordering.
+                scores = [1.0 - score for score in scores]
             return (scores, None) if scores is not None else (None, "local_unavailable")
 
         screen = screen_phi(

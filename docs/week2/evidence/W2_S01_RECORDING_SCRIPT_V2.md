@@ -1,48 +1,154 @@
-# S01 recording script v2 — every rubric display item, 3:00–5:00
+# S01 recording script v2 — click-by-click, say-this-exactly edition
 
-Companion to `W2_S01_RECORDING_KIT.md` (setup, credentials, dry-run evidence keys) and
-`W2_RUBRIC_WALKTHROUGH.md` (row numbers cited per beat). Record AFTER the merge train +
-REL1 so the per-claim chips (#26), critic marker, R08 robustness, and R09 medication
-fixture are live. PDF requirement (p.5): 3–5 minutes showing document upload, extraction,
-evidence retrieval, citations, eval results, observability — all six are primary beats.
+Target: under 5:00. Covers all six required PDF elements (upload, extraction, evidence
+retrieval, citations, eval results, observability), both feedback-named items (bbox
+click-to-source, green eval-gate run), all 3 doc types, both formats (PDF and PNG),
+and hybrid RAG with reranking is called out by name in Beat 6. Read the SAY lines out
+loud as written. Do exactly what each DO line says.
 
-## Pre-flight (do before recording)
+## PRE-FLIGHT (do all 5 before recording, no red allowed)
 
-1. `/ready?cb=<unique>` all-green ×3 (R07 merged + deployed). Never record against degraded.
-2. Pre-upload `golden/lab-clean-hba1c-high.pdf` so Lab trends shows TWO charts (HbA1c % +
-   Glucose mg/dL) at beat 5.
-3. Tabs open: workbench (`…/week2/launch`), Langfuse project filtered view, CI page with the
-   green recorded-gate run AND the red drill run, `W2_RUBRIC_WALKTHROUGH.md`.
-4. Fixtures staged: `golden/lab-clean-glucose.pdf` (PDF), `golden/intake-full-valid.png`
-   (PNG — rendered at 200 DPI from the golden intake PDF, markers preserved; commit it),
-   R09 medication-list golden fixture (PDF), one degraded/handwritten-style image (R08
-   beat). Format matrix on camera: lab = PDF (PDF-only by design), intake = PNG ×2,
-   medication list = PDF, degraded robustness = second PNG — all three doc types AND both
-   input formats appear.
-5. Synthetic patient **Daron260 Windler79** only. Frame/transcript PHI scan before publish.
+1. Health check three times: load `https://agent-production-9f62.up.railway.app/ready?cb=1`
+   then `?cb=2` then `?cb=3`. All three must say ready and green. If any say degraded,
+   STOP, tell the session, do not record.
 
-## Script (timestamps target 4:50)
+2. Pre-upload one file: go to `https://agent-production-9f62.up.railway.app/week2/launch`,
+   sign in `admin` plus OE password, pick patient **Daron260 Windler79**, click
+   **Authorize**, doc type **Lab PDF**, upload
+   `agent/evals/fixtures/golden/lab-clean-hba1c-high.pdf`, wait for **complete**.
+   This makes two trend charts exist later.
 
-| Time | On screen | Say (roughly) | Rubric rows |
-|---|---|---|---|
-| 0:00–0:20 | Deployed app; `/health` cache-busted showing the release SHA | "Clinical Co-Pilot Week 2 — multimodal evidence agent on OpenEMR. This is the deployed release SHA; everything you'll see is synthetic data." | 16 |
-| 0:20–1:00 | **Upload lab PDF** `lab-clean-glucose.pdf` → status pill → complete → document id + `w2.<hex>` correlation id → OpenEMR readback: two "Verified byte-for-byte" sha256 digests | "Upload, strict-schema extraction, and the source document stored in OpenEMR — the digests are re-read from OpenEMR, not echoed. Every job prints a correlation id; hold that thought." | 1 |
-| 1:00–1:15 | Click a grounded field's citation → **Open page 1** → page renders with the value visibly boxed | "The rubric's click-to-source: every grounded value cites its exact page and bounding box — resolved by our own verifier, never trusted from the model." | 4 |
-| 1:15–1:40 | **Intake form as PNG** `intake-full-valid.png`; point at the vitals checkbox copy; upload the SAME file again → same document id, digests re-verify | "Intake form as an image — the OCR path, not a text layer. Second upload of the same bytes: one permanent identity, no duplicates, vitals written exactly once — the FHIR-integrity requirement, live, on the multimodal path." | 2 |
-| 1:40–2:00 | **Medication list** (badge "source + grounded artifact only") → upload R09 fixture → complete → digests | "Third document type. Stored and grounded — and deliberately NEVER written as medication orders; no MedicationRequest path exists. That's a safety decision, recorded and tested." | 3 |
-| 2:00–2:35 | **Cited answer**: ask `type 2 diabetes; glucose` → per-claim citations across three source classes (chart / uploaded document / guideline); click an uploaded-doc chip → bbox preview again | "Evidence retrieval and the citation contract: hybrid keyword+dense retrieval with reranking over our guideline corpus, and every clinical claim carries machine-readable citations. A deterministic critic approved this composition before a single byte flushed — uncited claims don't ship." | 5, 6, 7 |
-| 2:35–3:00 | **Lab trends**: HbA1c (%) beside Glucose (mg/dL); click a point → its verified page/bbox | "Trend chart from extracted observation data — exact units, so 6.5 percent can never be conflated with 65 milligrams. Points are backed by write/readback-verified artifacts; this fork exposes no supported Observation write, and we chose verified records over minting unverifiable ones." | 9 |
-| 3:00–3:30 | CI tab: **green recorded 50-case gate run** (five boolean categories visible) → flip to the **red drill run** blocked from merging | "The eval gate: fifty golden cases, boolean rubrics — schema validity, citation presence, factual consistency, safe refusal, no PHI in logs. And here's the hard-gate proof: an introduced regression turns CI red and cannot merge." | 10, 11 |
-| 3:30–4:00 | Langfuse filtered by the beat-1 correlation id: queue → OCR/VLM → grounding → retrieval → writes/readback → critic → summary; point at latency/token/cost fields | "Observability: one correlation id reconstructs the whole asynchronous path, with per-step latency, token usage, and cost. No raw PHI anywhere in these traces." | 8, 12 |
-| 4:00–4:30 | Upload the degraded/handwritten-style image → extraction completes; UNSUPPORTED fields visibly redacted/unverified; then ask a question beyond the evidence → refusal | "Messy inputs are the point: a handwritten form our OCR can't read still extracts — unsupported values stay visible and unverified, never invented. And past the evidence, the agent refuses instead of guessing." | 13, 14, 15 |
-| 4:30–4:50 | `W2_RUBRIC_WALKTHROUGH.md` on screen; scroll once | "Every rubric row — including the ones from early feedback — is mapped here to a live proof and durable evidence, with our open findings stated, not hidden. Release SHA <sha>. Thanks." | all |
+3. Four tabs open, in this order: (1) the workbench from step 2, (2) Langfuse signed in
+   with your project open, (3) GitHub, repo, **Actions**, the GREEN `agent-eval-gate` run
+   on the accepted SHA, (4) Actions, the RED drill run (the session names it).
 
-## Coverage check before publishing
+4. Files on Desktop: `lab-clean-glucose.pdf`, `intake-full-valid.png` (the PNG, not the
+   PDF), the R09 medication-list fixture PDF, one messy handwritten-style image.
 
-Six PDF elements: upload ✔ (beats 2–5) · extraction ✔ · evidence retrieval ✔ (beat 6) ·
-citations ✔ (beats 3, 6) · eval results ✔ (beat 8) · observability ✔ (beat 9).
-Feedback-named: bbox click-to-source ✔ (beats 3, 6) · green eval-gate run ✔ (beat 8).
-Length 3:00–5:00 ✔ · synthetic-only ✔ · SHA stated twice ✔ · PHI scan before publish ✔.
+5. Screen hygiene: only these tabs, only that patient, no password visible on camera.
 
-*If running long, cut beat 7 to 15 s (skip the point-click) and trim beat 9's trace walk —
-never cut beats 3, 8, or the degraded-upload half of beat 10.*
+## THE RECORDING (11 beats)
+
+**BEAT 1 (0:00–0:20) — opening.**
+
+DO: Tab 1 visible. In a second tab load `/health?cb=9` so the SHA shows. Point your
+cursor at the SHA string.
+
+SAY: "This is Clinical Co-Pilot Week 2, a multimodal evidence agent on OpenEMR. It is a
+FastAPI service deployed on Railway, signed in through SMART-on-FHIR, with PostgreSQL as
+the durable artifact store. This is the deployed release SHA, and everything you will
+see uses synthetic data only."
+
+**BEAT 2 (0:20–1:00) — lab PDF upload and extraction.**
+
+DO: Tab 1, doc type **Lab PDF**, click **Browse**, pick `lab-clean-glucose.pdf`, click
+**Upload and extract**. Point at the status pill while it changes to **complete**. Point
+at the document id and the `w2.` correlation id under it. Point at the two
+"Verified byte-for-byte" sha256 lines.
+
+SAY: "Document upload with strict-schema extraction. Under the hood, pdfplumber reads
+the text layer, pypdfium2 renders pages, Tesseract handles OCR on scans, and Claude
+vision proposes the extraction, which is validated against frozen Pydantic schemas and
+then grounded by our own deterministic verifier. The source is stored in OpenEMR and
+read back. These two digests are re-read from OpenEMR byte for byte, not echoed. Every
+job prints a correlation ID. Remember this one, I will use it again at the end."
+
+**BEAT 3 (1:00–1:15) — the bounding box. Do not rush this.**
+
+DO: Click any grounded field's citation, then click **Open page 1**. A dialog opens
+showing the PDF page. Point your cursor at the box drawn around the value.
+
+SAY: "Click-to-source. Every grounded value opens its exact page with a bounding box
+around the value, resolved by our own verifier, never trusted from the model."
+
+**BEAT 4 (1:15–1:40) — intake as PNG, uploaded twice.**
+
+DO: Doc type **Intake form**. Point at the vitals checkbox text. Click **Browse**, pick
+`intake-full-valid.png`, upload. While it processes, say the first SAY sentence. When
+complete, note the document id. Upload the SAME PNG again. Point: same document id,
+digests re-verified.
+
+SAY: "An intake form as an image. This is the OCR path, no text layer. Now the same
+bytes again: one permanent identity, no duplicate records, and vitals are written
+exactly once. That is the FHIR-integrity requirement on the multimodal path."
+
+**BEAT 5 (1:40–2:00) — medication list, the third type.**
+
+DO: Doc type **Medication list**. Point at the badge "source + grounded artifact only".
+Upload the medication fixture, wait for complete, point at the digests.
+
+SAY: "Third document type. Stored and grounded, and deliberately never written as
+medication orders. No MedicationRequest path exists. That is a recorded safety decision."
+
+**BEAT 6 (2:00–2:35) — cited answer: hybrid RAG, reranking, citations, critic.**
+
+DO: In **Cited answer** type `type 2 diabetes; glucose` and click **Ask**. When it
+renders, point at the three chip groups one by one: patient-record chips, uploaded
+document chips, guideline chips (VA/DoD). Click one uploaded-document chip, the bbox
+page opens again, close it.
+
+SAY: "This is the hybrid RAG pipeline. Retrieval runs BM25 keyword search and dense
+vector search with bge-small embeddings on ONNX together over our clinical guideline
+corpus. Cohere Rerank then orders the candidates, with a local ONNX cross-encoder as
+the fallback behind a circuit breaker and bounded retries, so only the top grounded
+evidence reaches the model. Every clinical claim carries machine-readable citations
+across three source classes: chart, uploaded document, and guideline. A deterministic
+critic approved this composition before a single byte flushed. Uncited claims do not
+ship."
+
+**BEAT 7 (2:35–3:00) — lab trends.**
+
+DO: Open **Lab trends**. Point at the HbA1c chart's unit label (%), then the Glucose
+chart's (mg/dL). Click one data point, its page and bbox preview opens.
+
+SAY: "Trend charts from extracted observation data with exact units, so 6.5 percent can
+never be confused with 65 milligrams. Every point is backed by a write-and-readback
+verified artifact. This fork exposes no supported Observation write, so we chose
+verified records over minting unverifiable ones."
+
+**BEAT 8 (3:00–3:30) — green gate, then red drill. Do not rush.**
+
+DO: Switch to Tab 3, the green run. Point at the green check, scroll to the category
+summary. Switch to Tab 4, the red drill. Point at the red X and the blocked merge.
+
+SAY: "The eval gate: fifty golden cases with boolean rubrics covering schema validity,
+citation presence, factual consistency, safe refusal, and no PHI in logs, green on this
+exact SHA. And the hard-gate proof: an introduced regression turns CI red and cannot
+merge."
+
+**BEAT 9 (3:30–4:00) — observability.**
+
+DO: Switch to Tab 2, Langfuse. Paste the correlation id from Beat 2 into the filter.
+Click the trace. Move the cursor slowly down the spans: queue, OCR/VLM, grounding,
+retrieval, writes, critic. Point at one latency number and one token or cost number.
+
+SAY: "Orchestration is a LangGraph supervisor routing to two workers, an intake
+extractor and an evidence retriever, and this is Langfuse showing it: one correlation
+ID reconstructs the entire asynchronous path with per-step latency, token usage, and
+cost. No raw PHI appears anywhere in these traces."
+
+**BEAT 10 (4:00–4:30) — messy input and refusal.**
+
+DO: Tab 1, intake form, upload the handwritten-style image. When complete, point at the
+UNSUPPORTED redacted fields. Then in Cited answer ask something with no evidence, for
+example `colonoscopy results`, and point at the refusal.
+
+SAY: "Messy inputs are the whole point. A handwritten form our OCR cannot read still
+extracts. Unsupported values stay visible and unverified, never invented. Past the
+evidence, the agent refuses instead of guessing."
+
+**BEAT 11 (4:30–4:50) — close.**
+
+DO: Open `docs/week2/evidence/W2_RUBRIC_WALKTHROUGH.md` on GitHub. Scroll it once,
+slowly.
+
+SAY: "Every rubric row, including the ones from early feedback, maps here to a live
+proof and durable evidence, with open findings stated, not hidden. Release SHA <read
+it>. Thanks."
+
+## AFTER RECORDING
+
+Watch it once. All 11 beats present, under 5:00, no real names or passwords visible.
+Publish per the kit, PHI-scan the frames and transcript, put the link where D01 expects
+it. Running long: shorten Beats 7 and 9. Never cut Beats 3, 8, or the handwritten
+upload in Beat 10.

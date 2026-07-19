@@ -25,3 +25,22 @@ def test_week1_renderer_uses_citation_v2_without_legacy_string_parsing() -> None
     assert "innerHTML" not in page.text
     assert "replaceChildren()" in page.text
     assert "textContent" in page.text
+
+
+def test_week1_renderer_consumes_the_authoritative_per_claim_lane() -> None:
+    """R01 (AF-P0-03): the fallback UI renders `claims[]` — each served claim with its
+    OWN citation chips — and only falls back to the flat citations list when the
+    authoritative per-claim lane is absent."""
+    from app.routes.ui import router
+
+    app = FastAPI()
+    app.include_router(router)
+    page = TestClient(app).get("/app?sid=synthetic-session")
+
+    assert page.status_code == 200
+    assert "validClaim(claim)" in page.text
+    assert "data.claims" in page.text
+    assert "claim.source_class" in page.text
+    assert "claim.verdict" in page.text
+    assert "claim.citations" in page.text
+    assert "citation.source_type === claim.source_class" in page.text

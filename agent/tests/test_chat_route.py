@@ -90,6 +90,19 @@ def test_chat_serves_only_verified_content_over_http(complete_env):
     assert body["correlation_id"] == "corr-xyz"                # correlation id carried through
 
 
+def test_w1_direct_path_serves_compatibility_envelope_without_claims_key(
+    complete_env, monkeypatch
+):
+    """R01/AC-4: the W2 claims[] lane serializes the composed per-claim result only.
+    The flag-OFF W1 direct path has no composition, so its envelope stays bit-identical
+    — no `claims` key is added to the frozen W1 contract."""
+    monkeypatch.delenv("W2_GRAPH_ENABLED", raising=False)
+    client = _client(_FakeServices(session=_session()), complete_env)
+    resp = client.post("/chat", json={"session_id": "sess-1", "message": "brief"})
+    assert resp.status_code == 200
+    assert "claims" not in resp.json()
+
+
 def test_chat_session_not_found_is_404(complete_env):
     client = _client(_FakeServices(resolve_error=SessionNotFound("sess-x")), complete_env)
     assert client.post("/chat", json={"session_id": "sess-x"}).status_code == 404

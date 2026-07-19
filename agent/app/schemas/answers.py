@@ -1,14 +1,19 @@
-"""Internal verified-answer contracts shared by the graph, composer, and LLM loop.
+"""Verified-answer contracts shared by the graph, composer, LLM loop, and HTTP boundary.
 
-These models never cross the HTTP boundary directly.  They are the single internal
+``VerifiedClinicalClaim`` and ``GroundedAnswerContext`` are internal: the single
 representation of a clinical claim that has already been resolved against an allowed
 source.  ``GroundedAnswerContext`` is deliberately bounded: at most five guideline
 snippets, retained in reranker order, may be shown to the answer model.
+
+``ResponseClaim`` (with ``CitationOverlay``) is the PUBLIC per-claim citation contract
+(AF-P0-03; W2-REQ-27/28/98 — PDF p.5 Core Req 5): every clinical claim served by
+``POST /chat`` carries its own machine-readable CitationV2 set.  It serializes
+identically in the JSON envelope, the initial SSE claim block, and the fallback UI.
 """
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -47,6 +52,56 @@ class VerifiedClinicalClaim(BaseModel):
                 raise ValueError("guideline claims require a section")
             if self.page is not None or self.bbox is not None:
                 raise ValueError("guideline claims cannot carry document page/bbox metadata")
+        return self
+
+
+class CitationOverlay(BaseModel):
+    """Click-to-source overlay reference for one uploaded-document claim (W2-D6)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source_id: str = Field(min_length=1)
+    page: int = Field(ge=1)
+    bbox: NormBBox
+
+
+class ResponseClaim(BaseModel):
+    """One externally served clinical claim owning its machine-readable citations.
+
+    The public claims[] lane (PDF p.5 Core Req 5; W2-REQ-27/28/98): each served claim
+    carries its text, its CLOSED source class (patient-record vs uploaded-document vs
+    guideline — p.2's chart/guideline separation), its verdict, and exactly its
+    CitationV2 set.  A claim with zero citations, a citation from a different source
+    class, or an overlay pointing at an uncited document is unrepresentable —
+    construction fails and the serving boundary fails closed rather than presenting
+    an uncited or ambiguously cited claim as fact.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    text: ClaimText
+    source_class: CitationSourceType
+    verdict: Literal["pass", "flagged"]
+    citations: list[CitationV2] = Field(min_length=1)
+    overlay: CitationOverlay | None = None
+
+    @model_validator(mode="after")
+    def _citations_are_unambiguously_assigned(self) -> "ResponseClaim":
+        if any(
+            citation.source_type is not self.source_class
+            for citation in self.citations
+        ):
+            raise ValueError(
+                "claim citations must all belong to the claim's source class"
+            )
+        if self.overlay is not None:
+            if self.source_class is not CitationSourceType.UPLOADED_DOCUMENT:
+                raise ValueError("overlay refs are uploaded-document only")
+            if all(
+                citation.source_id != self.overlay.source_id
+                for citation in self.citations
+            ):
+                raise ValueError("overlay must reference a cited source document")
         return self
 
 

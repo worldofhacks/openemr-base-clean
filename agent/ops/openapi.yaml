@@ -868,7 +868,11 @@ components:
       additionalProperties: false
       required: [brief, source, degraded, verdicts, citations, patient, correlation_id]
       properties:
-        brief: {type: string}
+        brief:
+          type: string
+          description: >-
+            DERIVED, non-authoritative display projection of the verified result.
+            Machine consumers must read claim-to-citation association from `claims`.
         source:
           type: string
           enum: [llm, deterministic_fallback, deterministic_refusal]
@@ -878,12 +882,43 @@ components:
           items: {type: string}
         citations:
           type: array
+          description: >-
+            DERIVED, non-authoritative compatibility list: the flattened, de-duplicated
+            union of every served citation. Which citation supports which claim is
+            defined only by `claims`.
           items: {$ref: "#/components/schemas/CitationV2"}
+        claims:
+          type: array
+          description: >-
+            AUTHORITATIVE machine-readable lane: one entry per served clinical claim,
+            each owning exactly its CitationV2 set (chart, uploaded-document, and
+            guideline evidence stay separated by `source_class`). Present iff the
+            response carries at least one composed clinical claim; a claim with zero
+            citations or an ambiguous source-class assignment refuses the whole turn
+            (503) instead of serving. Serialized identically in the initial SSE claim
+            block.
+          items: {$ref: "#/components/schemas/ResponseClaim"}
         patient:
           type: object
           additionalProperties: {type: string}
           nullable: true
         correlation_id: {type: string, minLength: 1}
+    ResponseClaim:
+      type: object
+      additionalProperties: false
+      required: [text, source_class, verdict, citations]
+      properties:
+        text: {type: string, minLength: 1}
+        source_class: {$ref: "#/components/schemas/CitationSourceType"}
+        verdict: {type: string, enum: [pass, flagged]}
+        citations:
+          type: array
+          minItems: 1
+          description: Every citation belongs to this claim's `source_class`.
+          items: {$ref: "#/components/schemas/CitationV2"}
+        overlay:
+          allOf: [{$ref: "#/components/schemas/CitationOverlay"}]
+          nullable: true
     SseClaimBlock:
       type: object
       additionalProperties: false
@@ -894,6 +929,12 @@ components:
           type: array
           items: {$ref: "#/components/schemas/CitationV2"}
         verdict: {type: string}
+        claims:
+          type: array
+          description: >-
+            Initial block only: the authoritative per-claim lane, serialized
+            identically to the JSON envelope's `claims` field.
+          items: {$ref: "#/components/schemas/ResponseClaim"}
         source_class:
           allOf: [{$ref: "#/components/schemas/CitationSourceType"}]
           nullable: true

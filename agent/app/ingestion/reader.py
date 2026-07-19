@@ -21,8 +21,8 @@ The single ingestion read path behind ``read_words_and_boxes``:
   ``unreadable=True`` with an empty word list and ``source="ocr"``, and the reader
   CONTINUES to the remaining pages; it never raises or hangs.
 
-The reader stack is **pypdfium2 + pdfplumber + Tesseract only**. PyMuPDF is banned
-(AGPL, W2-R6) and is never imported here.
+The reader stack is **pypdfium2 + pdfplumber + Tesseract** (W2-R6 selection; the former
+PyMuPDF/AGPL ban was removed by owner decision G-D2, 2026-07-19).
 
 ``NormBBox`` is the canonical §2 box, defined in ``app.schemas.extraction`` (W2-M6) and
 re-exported here by identity — the M4 reader and the schema inventory share ONE class

@@ -215,3 +215,11 @@
   (byte-attested artifacts only). Tier-2 `ANTHROPIC_API_KEY`, `RAILWAY_TOKEN`, the GitLab
   status/mirror credential, and Railway backups are blocking owner actions (W2-O4).
 - Stage: PLANNING RECONCILED — closeout implementation (W2-C1..C13) pending against Early/Final.
+- 2026-07-19 — **G-D2: PyMuPDF/AGPL ban removed (owner decision).** Traced the ban to the
+  2026-07-13 /arch-finalize pass (W2_RESEARCH.md W2-R6) and verified the AgentForge Week 2
+  PDF imposes no dependency-license requirement. Removed the ban from gates.md, the AC-5
+  test (renamed `test_reader_deps_declare_license_metadata` — now asserts license-metadata
+  completeness for the per-PR dep audit), pyproject comments, reader/ingestion docstrings,
+  and TICKETS.md hard rules. W2-R6 library selection unchanged; plan §9 (G-tasks:
+  tables/figures/image intake) unaffected in substance — G-D1's "PyMuPDF not adopted"
+  rationale is now purely capability-based. Full record: W2_DECISIONS.md G-D2.

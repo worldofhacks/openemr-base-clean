@@ -447,3 +447,41 @@
   GitLab GitHub-status token + mirror credential, and Railway backups authorization gate the live
   gate, exact-SHA deploy, GitLab bridge, and restore drill respectively (W2-D21; W2-C5/C7/C9).
   Until provisioned, those lanes fail closed — never a silent pass.
+- G-D2. **W2-R6 ban clause removed — owner decision (2026-07-19):** the PyMuPDF/AGPL
+  hard ban (self-imposed at the 2026-07-13 /arch-finalize pass, W2_RESEARCH.md W2-R6;
+  verified NOT an AgentForge requirement — docs/week2/Week_2_AgentForge.pdf contains no
+  dependency-license rule) is REMOVED at every enforcement level: .tdd-swarm/gates.md
+  Dependency check + license-gate note, the AC-5 test (now
+  `test_reader_deps_declare_license_metadata`, a metadata-completeness inventory),
+  agent/pyproject.toml comments, agent/app/ingestion/{reader,__init__}.py docstrings,
+  and the TICKETS.md hard-rules line. W2-R6's LIBRARY SELECTION (pypdfium2 + pdfplumber
+  + Tesseract) stands on capability grounds (G-D1 below; full analysis relocated to
+  W2_BACKLOG_CHANGE_REQUEST_G.md);
+  adopting any AGPL dep is henceforth a capability/ops decision with a compliance note
+  (public GPL-3 repo satisfies AGPL source-availability; revisit if ever private). The
+  per-PR dependency audit + security scan (AgentForge W2 engineering requirement) is
+  unchanged. Historical records (tickets, W2_RESEARCH.md, swarm reports/progress logs)
+  are intentionally NOT rewritten.
+- G-D1. **PyMuPDF not adopted; Tesseract retained and enhanced — owner decision
+  (2026-07-19, formalized here after the G-section's relocation):** with the license ban
+  gone (G-D2), adoption was evaluated purely on capability: PyMuPDF's OCR is the same
+  Tesseract engine (fixes nothing for handwriting/photos), charts have no text for any
+  OCR, and digital-table extraction is at parity with the already-installed pdfplumber.
+  The reader stack (pypdfium2 + pdfplumber + Tesseract) stands; enhancements target the
+  actual gaps (see G-D3 and the deferred G-backlog:
+  docs/week2/W2_BACKLOG_CHANGE_REQUEST_G.md, incl. the executable PyMuPDF swap appendix
+  should a capability case ever emerge).
+- G-D3. **Extraction-verification policy change — "the G-fix" (owner-directed,
+  2026-07-19; landing owned by plan task R08):** source-completeness checks may veto a
+  VLM extraction ONLY when the local words+boxes evidence plausibly READ the document
+  (`reader.evidence_is_trustworthy`, W2-D3 heuristics). Garbage/unreadable evidence
+  (cursive/handwritten forms, photographed images) no longer rejects valid extractions;
+  per-value mercy skips comparison where the OCR-read value is glyph noise
+  (`token_is_wordlike`); the lab row check is an in-order subsequence match (VLM may
+  report rows degraded OCR could not parse; may never drop or reorder OCR-readable
+  rows); image intake never raises and runs OCR under the shared kill-safe subprocess
+  budget. UNCHANGED: W2-REQ-97 posture (ungrounded values ship visible-and-unverified,
+  never invented), grounded-only OpenEMR writes (W2-D10), and the full veto on
+  trustworthy evidence (frozen tests 17/17 + 7/7 green). Full record: W2_DEVLOG.md
+  2026-07-19 G-fix entry; pinned by tests/test_vlm_evidence_gate.py (12) and
+  tests/test_image_intake_robustness.py (4).

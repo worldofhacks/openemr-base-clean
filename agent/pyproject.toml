@@ -31,7 +31,8 @@ dependencies = [
     "langgraph>=1.2,<2",
     # --- W2-M1 native/RAG dependency set (W2-R6 reader stack, W2-D3 OCR grounds,
     # W2-D4 ONNX embedding+rerank path). NO torch anywhere in this tree (AC-2 guard
-    # test); PyMuPDF is banned (AGPL, W2-R6 locked-decision).
+    # test). G-D2 (owner, 2026-07-19): the former PyMuPDF/AGPL ban is REMOVED — no
+    # license-family rule; declared licenses stay documented for the per-PR dep audit.
     # pdfium renderer (BSD-3-Clause/Apache-2.0 bindings over Apache-2.0 pdfium).
     "pypdfium2>=5.11,<6",
     # words+boxes extraction, staged here for W2-M4 (MIT). Transitive deps:
@@ -47,14 +48,15 @@ dependencies = [
     # runtime deps carry a non-permissive identifier that is non-infecting and
     # ACCEPTED under an owner-granted documented exception (2026-07-14, W2 Wave 0)
     # by this criterion: file-level weak copyleft (MPL-2.0) on an unmodified wheel,
-    # or a runtime-library GPL exception, is accepted; AGPL / viral copyleft never.
+    # or a runtime-library GPL exception, is accepted. (The former "AGPL never" family
+    # ban was removed by owner decision G-D2, 2026-07-19.)
     # Enumerated (importlib.metadata scan): MPL-2.0 unmodified wheels — tqdm
     # ("MPL-2.0 AND MIT", via fastembed), certifi ("MPL-2.0", via httpx), orjson
     # ("MPL-2.0 AND (Apache-2.0 OR MIT)", via langgraph); and libgfortran bundled
     # in the Linux numpy wheel ("GPL-3.0-or-later WITH GCC-exception-3.1" — the GCC
     # Runtime Library Exception, no GPL copyleft on our work). See the W2-M1 report
     # (License verification) and .tdd-swarm/gates.md Tier-2 Dependency check.
-    # AGPL stays hard-banned at every level (PyMuPDF); no torch anywhere.
+    # License-family bans removed by G-D2 (2026-07-19); no torch anywhere (AC-2).
     "fastembed>=0.8,<0.9",
     # Sparse half of the W2-D4 hybrid retriever (Apache-2.0; pure Python).
     "rank-bm25>=0.2.2,<0.3",

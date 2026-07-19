@@ -35,7 +35,8 @@ Baseline: `agent/` pytest = 238 passed, 5 skipped (main @ c3e0804). Gates:
 - Hard rules binding every ticket: writes only under `agent/` (+ the named
   `docs/week2/W2_TIER2_CI_POLICY.md` exception, `tickets/`, `.tdd-swarm/`); never
   `docs/week1/`, W1 root docs, binding W2 docs, or `W2_DEVLOG.md` (orchestrator-owned);
-  no OpenEMR PHP/routes/schema; no OpenEMR write enablement; PyMuPDF banned (AGPL);
+  no OpenEMR PHP/routes/schema; no OpenEMR write enablement; ~~PyMuPDF banned (AGPL)~~
+  *(ban removed by owner decision G-D2, 2026-07-19 — see docs/week2/W2_DECISIONS.md)*;
   synthetic non-clinical data only; secrets from env only; never push, never touch main.
 - Plan-review fixes (2026-07-14): W2-M24's frozen tests live at
   `agent/tests/test_tier2_spike.py` — pytest `testpaths = ["tests"]` collects only

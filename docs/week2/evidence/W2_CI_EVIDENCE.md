@@ -145,6 +145,36 @@ GitHub artifact retention is ~14 days; these repository copies are the durable r
   full E01 against the accepted SHA (with the submission check binding evidence SHA =
   release SHA); it is intentionally untouched here.
 
+## E01 final — exact-SHA Tier-2 live mint at the release SHA (2026-07-19)
+
+Supersedes E01-lite above for the accepted release; the 6583079 copies and the
+89a2b86 chain evidence remain archived, not deleted.
+
+- **Release SHA:** `b31207ce33ebe0706b2dc9fa13816b73fb08d4fc` (merge of PR #41 on top
+  of PR #40; the Tier-2 remediation + Langfuse real-timestamp cycles).
+- **Green mint run** (workflow_dispatch `agent-eval-gate`, exact_sha input, protected
+  `eval-tier2-live` environment): https://github.com/worldofhacks/openemr-base-clean/actions/runs/29713267431
+  — all seven jobs green including `eval-tier2-live` (fresh full live 50-case gate).
+  Artifacts: `eval-results-tier2-live` id 8449762736, `eval-results-tier1` id 8449513666.
+- **Chain-proof run at the prior candidate** `89a2b861951da18ec144bc1ac58029dbc4d73134`
+  (superseded by the Langfuse cycle, retained as evidence the remediation worked
+  end-to-end): https://github.com/worldofhacks/openemr-base-clean/actions/runs/29711288074 — green.
+- Both committed copies carry `source_sha = b31207ce33ebe0706b2dc9fa13816b73fb08d4fc`,
+  `status = PASS`, 50 manifest cases / 50 executor calls, all five rubric categories met
+  (`factually_consistent` 22/22 ≥ 0.90 threshold; four 100% invariants at 50/50).
+- Committed copies + SHA-256 digests (verified at download, 2026-07-19):
+  - `docs/week2/evidence/eval-results/results-tier1-b31207c.json`
+    `c1255e0ee2554f36066b343b9c71e56bf1697905a42329e4965f2d41fec188e9`
+  - `docs/week2/evidence/eval-results/results-tier2-live-b31207c.json`
+    `132b36357a0505591bc6728f2f55218fbcf24e814500b906ab6ad14119899fb6`
+    (live Tier-2 aggregates: cost $2.6824, p50 5305 ms, p95 12330 ms, 566k in /
+    52k out tokens, retrieval_hit_count 90, grounding 0.9631)
+- Sanitization: `python -m evals.artifact_scan --eval-result <file>` → PASS on both,
+  re-executed locally on the committed copies (aggregate-only; no case text, no PHI).
+- The reviewed live baseline `agent/evals/w2_baseline.json` was re-minted from a green
+  full live 50-case run at `5698d89c…` (branch head of PR #40) after the G-D6 fixes;
+  the CI mint above validates against it at the release SHA.
+
 ## C02 phase 1 — protection applied and exported (2026-07-19, owner-authorized run)
 
 ### GitHub ruleset (applied 2026-07-19T17:22-04:00)

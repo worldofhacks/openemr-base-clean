@@ -1,0 +1,93 @@
+{
+  "case_count": 50,
+  "cases": [],
+  "categories": [
+    {
+      "baseline_score": 1.0,
+      "current_score": 1.0,
+      "denominator": 50,
+      "inconclusive": 0,
+      "numerator": 50,
+      "passed": true,
+      "percentage_point_delta": 0.0,
+      "rubric": "schema_valid",
+      "threshold": 1.0,
+      "trigger": "met 100% invariant"
+    },
+    {
+      "baseline_score": 1.0,
+      "current_score": 1.0,
+      "denominator": 50,
+      "inconclusive": 0,
+      "numerator": 50,
+      "passed": true,
+      "percentage_point_delta": 0.0,
+      "rubric": "citation_present",
+      "threshold": 1.0,
+      "trigger": "met 100% invariant"
+    },
+    {
+      "baseline_score": 1.0,
+      "current_score": 1.0,
+      "denominator": 22,
+      "inconclusive": 0,
+      "numerator": 22,
+      "passed": true,
+      "percentage_point_delta": 0.0,
+      "rubric": "factually_consistent",
+      "threshold": 0.9,
+      "trigger": "met >=90% threshold and <=5 percentage-point regression"
+    },
+    {
+      "baseline_score": 1.0,
+      "current_score": 1.0,
+      "denominator": 9,
+      "inconclusive": 0,
+      "numerator": 9,
+      "passed": true,
+      "percentage_point_delta": 0.0,
+      "rubric": "safe_refusal",
+      "threshold": 1.0,
+      "trigger": "met 100% invariant"
+    },
+    {
+      "baseline_score": 1.0,
+      "current_score": 1.0,
+      "denominator": 50,
+      "inconclusive": 0,
+      "numerator": 50,
+      "passed": true,
+      "percentage_point_delta": 0.0,
+      "rubric": "no_phi_in_logs",
+      "threshold": 1.0,
+      "trigger": "met 100% invariant"
+    }
+  ],
+  "executor_call_count": 50,
+  "inconclusive_reason": null,
+  "limits": null,
+  "manifest_sha256": "74726474a93c74cc7d25737be1ffc7862b2bd157b79311dcc2cc01f1ca7fea9d",
+  "metrics": {
+    "cost_usd": 0.0,
+    "elapsed_seconds": 10.86264,
+    "extraction_grounding_rate": 0.9630952380952381,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "p50_ms": 86.4344920000093,
+    "p95_ms": 810.9710439999986,
+    "retries": 0,
+    "retrieval_hit_count": 90
+  },
+  "recordings_sha256": "8f46a0d945cc566b4dace166688eaf2a852a004f1efae1e931a8ca70e173ea49",
+  "retrieval": {
+    "corpus_manifest_sha256": "1e2d3ea56ab126fefe227afe73fc6ccc10be0741f66fd2d818c012efc6208d39",
+    "corpus_version": "vadod-cpg-trio@d80c45f784072b051e542785aadaea851b8564c60123fa0bb1365e750d391fb7",
+    "embedder": "qdrant/bge-small-en-v1.5-onnx-q@52398278842ec682c6f32300af41344b1c0b0bb2:model_optimized.onnx",
+    "reranker": "mixedbread-ai/mxbai-rerank-base-v1@800f24c113213a187e65bde9db00c15a2bb12738:onnx/model_quantized.onnx",
+    "retrieval_recordings_sha256": "a49d70ca44ebb9cbb1ab861dd3a4bc3d7dfaa7ff4892424a1e970803df66da48"
+  },
+  "schema_version": 1,
+  "source_sha": "b31207ce33ebe0706b2dc9fa13816b73fb08d4fc",
+  "status": "PASS",
+  "tier": "recorded"
+}

@@ -247,3 +247,36 @@ required checks passed (one exception noted below, mitigated and root-caused):
   (`ci_still_running` → pipeline must succeed; terminal state recorded in
   W2_CI_EVIDENCE.md when the shared runner completes). Protected-branch + merge-check
   settings exports recorded in W2_CI_EVIDENCE.md §C02 phase 1.
+
+## FINAL CLOSEOUT — release SHA b31207ce33ebe0706b2dc9fa13816b73fb08d4fc (2026-07-19)
+
+- **Tier-2 mint (green, exact-SHA, protected environment):**
+  https://github.com/worldofhacks/openemr-base-clean/actions/runs/29713267431 — all seven
+  jobs green including `eval-tier2-live` (fresh full live 50-case gate at the release
+  SHA). Durable copies + sha256 digests: W2_CI_EVIDENCE.md §E01 final
+  (`results-tier2-live-b31207c.json` `132b3635…99fb6`;
+  `results-tier1-b31207c.json` `c1255e0e…88e9`).
+- **Chain-proof mint at the superseded candidate `89a2b86`:**
+  https://github.com/worldofhacks/openemr-base-clean/actions/runs/29711288074 — green;
+  retained as evidence, superseded-not-deleted by the Langfuse real-timestamp cycle
+  (PR #41).
+- **Root-cause chain closed this cycle:** stale reviewed baseline (fail-closed W2-O4
+  posture) → G-D6 guideline-lane fixes (PR #40) → baseline re-mint → Langfuse real span
+  timestamps (PR #41). Decisions: `W2_DECISIONS.md` G-D6; incident narrative:
+  `W2_DEVLOG.md` 2026-07-19 entries.
+- **Deployment at the release SHA (both services, exact-SHA):** `/health` returns
+  `{"status":"alive","sha":"b31207ce…"}`; `scripts/verify_deployed_sha.py` →
+  `PASS:web_and_worker_identity_readiness_and_synthetic_smoke`; 3× cache-busted
+  `/ready` → `status: ready`, hard checks (openemr_fhir, anthropic, session_store) and
+  soft checks (langfuse, retrieval_index, active_reranker) all ok. OpenEMR EHR public
+  URL healthy (302 login redirect, 0.26 s); MySQL service deployment SUCCESS.
+- **Langfuse real-latency confirmation (owner dry-run turns, post-deploy):** graph-turn
+  traces at 03:02–03:08Z carry real non-zero durations (root spans 19.9–96.5 s);
+  span cascade chronological (e.g. correlation `w2.74551dee…`: intake worker 3.26 s
+  with sequential extract sub-calls, retrieval 5.79 s incl. rerank leg, composer
+  67.2 s, critic 1 ms). Sub-millisecond routing-decision spans display as 0 ms at the
+  API's millisecond precision — never negative. Trace/Observation percentile widgets
+  now populate for the graph-turn family.
+- **Push record:** `main` pushed to both remotes (origin GitHub + gitlab mirror) at this
+  closeout; HEAD equality verified via `git ls-remote` at push time (the recording
+  commit itself is the only delta after this line's content HEAD).

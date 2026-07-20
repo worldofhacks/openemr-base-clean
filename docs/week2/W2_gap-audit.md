@@ -8,17 +8,21 @@
 
 **Verdict:** **Not Ready**
 
-> **Known gaps at submission (dated banner — D01-lite, 2026-07-19).** This submission is
-> late (owner-accepted; see the deadline model in `W2_IMPLEMENTATION_PLAN.md`) and is
-> published with its gaps stated honestly rather than hidden. As of this banner's date the
-> open items are: AF-P0-01 (no enforced merge gate on either host), AF-P0-02 (golden gate
-> does not traverse production retrieval), AF-P0-03 (final responses flatten claim→citation
-> association), and AF-P1-01…11 (authenticated production journey, routing/trace nesting,
-> data authority, operational observability, CI image/type gates, committed eval evidence,
-> demo video, performance/cost report, backup/restore drill, Cohere retry, GitLab
-> enforcement). Remediation is in flight on the tracks defined in
-> `docs/week2/W2_IMPLEMENTATION_PLAN.md` (Track A salvage + Track B Ready; closure
-> checklist §8 with per-task evidence in `docs/week2/evidence/W2_EVIDENCE_INDEX.md`).
+> **Known gaps at submission (dated banner — D01 final, 2026-07-19, release SHA
+> `b31207ce33ebe0706b2dc9fa13816b73fb08d4fc`).** This submission is late
+> (owner-accepted; see the deadline model in `W2_IMPLEMENTATION_PLAN.md`) and is
+> published with its gaps stated honestly rather than hidden. Since the D01-lite banner,
+> all three P0 findings closed with archived drills (AF-P0-01 protected gates + red/green
+> drills; AF-P0-02 golden gate through production `HybridRetriever` + green live Tier-2
+> mint at the release SHA; AF-P0-03 per-claim CitationV2 contract), and P1 closed except
+> three owner-gated items. As of this banner's date the open items are: **AF-P1-07** (S01
+> demo video — owner records per `W2_S01_RECORDING_SCRIPT_V2.md`), **AF-P1-08** (full
+> four-path O02 profile — owner-gated spend/metrics access; honest partial re-measure
+> committed, including the retrieval p95 SLO FAIL verdict and its bottleneck attribution),
+> **AF-P1-09** (O03 timed restore drill — owner-gated backups authorization), and the
+> stated retrieval **query-phrasing limitation** (canonical condition-term phrasing
+> required for reliable guideline hits — backlog G07). Closure evidence per item:
+> `W2_IMPLEMENTATION_PLAN.md` §8 + `docs/week2/evidence/W2_EVIDENCE_INDEX.md`.
 > The verdict flips to Ready only through V01 — an independent verification pass on the
 > release SHA — never by an implementing agent. Until then it stays **Not Ready**.
 

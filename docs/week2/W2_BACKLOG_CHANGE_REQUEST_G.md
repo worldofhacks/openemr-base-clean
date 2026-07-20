@@ -448,6 +448,25 @@ other.
   Rollback: fixtures/cases are additive files; reverting them restores the prior eval surface.
 - **Effort:** 1 day.
 
+### G07 — Retrieval query-phrasing robustness (added at D01 final, 2026-07-19)
+
+- **Limitation (stated, not hidden):** guideline retrieval hits reliably on canonical
+  clinical condition-term phrasing (the demo's canonical example:
+  `type 2 diabetes; glucose`) because the hybrid sparse/dense query keys off condition
+  terms extracted from the question. Free-form paraphrases ("is my sugar too high?")
+  may miss the guideline lane entirely; the answer then serves chart/document claims
+  honestly without guideline chips (fail-closed — never a fabricated citation), but the
+  retrieval value is lost. Noted in the rubric walkthrough row 7 and the README grader
+  quickstart.
+- **Backlog work:** query-expansion/normalization ahead of the sparse+dense legs
+  (condition-term synonym map or LLM query rewrite with the same PHI posture as the
+  existing PHI-free query builder), plus golden paraphrase cases pinning the expansion
+  (extend the AF-P0-02 retrieval-pinned case family with paraphrase variants).
+- **Acceptance:** ≥3 paraphrase golden cases hit the same pinned top chunk as their
+  canonical phrasing; no regression in the existing 50-case gate.
+- **Effort:** 1–2 days. Not scheduled for Week 2; recorded so the phrasing limitation is
+  a documented decision, not a discovery.
+
 ### 9.5 Acceptance summary and required edge cases (all G-tasks)
 
 - Encrypted PDF: current typed rejection preserved and regression-asserted (G02).

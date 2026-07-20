@@ -56,6 +56,25 @@ the system of record and its PHP/schema are unchanged. The synthetic-only demo e
 OpenEMR database credentials and no diagnosis, prescribing, medication-order, or lab-
 Observation write path. Week 2 uses only the documented delegated document/vital surfaces.
 
+## Grader quickstart (Week 2)
+
+- **Branch/SHA:** `main` — release SHA `b31207ce33ebe0706b2dc9fa13816b73fb08d4fc`
+  (deployed; `/health` returns exactly this SHA).
+- **Deployed app:** https://agent-production-9f62.up.railway.app — sign in through
+  `/week2/launch` (SMART flow against the deployed OpenEMR), select synthetic patient
+  **Daron260 Windler79**, Authorize, and land in the workbench. All data is synthetic.
+- **Cache-busting note:** probe health endpoints with a fresh query string so no CDN
+  or browser cache can serve a stale body — e.g.
+  `curl "https://agent-production-9f62.up.railway.app/ready?cb=$(date +%s)"`.
+- **Canonical query example:** in **Cited answer**, ask `type 2 diabetes; glucose` —
+  guideline retrieval keys off clinical condition terms; free-form paraphrases may
+  miss (stated limitation, backlog G07 in `docs/week2/W2_BACKLOG_CHANGE_REQUEST_G.md`).
+- **Eval gate locally:** `cd agent && python -m evals.w2_runner run --tier recorded`
+  (50-case recorded gate, no keys needed); hooks via `make hooks`.
+- **Rubric walkthrough:** [docs/week2/evidence/W2_RUBRIC_WALKTHROUGH.md](docs/week2/evidence/W2_RUBRIC_WALKTHROUGH.md)
+  maps every rubric row to a ≤60-second live check and its evidence.
+- **Demo video:** _link lands here after the S01 recording is published._
+
 ## Agent setup
 
 Python 3.12 is required. Variable names are documented in

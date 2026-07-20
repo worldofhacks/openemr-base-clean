@@ -703,10 +703,13 @@ train before the P0s merge; any G recordings regeneration rebases onto PR 2's.
   evidence: W2_EVIDENCE_INDEX.md §W00.)*
 - [x] GitLab mirror at HEAD; final docs pushed to both remotes. *(Both remotes verified
   equal after every docs push — `git ls-remote` records in W2_EVIDENCE_INDEX.md.)*
-- [ ] C02 phase-1 protection enabled on GitHub and GitLab (config exports archived).
-  *(OWNER: ready-to-apply runbook + ruleset JSON at docs/week2/evidence/c02/.)*
-- [ ] R07: cache-busted `/ready` all-green, three consecutive probes. *(Code merged-ready
-  on PR #25 with offline 3× probe proof; production probes land post-deploy.)*
+- [x] C02 phase-1 protection enabled on GitHub and GitLab (config exports archived).
+  *(2026-07-19: GitHub ruleset 19180393 applied, phase-2 extended to six required
+  contexts, bypass: never; GitLab Maintainers + pipeline-required; drills archived —
+  evidence/c02/ + W2_CI_EVIDENCE.md.)*
+- [x] R07: cache-busted `/ready` all-green, three consecutive probes. *(2026-07-19 at
+  release SHA `b31207c`: 3× cache-busted `/ready` → `status: ready`, all hard+soft
+  checks ok — recorded in W2_EVIDENCE_INDEX.md closeout.)*
 - [ ] S01 first-pass video recorded, scanned, linked (six PDF elements). *(OWNER records:
   all six elements verified working live-authenticated 2026-07-19 — kit + 8 dry-run
   screenshots at docs/week2/evidence/W2_S01_RECORDING_KIT.md.)*
@@ -720,32 +723,43 @@ train before the P0s merge; any G recordings regeneration rebases onto PR 2's.
 
 ### P0
 
-- [ ] AF-P0-01: required, unbypassable gates on both hosts; red candidate blocked, green merges
-  (drill URLs archived).
-- [ ] AF-P0-02: complete evaluator traverses `HybridRetriever`; guideline/irrelevant/unavailable
+- [x] AF-P0-01: required, unbypassable gates on both hosts; red candidate blocked, green merges
+  (drill URLs archived). *(evidence/c02/ + W2_CI_EVIDENCE.md: red drill PR #37 blocked,
+  run 29706216600; ten green train merges through the ruleset.)*
+- [x] AF-P0-02: complete evaluator traverses `HybridRetriever`; guideline/irrelevant/unavailable
   cases present; both mutation drills red; PR-tier baseline delta rule (>5 pp category
-  regression fails) enforced per PDF p.5 Core Req 6.
-- [ ] AF-P0-03: every externally returned clinical claim owns its CitationV2 set in JSON, SSE,
-  and fallback UI; uncited output fails closed.
+  regression fails) enforced per PDF p.5 Core Req 6. *(R02 merged #31; golden gate through
+  production retrieval `279d663`; live Tier-2 mint green at `b31207c` — E01 final.)*
+- [x] AF-P0-03: every externally returned clinical claim owns its CitationV2 set in JSON, SSE,
+  and fallback UI; uncited output fails closed. *(R01 merged #26; S01 kit verified all
+  three source classes live.)*
 
 ### P1
 
-- [ ] AF-P1-01 (O01) · [ ] AF-P1-02 (R03) · [ ] AF-P1-03 (R04) · [ ] AF-P1-04 (R05) ·
-  [ ] AF-P1-05 (C01) · [ ] AF-P1-06 (E01) · [ ] AF-P1-07 (S01 final) · [ ] AF-P1-08 (O02) ·
-  [ ] AF-P1-09 (O03) · [ ] AF-P1-10 (R06) · [ ] AF-P1-11 (C02 GitLab evidence)
+- [x] AF-P1-01 (O01: evidence/o01/ bundle) · [x] AF-P1-02 (R03: #30) · [x] AF-P1-03
+  (R04: #28) · [x] AF-P1-04 (R05: #36 + W2_R05_PRODUCTION_VERIFICATION.md) ·
+  [x] AF-P1-05 (C01: #29) · [x] AF-P1-06 (E01 final at `b31207c`) ·
+  [ ] AF-P1-07 (S01 final — owner records) · [ ] AF-P1-08 (O02 full — owner-gated) ·
+  [ ] AF-P1-09 (O03 restore — owner-gated) · [x] AF-P1-10 (R06: #27) ·
+  [x] AF-P1-11 (C02 GitLab evidence: blocked MR 2, pipeline 15838, Maintainers +
+  pipeline-required)
 
 ### P2 and docs
 
-- [ ] AF-P2-01…06: six grader answers recorded; consequent work mapped and completed.
-- [ ] D01: architecture, gap audit, README, and evidence index match the release SHA.
+- [x] AF-P2-01…06: six grader answers recorded; consequent work mapped and completed.
+  *(A01-RES: owner resolved the six P2s — recorded in W2_DECISIONS.md.)*
+- [x] D01: architecture, gap audit, README, and evidence index match the release SHA.
+  *(2026-07-19 final pass at `b31207c`: rubric walkthrough live links, README grader
+  quickstart, gap-audit banner refresh, evidence-index closeout.)*
 
 ### Owner-directed additions (2026-07-19)
 
-- [ ] R08: extraction-robustness fix isolated in its own PR; full venv suite ≥ 936-passed
+- [x] R08: extraction-robustness fix isolated in its own PR; full venv suite ≥ 936-passed
   baseline; recorded 50-case gate green with zero category delta; merged through the protected
-  flow; behavior change recorded by D01.
-- [ ] R09: ≥ 2 medication-list golden cases green in the gate; S01 final includes a
-  medication-list upload beat; grounding-only posture recorded in `W2_DECISIONS.md`.
+  flow; behavior change recorded by D01. *(PR #24 merged `43605c2`; suite 952/5.)*
+- [x] R09: ≥ 2 medication-list golden cases green in the gate; S01 final includes a
+  medication-list upload beat; grounding-only posture recorded in `W2_DECISIONS.md` (G-D5).
+  *(Merged #35 `1da141c`; three golden cases; med-list beat in the recording script.)*
 
 ### Final verdict rule
 

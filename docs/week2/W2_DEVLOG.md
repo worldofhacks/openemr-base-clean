@@ -335,3 +335,23 @@
   DID go green end-to-end: run 29711288074, eval-tier2-live success — chain proven).
   Next: PR, merge, exact-SHA redeploy of both services, single authorized mint at
   the new merge SHA, synthetic-turn Langfuse verification.
+
+## [2026-07-19] FINAL CLOSEOUT at release SHA b31207c · type: milestone
+- What: PR #41 (Langfuse real span timestamps) merged through the six protected checks →
+  release SHA `b31207ce33ebe0706b2dc9fa13816b73fb08d4fc`. Both services redeployed
+  exact-SHA via Railway CLI (bad repo-root-context deploy on `agent` diagnosed and
+  superseded; junk auto-created project deleted; deploy pattern hardened and recorded);
+  `verify_deployed_sha.py` PASS (web + worker identity, readiness, synthetic smoke).
+  Single authorized Tier-2 mint dispatched at the release SHA: run 29713267431 GREEN —
+  fresh live 50-case gate, all five categories met. E01 final committed (durable copies +
+  digests). Owner drove dry-run graph turns as Daron260 Windler79; Langfuse shows real
+  non-zero trace durations with a chronological span cascade (percentile widgets
+  populate). D01 full sync: rubric walkthrough live links, §8 closure boxes checked with
+  evidence, README grader quickstart, gap-audit banner refresh (verdict stays Not
+  Ready), G07 phrasing-limitation backlog item, straggler evidence committed
+  (S01 fixtures, O01 bundle, R05 verification, O02 re-measure).
+- Why: code freeze closeout — main fully pushed, eval evidence finalized, demo-ready
+  handback so the owner can record immediately.
+- Stage: CLOSEOUT — owner-only items remain: record + publish the S01 video, then
+  launch V01 cold-eyes in a fresh session; owner-gated O02 full profile and O03
+  restore drill stay open and stated.

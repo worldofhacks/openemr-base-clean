@@ -81,3 +81,20 @@ reranker/model-session cost dominating the search path on Railway's shared vCPU.
 Full O02 must separate sparse/dense/rerank legs before locking SLOs; R07's follow-up
 note (probe/session reuse) is the candidate fix. This measurement is a bottleneck-
 analysis input, not an SLO lock.
+
+
+### O02 re-measure at the release SHA (2026-07-19, post-REL1)
+
+Same probe (n=30 sequential, 0.5 s gap, fresh HTTPS connection each): **p50 7 038 ms /
+p95 8 553 ms / min 5 578 / max 10 649, 0 errors** at `293f18b`. Conditions differ from
+the earlier 4 937/6 488 ms measurement: this run executed DURING the O01 production
+journey (concurrent OCR/VLM extraction jobs + readiness refreshes on the same shared
+vCPU). Server-side probe logs at the release SHA independently measured the rerank leg
+alone at 8.5–10.7 s cold / ~4.5 s warm-dev. **Honest verdict: the working retrieval SLO
+(p95 ≤ 2 s) FAILS on this instance class in both measurements.** Dominant bottleneck:
+local mxbai ONNX cross-encoder rerank on Railway's shared vCPU. Candidate remediations
+(for the owner / full O02): probe + request reuse of the single warmed retriever
+(removes redundant session loads — also the memory-spike mechanism), smaller rerank
+candidate pool (currently 30), a paid vCPU tier, or Cohere rerank (R06's bounded-retry
+path) with its network budget. Full four-path k6 profile remains owner-gated (61
+synthetic contexts, ALLOW_PROVIDER_SPEND, Railway metrics/billing — W2-O4).

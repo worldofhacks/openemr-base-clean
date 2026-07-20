@@ -47,13 +47,31 @@ def _trace() -> RequestTrace:
         verdicts=("pass",), source="llm", degraded=False)
 
 
-def test_langfuse_sink_emits_against_installed_sdk_without_error():
+def test_langfuse_sink_emits_against_installed_sdk_without_error(monkeypatch):
     # A dummy-keyed client never connects (no flush is called); this only asserts the SDK API
     # is used correctly — v3 calls (start_as_current_span/update_trace) would raise here.
+    # The backdate spy guards the PRIVATE SDK layout (_otel_span/_start_time) the
+    # start-backdater relies on: because _backdate_span_start soft-fails by design, an
+    # SDK-internal rename would otherwise silently revert spans to emission-time starts
+    # with a green suite. Deps are range-pinned (langfuse >=4.13,<5), so this canary is
+    # the tripwire that turns that drift into a red test.
+    backdated: list[tuple[object, int]] = []
+    real_backdate = langfuse_module._backdate_span_start
+
+    def spy(observation, start_ns):
+        real_backdate(observation, start_ns)
+        backdated.append((observation, start_ns))
+
+    monkeypatch.setattr(langfuse_module, "_backdate_span_start", spy)
     sink = LangfuseSink(host=None, public_key="pk-lf-11111111", secret_key="sk-lf-11111111")
     tracer = RequestTracer(sink)
     tracer._emit(_trace())
     assert tracer.dropped == 0  # emit ran clean → the v4 API is correct
+    assert len(backdated) == 1 + len(_trace().steps)  # root + every step
+    for observation, start_ns in backdated:
+        assert observation._otel_span._start_time == start_ns, (
+            "backdate silently no-opped against the installed SDK — its private span "
+            "layout changed; update _backdate_span_start")
 
 
 def test_generation_helpers_carry_usage_and_cost():
@@ -124,9 +142,23 @@ def _content_trace() -> RequestTrace:
     )
 
 
+class _FakeOtelSpan:
+    """Mirrors the two members the exporter's start-backdater touches on an SDK span."""
+
+    def __init__(self):
+        import time
+
+        self._start_time = time.time_ns()  # SDK default: span starts at creation
+
+    def is_recording(self):
+        return True
+
+
 class _FakeObservation:
     def __init__(self, data: dict):
         self.data = data
+        self._otel_span = _FakeOtelSpan()
+        data["otel"] = self._otel_span
 
     def __enter__(self):
         return self
@@ -374,3 +406,38 @@ def test_score_api_failure_never_drops_the_trace(monkeypatch):
         "source",
         "degraded",
     ]
+
+
+def test_sink_lays_out_steps_from_the_recorded_request_anchor(monkeypatch):
+    # spec(owner cycle 2, 2026-07-19): spans must carry real timestamps, not
+    # emission-time starts. The flat W1 trace records one real wall-clock anchor
+    # (utc_timestamp, stamped at the request boundary) plus per-step measured
+    # latencies, so the exporter lays the ordered steps out sequentially from that
+    # anchor: durations stay exactly latency_ms and absolute times are real.
+    from datetime import datetime
+
+    sink, fake = _sink_with_fake(monkeypatch)
+    trace = _trace()
+    sink.emit(trace)
+
+    anchor_ns = int(
+        datetime.fromisoformat(trace.utc_timestamp).timestamp() * 1_000_000_000)
+    ms = 1_000_000
+    total_ns = int(sum(s.latency_ms for s in trace.steps) * ms)
+
+    assert fake.root is not None
+    assert fake.root["otel"]._start_time == anchor_ns, (
+        "root span must start at the recorded request anchor, not emission time")
+    assert fake.root["end"]["end_time"] == anchor_ns + total_ns
+
+    cursor = anchor_ns
+    step_observations = [o for o in fake.observations if "end" in o]
+    assert len(step_observations) == len(trace.steps)
+    for step, observation in zip(trace.steps, step_observations):
+        want_start = cursor
+        want_end = cursor + int(step.latency_ms * ms)
+        assert observation["otel"]._start_time == want_start, (
+            f"step {step.name}: start must be anchored, not emission time")
+        assert observation["end"]["end_time"] == want_end, f"step {step.name}"
+        assert want_end - want_start > 0
+        cursor = want_end

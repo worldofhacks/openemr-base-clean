@@ -53,7 +53,11 @@ from app.observability.events import (
     EventSeverity,
     EventType,
 )
-from app.observability.langfuse import LangfuseSink, RequestTracer
+from app.observability.langfuse import (
+    LangfuseSink,
+    RequestTracer,
+    _backdate_span_start,
+)
 from app.observability.trace import (
     AccountabilityContext,
     hash_identifier,
@@ -872,9 +876,14 @@ def _emit_graph_trace(tracer: RequestTracer, acct: AccountabilityContext,
                 trace_name="graph-turn",
                 tags=[f"client:{acct.client_id}", f"source:{result.brief.source}"],
                 metadata=metadata):
+            # Every span is backdated to its RECORDED wall-clock start before its
+            # recorded end is applied — the tree is replayed post-hoc, so without the
+            # backdate every start would be emission time (later than the recorded
+            # ends) and Langfuse's percentile widgets would see ~0/negative durations.
             with client.start_as_current_observation(
                     name="graph.supervisor", as_type="span", metadata=metadata,
                     end_on_exit=False) as supervisor_span:
+                _backdate_span_start(supervisor_span, started_ns)
                 for _start, span_kind, entry in ordered:
                     if span_kind == "decision":
                         name, span_start_ns, span_end_ns, decision_meta = entry
@@ -885,6 +894,7 @@ def _emit_graph_trace(tracer: RequestTracer, acct: AccountabilityContext,
                                     (span_end_ns - span_start_ns) / 1_000_000,
                                 **decision_meta,
                             })
+                        _backdate_span_start(decision_span, span_start_ns)
                         decision_span.end(end_time=span_end_ns)
                         continue
                     name, span_start_ns, span_end_ns, record, sub_spans = entry
@@ -894,6 +904,7 @@ def _emit_graph_trace(tracer: RequestTracer, acct: AccountabilityContext,
                             "latency_ms": (span_end_ns - span_start_ns) / 1_000_000,
                             **record.model_dump(mode="json"),
                         })
+                    _backdate_span_start(hop, span_start_ns)
                     # REQ-74: extraction/retrieval sub-calls are children of THEIR
                     # worker span — never flat siblings beside it.
                     for sub in sub_spans:
@@ -904,6 +915,7 @@ def _emit_graph_trace(tracer: RequestTracer, acct: AccountabilityContext,
                                     (sub.ended_ns - sub.started_ns) / 1_000_000,
                                 **dict(sub.metadata),
                             })
+                        _backdate_span_start(child, sub.started_ns)
                         child.end(end_time=sub.ended_ns)
                     hop.end(end_time=span_end_ns)
             supervisor_span.end(end_time=ended_ns)

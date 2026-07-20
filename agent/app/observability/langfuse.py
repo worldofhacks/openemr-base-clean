@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 import time
+from datetime import datetime
 from typing import Any, Callable, Protocol, get_args, runtime_checkable
 
 from app.llm.cost import estimate_cost
@@ -131,6 +132,28 @@ _CLOSED_VERDICTS = frozenset(
     for value in get_args(VerificationOutcomeCode)
     if value not in {"complete", "failed"}
 )
+
+
+def _backdate_span_start(observation: Any, start_ns: int) -> None:
+    """Give an exported span its REAL recorded start (the v4 SDK has no start_time).
+
+    The public v4 API stamps every span with its creation instant, which for this
+    post-hoc exporter is emission time — Langfuse then computes ~0/negative durations
+    once the real recorded end is applied. Only ``create_event`` accepts an explicit
+    timestamp upstream, so the underlying OTel SDK span's start attribute is corrected
+    while the span is still recording. Guarded: on any SDK-layout change the span
+    keeps its emission-time start (the pre-fix behavior) — never an export failure.
+    Timestamps only; content and metadata surfaces are untouched (D16 posture).
+    """
+
+    try:
+        otel_span = observation._otel_span
+        if otel_span.is_recording() and isinstance(
+            getattr(otel_span, "_start_time", None), int
+        ):
+            otel_span._start_time = start_ns
+    except Exception:
+        pass  # soft dependency: timestamps degrade, exports never fail
 
 
 def _safe_step_identity(name: object, latency_ms: object) -> bool:
@@ -341,6 +364,24 @@ class LangfuseSink:
         ]
         now_ns = time.time_ns()
         total_ns = int(sum(s.latency_ms for s in trace.steps) * 1_000_000)
+        # Real absolute times (owner cycle 2, 2026-07-19): the flat W1 trace records
+        # one wall-clock anchor (utc_timestamp, stamped at the request boundary) plus
+        # per-step measured latencies, so the ordered steps are laid out sequentially
+        # from that anchor — durations stay exactly latency_ms and Langfuse's native
+        # latency/percentile widgets see real intervals instead of emission-time
+        # starts. The sequential layout is an approximation for the fhir.* block
+        # (run_previsit_fanout executes those concurrently), so the root may extend
+        # slightly past the real turn end; durations are exact and never negative.
+        # A naive (tz-less) anchor is rejected — .timestamp() would silently read it
+        # in host-local time. Fallback for a missing/unusable anchor: end the trace
+        # at emission (clamped so the anchor can never sit in the future).
+        try:
+            parsed_anchor = datetime.fromisoformat(trace.utc_timestamp)
+            if parsed_anchor.tzinfo is None:
+                raise ValueError("naive anchor timestamp")
+            anchor_ns = int(parsed_anchor.timestamp() * 1_000_000_000)
+        except (TypeError, ValueError, OSError, OverflowError):
+            anchor_ns = now_ns - max(total_ns, 0)
         root_output: dict[str, Any] = {"summary": content_summary}
         served_output = getattr(trace, "served_output", None)
         if served_output is not None:
@@ -356,12 +397,16 @@ class LangfuseSink:
                 level="ERROR" if trace.degraded else "DEFAULT",
                 status_message=trace.fallback_kind, end_on_exit=False,
             ) as root:
+                _backdate_span_start(root, anchor_ns)
+                cursor_ns = anchor_ns
                 for st in trace.steps:
                     # Defense in depth for manually constructed/legacy RequestTrace values.
                     # The normal TraceBuilder path has already enforced the same closed set.
                     if not _safe_step_identity(st.name, st.latency_ms):
                         continue
-                    end_ns = now_ns + int(st.latency_ms * 1_000_000)
+                    start_ns = cursor_ns
+                    end_ns = start_ns + int(st.latency_ms * 1_000_000)
+                    cursor_ns = end_ns
                     observation_input, observation_output = _step_content(
                         st, served_output=served_output)
                     operational_detail = _step_metadata(st)
@@ -382,9 +427,10 @@ class LangfuseSink:
                             output=observation_output,
                             level="ERROR" if st.detail.get("status") == "failed" else "DEFAULT",
                             metadata={"latency_ms": st.latency_ms, **operational_detail})
-                    obs.end(end_time=end_ns)      # give the observation its real duration
+                    _backdate_span_start(obs, start_ns)
+                    obs.end(end_time=end_ns)      # give the observation its real interval
                 _emit_scores(client, trace, summary=content_summary)
-            root.end(end_time=now_ns + total_ns)  # trace duration = summed step latency
+            root.end(end_time=anchor_ns + total_ns)  # trace duration = summed step latency
         # No synchronous flush on the serving path (CXR-13, §6 latency isolation): the SDK
         # batches spans and exports them on its own background thread, so a slow or unreachable
         # Langfuse can never add user-visible latency. Delivery is guaranteed by the SDK's

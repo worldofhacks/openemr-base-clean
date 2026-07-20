@@ -355,3 +355,30 @@
 - Stage: CLOSEOUT — owner-only items remain: record + publish the S01 video, then
   launch V01 cold-eyes in a fresh session; owner-gated O02 full profile and O03
   restore drill stay open and stated.
+
+## [2026-07-20] SUBMISSION CLOSEOUT — video published, evidence finalized · type: milestone
+- What: S01 demo video published
+  (https://x.com/imdecentralized/status/2079069184420700532?s=20) and linked in the
+  README grader quickstart, rubric walkthrough, and evidence index; §8 S01/AF-P1-07
+  closed. **Frame/transcript PHI scan: owner attestation PENDING at this entry's
+  commit — asked at closeout; this line is updated when the owner confirms** (synthetic
+  data only was used throughout the recording per the kit). Demo-upload fixtures: the
+  final take set landed via the owner's PR #43 UNDER THE ORIGINAL FIVE NAMES (in-place
+  byte updates); the subsequently requested `daron-*-v*` set does not exist on this
+  machine, and the owner's local deletions would have removed the #43 final takes — so
+  the deletions were NOT pushed (held locally for an owner decision) and the S01 kit
+  now lists the committed five as the final set. O02: full four-path k6 ladder NOT run
+  — blockers stated honestly (61 unminted
+  SMART-pinned contexts; document profiles need 61 unique synthetic patients vs the
+  25-patient panel; no session-minting tooling exists); instead an n=30 public
+  release-SHA retrieval re-probe was captured (see W2_COST_LATENCY.md — the reranker
+  p95 verdict is stated there against the ≤2 s SLO). O03: restore drill NOT run — the
+  committed framework is adapter-injected and no concrete adapter exists (writing one
+  is a code change under the submission freeze); no isolated restore target or
+  CLI-reachable 2026-07-19 backup was available from this workspace. Cohere key
+  rotation verified PENDING (the previously exposed key still authenticates —
+  HTTP 200 against the Cohere API at closeout).
+- Why: evidence-ops-only freeze — finalize what is real, state what is not, never
+  relabel a partial as a closure.
+- Stage: SUBMITTED pending V01 — verdict remains Not Ready; only V01 (fresh session,
+  cold eyes) may flip it.

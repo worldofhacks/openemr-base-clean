@@ -98,3 +98,33 @@ local mxbai ONNX cross-encoder rerank on Railway's shared vCPU. Candidate remedi
 candidate pool (currently 30), a paid vCPU tier, or Cohere rerank (R06's bounded-retry
 path) with its network budget. Full four-path k6 profile remains owner-gated (61
 synthetic contexts, ALLOW_PROVIDER_SPEND, Railway metrics/billing — W2-O4).
+
+### Submission-closeout re-probe at the release SHA (2026-07-20)
+
+Same public probe (`POST /evidence/search`, "lipid statin therapy primary prevention",
+k=5, n=30 sequential, 0.5 s gaps, fresh HTTPS connection each) against
+`b31207ce33ebe0706b2dc9fa13816b73fb08d4fc` (`/health`-verified), quiet system:
+
+| Measure | Value |
+|---|---:|
+| errors | 0 / 30 |
+| p50 | 7 365 ms |
+| p95 | 8 414 ms |
+| min / max | 6 229 ms / 8 469 ms |
+
+**Plain verdict on the R07 weight pre-bake:** the reranker p95 gap did NOT close.
+The pre-bake (Dockerfile bakes the pinned bge-small embedder + mxbai reranker weights
+into the image; no network fetch at runtime) removed startup/download variance, but the
+dominant cost was always the mxbai ONNX cross-encoder INFERENCE on Railway's shared
+vCPU — p95 8.4 s vs the ≤ 2 s working SLO, consistent with both 2026-07-19
+measurements. The remediation candidates above stand (smaller rerank pool, paid vCPU
+tier, or Cohere rerank via R06's bounded-retry path).
+
+**O02 status at submission (honest):** the four-path 1/10/50-VU k6 ladder remains
+NOT RUN — the "partial, NOT closure" labels above stand. Blockers, precisely: the
+profile hard-requires 61 non-reused SMART-pinned synthetic contexts (no minting
+tooling exists; each context is a full launch→authorize flow) and the document
+profiles additionally require 61 UNIQUE synthetic patients while the deployed panel
+seeds 25. Provisioning both is owner work (mint tooling or manual sessions + panel
+expansion); until then this section carries the sequential re-probe as the release-SHA
+retrieval datapoint.

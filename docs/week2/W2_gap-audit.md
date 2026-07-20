@@ -23,6 +23,14 @@
 > stated retrieval **query-phrasing limitation** (canonical condition-term phrasing
 > required for reliable guideline hits — backlog G07). Closure evidence per item:
 > `W2_IMPLEMENTATION_PLAN.md` §8 + `docs/week2/evidence/W2_EVIDENCE_INDEX.md`.
+> **Updated 2026-07-20 (submission closeout):** AF-P1-07 CLOSED — the S01 demo video is
+> published and linked (README / rubric walkthrough / evidence index). AF-P1-08 remains
+> open with its blockers stated (k6 flow ladder requires 61 unminted SMART contexts and
+> 61 unique synthetic patients against a 25-patient panel; an honest release-SHA public
+> retrieval re-probe is recorded in `W2_COST_LATENCY.md` instead). AF-P1-09 remains open
+> with its blockers stated (no concrete restore-drill adapter exists — writing one is a
+> code change under the submission freeze — and no isolated restore target/backup is
+> reachable from this workspace).
 > The verdict flips to Ready only through V01 — an independent verification pass on the
 > release SHA — never by an implementing agent. Until then it stays **Not Ready**.
 

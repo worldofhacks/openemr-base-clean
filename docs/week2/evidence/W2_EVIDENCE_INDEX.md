@@ -280,3 +280,36 @@ required checks passed (one exception noted below, mitigated and root-caused):
 - **Push record:** `main` pushed to both remotes (origin GitHub + gitlab mirror) at this
   closeout; HEAD equality verified via `git ls-remote` at push time (the recording
   commit itself is the only delta after this line's content HEAD).
+
+## FINAL SUBMISSION CLOSEOUT (2026-07-20)
+
+- **S01 demo video published:**
+  https://x.com/imdecentralized/status/2079069184420700532?s=20 — linked in the README
+  grader quickstart and the rubric walkthrough; §8 S01 + AF-P1-07 closed.
+  Frame/transcript PHI-scan attestation: pending owner confirmation (DEVLOG entry
+  updates when confirmed; synthetic-only data used throughout per the kit).
+- **Demo-upload fixtures resolved:** the final take set landed via owner PR #43 as
+  in-place byte updates under the original five names
+  (`s01/demo-uploads/daron-*`); the S01 kit lists them as final. The owner's local
+  deletions of these five files were intentionally NOT pushed (they would have removed
+  the #43 final takes; the requested `daron-*-v*` set does not exist on the closeout
+  machine) — held for an owner decision.
+- **O02 at submission:** four-path k6 ladder NOT RUN (blockers recorded in
+  `W2_COST_LATENCY.md` §submission-closeout: 61 unminted SMART contexts; 61 unique
+  patients vs the 25-patient panel). Release-SHA sequential retrieval re-probe
+  recorded instead: n=30, 0 errors, p50 7 365 ms / p95 8 414 ms — the reranker p95 SLO
+  gap did NOT close after the R07 weight pre-bake; bottleneck attribution unchanged
+  (ONNX cross-encoder inference on shared vCPU).
+- **O03 at submission:** restore drill NOT RUN. The committed framework
+  (`agent/scripts/restore_drill.py` + `W2_BACKUP_RESTORE.md`) is adapter-injected; no
+  concrete adapter exists and writing one is a code change under the submission
+  freeze; no isolated restore target or CLI-reachable manual backup was available
+  from this workspace. Enabling backups, authorizing the isolated adapter, and
+  attaching the aggregate report remain owner actions — no restore is claimed.
+- **Cohere key rotation: PENDING (verified).** The key exposed in an earlier session
+  transcript still authenticates against the Cohere API (HTTP 200 at closeout,
+  2026-07-20). It is wired only as an inert secret reference while `RERANKER: local`;
+  rotation remains recommended.
+- **Push record:** closeout docs merged to `main` through the protected checks; origin
+  and gitlab HEADs verified equal at push time (values in the git log; the release SHA
+  for V01 remains `b31207ce33ebe0706b2dc9fa13816b73fb08d4fc`).

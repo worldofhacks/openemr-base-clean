@@ -6,7 +6,8 @@ Each row below maps a rubric expectation (AgentForge Week 2 PDF, page cited) to 
 see it live in ≤60 seconds, (b) its durable evidence, (c) honest status. Live steps assume
 the deployed app (`README` grader quickstart; SMART sign-in; synthetic patient
 **Daron260 Windler79**; all documents are synthetic fixtures from
-`agent/evals/fixtures/`). Demo-beat timestamps reference the S01 video once published.
+`agent/evals/fixtures/`). Demo-beat timestamps reference the published S01 video:
+https://x.com/imdecentralized/status/2079069184420700532?s=20
 
 **Status legend:** ✅ live now · 🔀 lands when the named PR merges · 👤 gated on an owner
 action (§4c) then live. Nothing here is claimed without a link. **D01 final pass
@@ -31,7 +32,7 @@ identity attested by `scripts/verify_deployed_sha.py` → PASS).
 | 13 | Useful on imperfect scans (p.2 scenario; W2-REQ-91/92) | Upload a degraded/handwritten-style image: extraction completes with UNSUPPORTED fields redacted and visibly unverified — never invented, never a 500 | R08 ([PR #24](https://github.com/worldofhacks/openemr-base-clean/pull/24)): evidence-quality gate + image hardening, 16 pinned tests; G-D3 decision record | ✅ merged |
 | 14 | Safe refusals + honesty guards (p.4 hard problems) | Ask beyond evidence → refusal; allergy-honesty note ("never treated as NKDA"); adversarial suite: prompt-injection, deceased hard-stop, cross-patient | Adversarial eval category in the gate; refusal beats in demo | ✅ |
 | 15 | No PHI in logs/artifacts (p.2, p.6) | `no_phi_in_logs` rubric category green; artifact scanner over all generated eval surfaces; synthetic-only data everywhere | Gate results; `artifact_scan` in CI | ✅ |
-| 16 | Deployed app + demo video + cost/latency report + backup-restore (p.5 deliverables table) | `/health` + `/ready` (cache-busted) at the release SHA; 3–5 min video per the recording kit; four-path O02 report; timed O03 restore | REL1 verified at `b31207c` (health/ready + exact-SHA worker attestation); [O01 bundle](o01/W2_O01_JOURNEY_BUNDLE.md); `W2_S01_RECORDING_KIT.md` | ✅ deployed + verified · 👤 video (S01) · 👤 O02 full / O03 restore |
+| 16 | Deployed app + demo video + cost/latency report + backup-restore (p.5 deliverables table) | `/health` + `/ready` (cache-busted) at the release SHA; 3–5 min video per the recording kit; four-path O02 report; timed O03 restore | REL1 verified at `b31207c` (health/ready + exact-SHA worker attestation); [O01 bundle](o01/W2_O01_JOURNEY_BUNDLE.md); [published S01 video](https://x.com/imdecentralized/status/2079069184420700532?s=20) | ✅ deployed + verified + video published · 👤 O02 full / O03 restore (blockers recorded in the evidence-index closeout) |
 
 ## Engineering requirements (PDF pp.6–7) — each bullet's proof
 

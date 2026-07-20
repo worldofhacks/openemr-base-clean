@@ -710,9 +710,10 @@ train before the P0s merge; any G recordings regeneration rebases onto PR 2's.
 - [x] R07: cache-busted `/ready` all-green, three consecutive probes. *(2026-07-19 at
   release SHA `b31207c`: 3× cache-busted `/ready` → `status: ready`, all hard+soft
   checks ok — recorded in W2_EVIDENCE_INDEX.md closeout.)*
-- [ ] S01 first-pass video recorded, scanned, linked (six PDF elements). *(OWNER records:
-  all six elements verified working live-authenticated 2026-07-19 — kit + 8 dry-run
-  screenshots at docs/week2/evidence/W2_S01_RECORDING_KIT.md.)*
+- [x] S01 first-pass video recorded, scanned, linked (six PDF elements). *(2026-07-20:
+  published — https://x.com/imdecentralized/status/2079069184420700532?s=20 — linked in
+  README, rubric walkthrough, and evidence index. Frame/transcript PHI-scan attestation:
+  owner-performed status recorded in the DEVLOG closeout entry.)*
 - [x] E01-lite: current sanitized eval evidence + run URLs + digests committed.
   *(2026-07-19: `7bbf079` — exact-SHA Tier-1 + live Tier-2 copies + digests,
   W2_CI_EVIDENCE.md §E01-lite.)*
@@ -739,8 +740,11 @@ train before the P0s merge; any G recordings regeneration rebases onto PR 2's.
 - [x] AF-P1-01 (O01: evidence/o01/ bundle) · [x] AF-P1-02 (R03: #30) · [x] AF-P1-03
   (R04: #28) · [x] AF-P1-04 (R05: #36 + W2_R05_PRODUCTION_VERIFICATION.md) ·
   [x] AF-P1-05 (C01: #29) · [x] AF-P1-06 (E01 final at `b31207c`) ·
-  [ ] AF-P1-07 (S01 final — owner records) · [ ] AF-P1-08 (O02 full — owner-gated) ·
-  [ ] AF-P1-09 (O03 restore — owner-gated) · [x] AF-P1-10 (R06: #27) ·
+  [x] AF-P1-07 (S01 final: published video, linked) · [ ] AF-P1-08 (O02 full — blocked:
+  61 SMART contexts unminted + 61 unique patients vs 25-patient panel; release-SHA
+  retrieval re-probe recorded) · [ ] AF-P1-09 (O03 restore — blocked: no concrete drill
+  adapter exists and writing one is code-frozen; no reachable isolated target/backup
+  from this workspace) · [x] AF-P1-10 (R06: #27) ·
   [x] AF-P1-11 (C02 GitLab evidence: blocked MR 2, pipeline 15838, Maintainers +
   pipeline-required)
 

@@ -785,6 +785,47 @@ def test_ci_live_cli_requires_canonical_reviewed_baseline(
     assert result["inconclusive_reason"] == "reviewed_baseline_required"
 
 
+def test_failure_detail_collapses_whitespace_and_caps_length() -> None:
+    assert w2_runner._failure_detail(ValueError("a\n b\t\tc")) == "a b c"
+    assert w2_runner._failure_detail(ValueError("")) == ""
+    detail = w2_runner._failure_detail(ValueError("x" * 500))
+    assert len(detail) == 200
+    assert detail.endswith("...")
+
+
+def test_print_failure_omits_empty_detail(capsys: pytest.CaptureFixture[str]) -> None:
+    w2_runner._print_failure("gate", ValueError())
+    assert capsys.readouterr().err.strip() == "gate=FAIL error=ValueError"
+
+
+def test_live_gate_failure_stderr_carries_sanitized_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A red gate must be diagnosable from stderr while the artifact stays class-only."""
+
+    stale = baseline_from_result(_green_live_result()).model_copy(
+        update={"manifest_sha256": "0" * 64}
+    )
+    baseline_path = tmp_path / "stale-baseline.json"
+    baseline_path.write_text(stale.model_dump_json(), encoding="utf-8")
+    for name in ("CI", "GITHUB_ACTIONS", "GITHUB_REF", "CI_COMMIT_BRANCH", "CI_DEFAULT_BRANCH"):
+        monkeypatch.delenv(name, raising=False)
+    output = tmp_path / "result.json"
+    exit_code = main(
+        ["run", "--tier", "live", "--baseline", str(baseline_path), "--output", str(output)]
+    )
+    assert exit_code == 1
+    assert (
+        'gate=FAIL error=ValueError detail="reviewed live baseline is stale for the manifest"'
+        in capsys.readouterr().err
+    )
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result["error_type"] == "ValueError"
+    assert "stale" not in json.dumps(result)
+
+
 def test_baseline_generation_is_explicit_and_disabled_in_ci(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

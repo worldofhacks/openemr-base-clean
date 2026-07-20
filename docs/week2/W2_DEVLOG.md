@@ -310,3 +310,28 @@
 - Stage: REMEDIATION — full 50-case live re-run at branch head, baseline re-mint,
   PR through protected checks, exact-SHA redeploy of both services, then the single
   authorized `agent-eval-gate` dispatch at the new release SHA.
+
+## [2026-07-19] Langfuse spans carry real recorded timestamps · type: fix (owner cycle 2)
+- What: Langfuse's native Trace/Observation percentile widgets showed ~0/negative
+  durations for the graph-turn family. Cause: both exporters replay the span tree
+  post-hoc at turn end; the v4 SDK stamps every span's START at creation (emission
+  time) and offers no public start_time parameter (only `create_event` takes a
+  timestamp), while the exporters applied REAL recorded ends — so graph spans got
+  start > end. Fix at the exporter: `_backdate_span_start` corrects the underlying
+  OTel span's start attribute while recording (guarded; on any SDK-layout change the
+  span keeps its emission-time start — exports never fail). Graph path backdates
+  root/decision/hop/sub spans to their recorded `time.time_ns()` captures; the flat
+  W1 path lays ordered steps out sequentially from the real request-boundary anchor
+  (`utc_timestamp`) so durations stay exactly latency_ms with real absolute times
+  (fallback: end at emission when the anchor is unparseable). Timestamps only — the
+  D16 refs-only/masked content posture is untouched.
+- Why: grader feedback requires latency visibly tracked in Langfuse's native
+  percentile widgets; metadata.latency_ms alone cannot power them.
+- Result: RED-first tests (`test_graph_spans_carry_exact_recorded_timestamps`,
+  `test_sink_lays_out_steps_from_the_recorded_request_anchor`) with fakes extended
+  to model the SDK's OTel span; full venv suite 1173 passed / 5 skipped (baseline
+  1166); recorded 50-case gate PASS zero-delta; ruff + mypy-ratchet clean.
+- Stage: REMEDIATION — supersedes 89a2b86 as release candidate (its dispatch mint
+  DID go green end-to-end: run 29711288074, eval-tier2-live success — chain proven).
+  Next: PR, merge, exact-SHA redeploy of both services, single authorized mint at
+  the new merge SHA, synthetic-turn Langfuse verification.

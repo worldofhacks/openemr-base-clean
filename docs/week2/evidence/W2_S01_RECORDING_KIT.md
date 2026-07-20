@@ -18,6 +18,11 @@ executed against the deployed app on 2026-07-19 (dry-run screenshots in
   DOB 1964-05-12; pinned chart badge `a234b772…0155`). This patient already carries a
   verified `lab-clean-glucose` artifact (Glucose 92 mg/dL, 2026-06-01), so lab trends,
   citations, and the bbox preview resolve immediately. Reuse this patient.
+- Final-take upload fixtures (committed, synthetic only — the set used in the
+  published video, superseding earlier takes via PR #43):
+  `docs/week2/evidence/s01/demo-uploads/{daron-lab-a1c-glucose.pdf,
+  daron-lab-lipid.pdf, daron-intake-rich.png, daron-medication-list.pdf,
+  daron-medication-list.png}`.
 
 ## Prerequisites (before pressing record)
 

@@ -73,7 +73,8 @@ Observation write path. Week 2 uses only the documented delegated document/vital
   (50-case recorded gate, no keys needed); hooks via `make hooks`.
 - **Rubric walkthrough:** [docs/week2/evidence/W2_RUBRIC_WALKTHROUGH.md](docs/week2/evidence/W2_RUBRIC_WALKTHROUGH.md)
   maps every rubric row to a ≤60-second live check and its evidence.
-- **Demo video:** _link lands here after the S01 recording is published._
+- **Demo video:** https://x.com/imdecentralized/status/2079069184420700532?s=20
+  (3–5 min walkthrough per `docs/week2/evidence/W2_S01_RECORDING_SCRIPT_V2.md`).
 
 ## Agent setup
 

@@ -116,18 +116,27 @@ citation presence, factual consistency, safe refusal, and no PHI in logs, green 
 exact SHA. And the hard-gate proof: an introduced regression turns CI red and cannot
 merge."
 
-**BEAT 9 (3:30–4:00) — observability.**
+**BEAT 9 (3:30–4:10) — observability and latency.**
 
 DO: Switch to Tab 2, Langfuse. Paste the correlation id from Beat 2 into the filter.
 Click the trace. Move the cursor slowly down the spans: queue, OCR/VLM, grounding,
-retrieval, writes, critic. Point at one latency number and one token or cost number.
+retrieval, writes, critic. Point at `latency_ms` in the trace metadata (the full turn
+duration). Then open the Langfuse Home dashboard: point at the Trace latency
+percentiles row for `previsit-brief` (real p50/p95), the per-tool span latencies, the
+Model latencies chart, and the token + cost totals. Do NOT scroll to the graph-turn
+percentile row (known export-timestamp artifact; true duration lives in metadata).
+Last, show `docs/week2/evidence/W2_COST_LATENCY.md` for a few seconds: point at the
+p50/p95-per-flow table and the bottleneck line.
 
-SAY: "Orchestration is a LangGraph supervisor routing to two workers, an intake
-extractor and an evidence retriever, and this is Langfuse showing it: one correlation
-ID reconstructs the entire asynchronous path with per-step latency, token usage, and
-cost. No raw PHI appears anywhere in these traces."
+SAY: "Orchestration is a LangGraph supervisor routing to two workers, and this is
+Langfuse showing it: one correlation ID reconstructs the entire asynchronous path.
+Inputs and outputs are never logged, references only, because traces must stay
+PHI-free. Latency is measured at every layer: per-tool spans, per-turn duration, and
+the committed cost and latency report with p50 and p95 for each flow plus a bottleneck
+analysis. The measured bottleneck is the local reranker's ONNX session cost, documented
+openly, not hidden."
 
-**BEAT 10 (4:00–4:30) — messy input and refusal.**
+**BEAT 10 (4:10–4:35) — messy input and refusal.**
 
 DO: Tab 1, intake form, upload the handwritten-style image. When complete, point at the
 UNSUPPORTED redacted fields. Then in Cited answer ask something with no evidence, for
@@ -137,7 +146,7 @@ SAY: "Messy inputs are the whole point. A handwritten form our OCR cannot read s
 extracts. Unsupported values stay visible and unverified, never invented. Past the
 evidence, the agent refuses instead of guessing."
 
-**BEAT 11 (4:30–4:50) — close.**
+**BEAT 11 (4:35–4:55) — close.**
 
 DO: Open `docs/week2/evidence/W2_RUBRIC_WALKTHROUGH.md` on GitHub. Scroll it once,
 slowly.

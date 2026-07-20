@@ -1,0 +1,80 @@
+{
+  "endpoint": "POST /chat (Server-Sent Events)",
+  "question": "type 2 diabetes; glucose",
+  "sha": "293f18bb9a8203af58c0159f02e218e74ee1edd1",
+  "R01_per_claim_contract_present": true,
+  "sse_event_types": {
+    "claim_block": 13,
+    "done": 1
+  },
+  "claims_lane": {
+    "total_claims": 12,
+    "source_class_distribution": {
+      "uploaded_document": 7,
+      "guideline": 5
+    },
+    "verdict_distribution": {
+      "pass": 12
+    },
+    "claims_missing_citations": 0,
+    "claims_with_overlay_bbox": 7
+  },
+  "claim_schema_keys": [
+    "citations",
+    "overlay",
+    "source_class",
+    "text",
+    "verdict"
+  ],
+  "citation_schema_keys": [
+    "field_or_chunk_id",
+    "page_or_section",
+    "quote_or_value",
+    "source_id",
+    "source_type"
+  ],
+  "example_claim_uploaded_document_redacted": {
+    "text": "<redacted synthetic clinical text>",
+    "source_class": "uploaded_document",
+    "verdict": "pass",
+    "citations": [
+      {
+        "source_type": "uploaded_document",
+        "source_id": "<uuid-redacted>",
+        "page_or_section": "1",
+        "field_or_chunk_id": "chief_concern",
+        "quote_or_value": "<redacted>"
+      }
+    ],
+    "overlay": {
+      "source_id": "<uuid-redacted>",
+      "page": 1,
+      "bbox": {
+        "x0": 0.048525214081826834,
+        "y0": 0.36564171122994654,
+        "x1": 0.768791627021884,
+        "y1": 0.3770053475935829
+      }
+    }
+  },
+  "example_claim_guideline_redacted": {
+    "text": "<redacted synthetic clinical text>",
+    "source_class": "guideline",
+    "verdict": "pass",
+    "citations": [
+      {
+        "source_type": "guideline",
+        "source_id": "vadod-diabetes-2023-quick-reference@d80c45f784072b051e542785aadaea851b8564c60123fa0bb1365e750d391fb7",
+        "page_or_section": "Quick Reference: Non-Pharmacotherapy and Pharmacotherapy Recommendations",
+        "field_or_chunk_id": "vadod-diabetes-2023-quick-reference:p0003:c003:450ccdc1241d",
+        "quote_or_value": "<redacted>"
+      }
+    ],
+    "overlay": null
+  },
+  "done_event": {
+    "correlation_id": "w2.710d40a49af595a8d8687a3b9fcfc193",
+    "source": "llm",
+    "degraded": false
+  }
+}

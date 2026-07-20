@@ -63,6 +63,14 @@ class _CapturingGuidelineProvider:
                             # canonical reranker order, not model order.
                             {"type": "guideline", "chunk_id": "chunk-2", "evidence_ids": []},
                             {"type": "guideline", "chunk_id": "chunk-1", "evidence_ids": []},
+                            # A narrated ``text`` member is schema-legal on every item and
+                            # ignored: the selection resolves with canonical snippet bytes.
+                            {
+                                "type": "guideline",
+                                "chunk_id": "chunk-5",
+                                "evidence_ids": [],
+                                "text": "Model narration that must never render.",
+                            },
                             # Canonical chunk with model-authored quote metadata: discard.
                             {
                                 "type": "guideline",
@@ -125,13 +133,19 @@ async def test_answer_model_gets_only_ranked_top_five_and_resolves_canonical_chu
     assert answer_schema["properties"]["claims"]["items"]["additionalProperties"] is False
 
     claims = result.verified_claims
-    assert [claim.citation.field_or_chunk_id for claim in claims] == ["chunk-1", "chunk-2"]
+    assert [claim.citation.field_or_chunk_id for claim in claims] == [
+        "chunk-1",
+        "chunk-2",
+        "chunk-5",
+    ]
     assert [claim.text for claim in claims] == [
         snippets[0].quote,
         snippets[1].quote,
+        snippets[4].quote,
     ]
     assert all(claim.citation.source_type is CitationSourceType.GUIDELINE for claim in claims)
     assert "Altered model quote" not in repr(result)
+    assert "Model narration that must never render" not in repr(result)
     assert result.guideline_selector_attempted is True
 
 
@@ -460,6 +474,18 @@ async def test_context_composer_adds_top_guideline_for_anchored_answer() -> None
 
 
 async def test_context_composer_preserves_explicit_guideline_selection() -> None:
+    """Explicit selections render, PLUS the top canonical snippet as the lane anchor.
+
+    Frozen-test update per owner decision G-D6 (2026-07-19, W2_DECISIONS.md): the
+    golden contract AF-P0-02 (``require_rendered_guideline``) pins that the top
+    reranked chunk renders whenever the guideline lane renders, while this test
+    previously froze "explicit selection renders alone". The owner resolved the
+    conflict for anchor-plus-selection: model selections are preserved and never
+    replaced, and the top canonical snippet is always added. Weakening the eval
+    instead (Option B) was rejected — the golden manifest is the Week 2 product
+    spec, and editing it would re-invalidate the recorded baseline chain.
+    """
+
     document = _document_claim()
     snippets = (_snippet(1), _snippet(2))
     selected = VerifiedClinicalClaim(
@@ -493,8 +519,14 @@ async def test_context_composer_preserves_explicit_guideline_selection() -> None
     )
 
     rendered = result.composition.for_source(CitationSourceType.GUIDELINE)
-    assert [claim.citation.field_or_chunk_id for claim in rendered] == ["chunk-2"]
-    assert rendered[0].text == snippets[1].quote
+    assert [claim.citation.field_or_chunk_id for claim in rendered] == [
+        "chunk-1",
+        "chunk-2",
+    ]
+    assert [claim.text for claim in rendered] == [
+        snippets[0].quote,
+        snippets[1].quote,
+    ]
 
 
 async def test_context_composer_does_not_replace_unresolved_guideline_selector() -> None:

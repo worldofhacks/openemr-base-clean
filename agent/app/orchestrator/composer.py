@@ -428,18 +428,25 @@ async def compose_answer(
             for claim in brief.verified_claims
             if claim.citation.source_type is CitationSourceType.GUIDELINE
         }
-        # A relevant patient/document selection anchors this as an in-scope clinical
-        # answer.  If the answer model omitted the separate guideline selector, retain
-        # exactly the highest-ranked canonical snippet rather than silently losing the
-        # retrieval lane. An attempted-but-unresolved selector stays empty and fail-closed.
-        # ``context.guideline_snippets`` contains only bounded snippets
-        # whose complete CitationV2 is already present in the allowed citation lane, so
-        # this cannot promote model prose or an invented source.  An explicit model
-        # selection remains authoritative and is never replaced by this fallback.
+        # The highest-ranked canonical snippet ANCHORS every rendered guideline lane
+        # (owner decision G-D6, 2026-07-19): whenever guideline evidence renders at all —
+        # via explicit model selection or the no-attempt fallback below — the top
+        # reranked snippet is included so the retrieval lane's anchor is never silently
+        # lost to model chunk preference (golden contract AF-P0-02,
+        # ``require_rendered_guideline``). Explicit model selections are preserved and
+        # never replaced; the anchor is only ever ADDED. An attempted-but-unresolved
+        # selector stays empty and fail-closed. ``context.guideline_snippets`` contains
+        # only bounded snippets whose complete CitationV2 is already present in the
+        # allowed citation lane, so this cannot promote model prose or an invented
+        # source.
         if (
-            not selected_guidelines
-            and not brief.guideline_selector_attempted
-            and (selected_chart or selected_documents)
+            (
+                selected_guidelines
+                or (
+                    not brief.guideline_selector_attempted
+                    and (selected_chart or selected_documents)
+                )
+            )
             and brief.source != "deterministic_refusal"
             and brief.answer_reason_code != "all_blocked"
             and context.guideline_snippets

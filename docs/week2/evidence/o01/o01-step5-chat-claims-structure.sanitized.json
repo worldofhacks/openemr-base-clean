@@ -1,0 +1,43 @@
+{
+  "_note": "Sanitized STRUCTURE of the deployed POST /chat response for question 'type 2 diabetes; glucose' against synthetic patient Daron260 Windler79. Captured live 2026-07-20 UTC on SHA 293f18bb. Long synthetic clinical strings are elided to <synthetic ... len=N>; only shape/keys/counts are retained. This is the AF-P0-03 (R01) deployed-half evidence: a per-claim claims[] lane with per-claim CitationV2.",
+  "endpoint": "POST /chat",
+  "deployed_sha": "293f18bb9a8203af58c0159f02e218e74ee1edd1",
+  "response_top_level_keys_when_answered": ["brief", "source", "degraded", "verdicts", "citations", "claims", "patient", "correlation_id"],
+  "response_top_level_keys_when_refused": ["brief", "source", "degraded", "verdicts", "citations", "patient", "correlation_id"],
+  "nondeterminism_note": "Same question sometimes composes an llm answer (source='llm', claims[] present) and sometimes is refused by the deterministic critic (source='deterministic_refusal', verdicts=['refused:critic_rejected'], citations=[], NO claims key). The UI beat rendered a full answer; several verbatim replays alternated pass/refuse. Refusal is a safe fail (no ungrounded content flushed).",
+  "successful_answer_sample": {
+    "source": "llm",
+    "correlation_id": "6de4e50d80d5483b938f68f6d01015bd",
+    "flat_citations": {
+      "count_example": 35,
+      "CitationV2_keys": ["source_type", "source_id", "page_or_section", "field_or_chunk_id", "quote_or_value"],
+      "source_classes_observed": {"patient_record": 6, "uploaded_document": 25, "guideline": 4}
+    },
+    "claims_lane": {
+      "claim_count": 22,
+      "claim_keys": ["text", "source_class", "verdict", "citations", "overlay"],
+      "every_claim_has_at_least_one_citation": true,
+      "per_claim_citation_counts": "[1 x 22] (all 22 claims carried exactly one CitationV2)",
+      "claim0_sanitized": {
+        "text": "chief_concern: \"<synthetic value len=88>\"",
+        "source_class": "uploaded_document",
+        "verdict": "pass",
+        "citations": [
+          {
+            "source_type": "uploaded_document",
+            "source_id": "5754ac23-a8a6-4cb1-970e-775a58c4aba6",
+            "page_or_section": "1",
+            "field_or_chunk_id": "chief_concern",
+            "quote_or_value": "<synthetic value len=88>"
+          }
+        ],
+        "overlay": {
+          "source_id": "5754ac23-a8a6-4cb1-970e-775a58c4aba6",
+          "page": 1,
+          "bbox": {"x0": 0.0485, "y0": 0.3656, "x1": 0.7688, "y1": 0.3770}
+        }
+      }
+    }
+  },
+  "verdict": "AF-P0-03 deployed half CONFIRMED: per-claim claims[] with per-claim CitationV2 and per-claim overlay bbox is live in production; three CitationV2 source classes (patient_record, uploaded_document, guideline) present."
+}

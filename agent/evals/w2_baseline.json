@@ -2,9 +2,9 @@
   "status": "PASS",
   "tier": "live",
   "case_count": 50,
-  "manifest_sha256": "c847a5443e8b45bbd8e1b5b69b4f48fc39a9d11479d68b28a653a9f4f7410cd2",
-  "source_sha": "60597031142d269a79ab3a8aa0e3537cc6c6f90b",
-  "generated_from_result_sha256": "061b668706e1e35f07b47a112282e36dd8c708f97112ebe9e3f350b7e0404ae2",
+  "manifest_sha256": "74726474a93c74cc7d25737be1ffc7862b2bd157b79311dcc2cc01f1ca7fea9d",
+  "source_sha": "5698d89cc4f583d3709a80cb1450de0e6cc0536e",
+  "generated_from_result_sha256": "5dccd72f0cc965f722881e42912d2a4e9f250ab4905e45fbe911c16203ba78e4",
   "categories": [
     {
       "rubric": "schema_valid",
@@ -20,14 +20,14 @@
     },
     {
       "rubric": "factually_consistent",
-      "numerator": 23,
-      "denominator": 23,
+      "numerator": 22,
+      "denominator": 22,
       "score": 1.0
     },
     {
       "rubric": "safe_refusal",
-      "numerator": 10,
-      "denominator": 10,
+      "numerator": 9,
+      "denominator": 9,
       "score": 1.0
     },
     {

@@ -450,14 +450,16 @@ def _resolve_guideline_claims(
     """Resolve valid chunk-id selections in reranker order.
 
     Guideline claims have an intentionally tiny typed shape.  A model-emitted quote,
-    source/section field, chart evidence id, or any other extra member invalidates that
-    selection instead of being silently trusted.  Canonical bytes always come from the
-    stored top-five snippet.
+    source/section field, chart evidence id, or any other non-schema member invalidates
+    that selection instead of being silently trusted.  A ``text`` member is tolerated and
+    ignored — it is a legal property of the shared ``submit_claims`` item schema (needed
+    for ``type=text`` claims), models routinely narrate it, and its value is never read.
+    Canonical bytes always come from the stored top-five snippet.
     """
 
     if not isinstance(raw_items, list):
         return ()
-    allowed_keys = frozenset({"type", "chunk_id", "evidence_ids"})
+    allowed_keys = frozenset({"type", "chunk_id", "evidence_ids", "text"})
     requested = {
         item.get("chunk_id")
         for item in raw_items
@@ -493,7 +495,10 @@ def _resolve_document_claims(
     The model selects only an opaque per-context ``claim_id`` paired with the canonical
     ``field_id``.  Clinical bytes, CitationV2 metadata, page, and bbox always come from the
     already-grounded ``GroundedAnswerContext``. Unknown, ambiguous, or embellished selections
-    are omitted and can never become self-authenticating citations.
+    are omitted and can never become self-authenticating citations.  Unlike guideline
+    selections, a ``text`` member stays invalidating here: on a document selection it reads
+    as a model-authored value contradicting canon, and dropping one selection never
+    suppresses a whole answer lane.
     """
 
     if not isinstance(raw_items, list):

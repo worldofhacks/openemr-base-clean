@@ -510,6 +510,27 @@
   Pinned by frozen `tests/test_medication_list.py` and golden cases
   `med-list-clean-grounded`, `med-list-wrapped-frequency-unverified`,
   `med-list-missing-as-of-date-honesty` (PR #33).
+- G-D6. **Guideline lane anchors the top reranked chunk — owner decision
+  (2026-07-19, Tier-2 mint remediation):** whenever the answer's guideline lane
+  renders at all, the composer includes the highest-ranked canonical snippet in
+  addition to the model's explicit chunk selections
+  (`agent/app/orchestrator/composer.py::compose_answer`). Trigger: the live Tier-2
+  gate failed 49/50 on `lab-multi-lipid-panel` — two stacked causes: (1) the
+  `submit_claims` guideline resolver invalidated selections carrying a `text`
+  member even though `text` is schema-legal on every claim item and its value is
+  never read (fixed: tolerated-and-ignored in `_resolve_guideline_claims` ONLY;
+  document selections keep strictness since a model-authored `text` there reads as
+  a value contradicting canon and dropping one selection never suppresses a lane);
+  (2) the model consistently selected reranker chunks 2–4 and omitted the top
+  chunk, which golden contract AF-P0-02 (`require_rendered_guideline`) pins as
+  always-rendered on a hit. The frozen composer test
+  (`test_context_composer_preserves_explicit_guideline_selection`) froze
+  "explicit selection renders alone" and was updated to anchor-plus-selection with
+  this rationale. Explicit selections are never replaced, only supplemented;
+  attempted-but-unresolved selectors stay empty and fail-closed; canonical bytes
+  still come exclusively from stored snippets. REJECTED Option B (weaken the eval
+  case): the golden manifest is the Week 2 product spec, and editing it would
+  re-invalidate the recorded baseline/recordings chain for a second time.
 - R04-LEDGER. **Authority ledger recorded in code (2026-07-19):** Agent PostgreSQL is
   the single authority for extraction artifacts/citation refs; the OpenEMR
   `/AI-Extractions` copy is a digest-verified projection (never a read path); OpenEMR

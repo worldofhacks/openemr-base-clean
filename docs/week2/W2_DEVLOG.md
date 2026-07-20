@@ -282,3 +282,31 @@
   43605c2 through the protected flow). Owner resolved the six P2s (A01-RES).
 - Stage: REMEDIATION — merge train in progress; REL1 + evidence ops next; Tier-2 mint,
   S01 recording, and V01 remain handed back.
+
+## [2026-07-19] Tier-2 mint unblocked — stale baseline + guideline-lane root cause (G-D6) · type: incident+decision
+- What: the owner-authorized Tier-2 mint dispatch at `293f18b` failed closed twice in
+  ~1.4 s with aggregate-only `gate=FAIL error=ValueError`. Root-caused in three layers:
+  (1) `w2_baseline.json` was stale for the manifest (bound to `c847a544…` minted at
+  `6059703`; manifest changed to `74726474…` by 279d663/9d7980c without a live
+  re-mint — the designed W2-O4 fail-closed posture); (2) on the first full local live
+  run (50/50 executed, $2.68, 13 min) `citation_present` failed 49/50 on
+  `lab-multi-lipid-panel`: the `submit_claims` guideline resolver invalidated all
+  three valid chunk selections because the model narrated a schema-legal `text`
+  member; (3) with resolution fixed, the model consistently omitted the top reranked
+  chunk that AF-P0-02 pins as always-rendered. Diagnosed via 3× deterministic
+  `diagnose-live` fails, then an instrumented in-process harness capturing the raw
+  `submit_claims` payload. COHERE_API_KEY was ruled out (the tier2 job pins
+  `RERANKER: local`; the crash predates any provider call).
+- Why: each failed dispatch was undiagnosable from CI logs (exception class only) —
+  fixed by adding a sanitized, length-capped `detail="…"` to the runner's stderr
+  failure lines (artifact stays class-only; `artifact_scan` enforces that).
+- Result: owner decision G-D6 (anchor-plus-selection; Option B weaken-the-eval
+  rejected) recorded in W2_DECISIONS.md; resolver `text` tolerance (guideline lane
+  only); composer anchors the top canonical snippet whenever the guideline lane
+  renders; frozen composer test updated with rationale; failing case verified
+  PASS 2/2 in-harness live; full offline suite 1166 passed / 5 skipped. Workflow
+  tier2 env now consumes the provisioned `COHERE_API_KEY` secret (inert while
+  `RERANKER: local`).
+- Stage: REMEDIATION — full 50-case live re-run at branch head, baseline re-mint,
+  PR through protected checks, exact-SHA redeploy of both services, then the single
+  authorized `agent-eval-gate` dispatch at the new release SHA.

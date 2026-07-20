@@ -173,6 +173,26 @@ def _validate_baseline_categories(
             raise ValueError("reviewed live baseline deterministic category is not green")
 
 
+def _failure_detail(exc: BaseException, *, limit: int = 200) -> str:
+    """Single-line, length-capped exception text for stderr diagnostics.
+
+    The aggregate artifact stays class-only (``artifact_scan`` enforces the
+    identifier-shaped ``error_type``); this operator-facing stderr detail
+    carries the message so a red gate is diagnosable from CI logs alone.
+    """
+
+    text = " ".join(str(exc).split())
+    if len(text) > limit:
+        text = text[: limit - 3] + "..."
+    return text
+
+
+def _print_failure(prefix: str, exc: BaseException) -> None:
+    detail = _failure_detail(exc)
+    suffix = f' detail="{detail}"' if detail else ""
+    print(f"{prefix}=FAIL error={type(exc).__name__}{suffix}", file=sys.stderr)
+
+
 def _is_ci() -> bool:
     truthy = {"1", "true", "yes"}
     return any(
@@ -750,7 +770,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 baseline.model_dump_json(indent=2) + "\n", encoding="utf-8"
             )
         except Exception as exc:
-            print(f"baseline=FAIL error={type(exc).__name__}", file=sys.stderr)
+            _print_failure("baseline", exc)
             return 1
         return 0
 
@@ -775,7 +795,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "error_type": type(exc).__name__,
             }
             write_aggregate(failure, args.output)
-            print(f"diagnostic=FAIL error={type(exc).__name__}", file=sys.stderr)
+            _print_failure("diagnostic", exc)
             return 1
         write_aggregate(result, args.output)
         print(render_report(report))
@@ -830,7 +850,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "error_type": type(exc).__name__,
         }
         write_aggregate(failure, output)
-        print(f"gate=FAIL error={type(exc).__name__}", file=sys.stderr)
+        _print_failure("gate", exc)
         return 1
     write_aggregate(result, output)
     print(render_report(report))

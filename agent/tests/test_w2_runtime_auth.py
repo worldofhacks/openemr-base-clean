@@ -7,10 +7,13 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from pydantic import SecretStr
 
+from app.auth.job_credentials import DelegatedSessionCredential
 from app.auth.scopes import ScopeCoverageError, W2_REQUESTED_SCOPES
 from app.auth.smart_client import TokenResponse
 from app.service import AgentServices
+from app.session.store import InMemorySessionStore, SessionExpiredError
 
 
 class _Smart:
@@ -279,14 +282,13 @@ async def test_callback_rejects_malformed_bearer_scope_attestation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_callback_rejects_bearer_and_response_non_api_scope_disagreement() -> None:
+async def test_callback_rejects_bearer_and_response_non_api_scope_disagreement() -> (
+    None
+):
     token = TokenResponse(
         access_token=_jwt_with_scopes(set(W2_REQUESTED_SCOPES)),
         scope=" ".join(
-            sorted(
-                W2_REQUESTED_SCOPES
-                - {"api:oemr", "user/MedicationRequest.read"}
-            )
+            sorted(W2_REQUESTED_SCOPES - {"api:oemr", "user/MedicationRequest.read"})
         ),
         patient="patient-synthetic",
     )
@@ -297,3 +299,110 @@ async def test_callback_rejects_bearer_and_response_non_api_scope_disagreement()
         await services.complete_callback(code="code-synthetic", state="state-synthetic")
 
     assert services.sessions.created == 0
+
+
+@pytest.mark.asyncio
+async def test_expired_w2_access_token_rotates_behind_the_same_session_id() -> None:
+    now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+    sessions = InMemorySessionStore(now=lambda: now, idle_timeout_s=1800)
+    session = await sessions.create(
+        clinician_sub="Practitioner/synthetic",
+        patient_id="patient-synthetic",
+        token_expires_at=now + timedelta(seconds=1),
+    )
+    now += timedelta(minutes=2)
+
+    class Vault:
+        calls = 0
+
+        async def credential_for_session(self, resolved):
+            self.calls += 1
+            assert resolved.session_id == session.session_id
+            return DelegatedSessionCredential(
+                access_token=SecretStr("rotated-synthetic-token"),
+                token_type="Bearer",
+                scope=" ".join(sorted(W2_REQUESTED_SCOPES)),
+                patient_id="patient-synthetic",
+                clinician_sub="Practitioner/synthetic",
+                access_expires_at=now + timedelta(hours=1),
+            )
+
+    vault = Vault()
+    services = object.__new__(AgentServices)
+    services.sessions = sessions
+    services.document_runtime = type("Runtime", (), {"credential_vault": vault})()
+    services._tokens = {
+        session.session_id: TokenResponse(access_token="expired-synthetic-token")
+    }
+    services._token_deadline = lambda: now + timedelta(hours=1)
+
+    resolved = await services.resolve_session(session.session_id)
+
+    assert resolved.session_id == session.session_id
+    assert resolved.patient_id == "patient-synthetic"
+    assert vault.calls == 1
+    assert (
+        services._tokens[session.session_id].access_token.get_secret_value()
+        == "rotated-synthetic-token"
+    )
+    assert await sessions.get(session.session_id) is resolved
+
+
+@pytest.mark.asyncio
+async def test_w2_session_rehydrates_foreground_token_after_process_restart() -> None:
+    now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+    sessions = InMemorySessionStore(now=lambda: now)
+    session = await sessions.create(
+        clinician_sub="Practitioner/synthetic",
+        patient_id="patient-synthetic",
+        token_expires_at=now + timedelta(minutes=30),
+    )
+
+    class Vault:
+        async def credential_for_session(self, _resolved):
+            return DelegatedSessionCredential(
+                access_token=SecretStr("rehydrated-synthetic-token"),
+                token_type="Bearer",
+                scope=" ".join(sorted(W2_REQUESTED_SCOPES)),
+                patient_id="patient-synthetic",
+                clinician_sub="Practitioner/synthetic",
+                access_expires_at=now + timedelta(minutes=30),
+            )
+
+    services = object.__new__(AgentServices)
+    services.sessions = sessions
+    services.document_runtime = type("Runtime", (), {"credential_vault": Vault()})()
+    services._tokens = {}
+    services._token_deadline = lambda: now + timedelta(hours=1)
+
+    resolved = await services.resolve_session(session.session_id)
+
+    assert resolved.session_id == session.session_id
+    assert (
+        services._tokens[session.session_id].access_token.get_secret_value()
+        == "rehydrated-synthetic-token"
+    )
+
+
+@pytest.mark.asyncio
+async def test_w2_refresh_never_reopens_an_idle_session() -> None:
+    now = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+    sessions = InMemorySessionStore(now=lambda: now, idle_timeout_s=60)
+    session = await sessions.create(
+        clinician_sub="Practitioner/synthetic",
+        patient_id="patient-synthetic",
+        token_expires_at=now + timedelta(seconds=1),
+    )
+    now += timedelta(minutes=2)
+
+    class Vault:
+        async def credential_for_session(self, _resolved):
+            raise AssertionError("an idle session must not reach the credential vault")
+
+    services = object.__new__(AgentServices)
+    services.sessions = sessions
+    services.document_runtime = type("Runtime", (), {"credential_vault": Vault()})()
+    services._tokens = {}
+
+    with pytest.raises(SessionExpiredError):
+        await services.resolve_session(session.session_id)

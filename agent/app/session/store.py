@@ -6,9 +6,11 @@ patient. The pin is the *real* clinician↔patient enforcer: OpenEMR's own
 on the server to keep the agent on one patient — the session does. A patient switch
 requires a fresh launch; a cross-patient request is refused (`CrossPatientError`).
 
-Lifetime is MIN(token expiry, idle timeout, turn cap) (§3a). If the backing store is
-unreachable the store FAILS CLOSED (`SessionStoreUnavailable`) — it never returns an
-unpinned session or silently serves without a pin (§6).
+Lifetime is MIN(token expiry, idle timeout, turn cap) (§3a). A W2 session with an
+encrypted delegated refresh credential may renew only the token bound while the idle
+and turn bounds remain open; the clinician/patient pin and session id never change. If
+the backing store is unreachable the store FAILS CLOSED (`SessionStoreUnavailable`) —
+it never returns an unpinned session or silently serves without a pin (§6).
 
 Two implementations: `InMemorySessionStore` (dev/tests) and `PostgresSessionStore`
 (D-O2; the connection is injected so the fail-closed path is testable without a live DB).
@@ -92,6 +94,17 @@ class Session:
             return True
         return now >= self.expires_at()
 
+    def is_delegated_renewal_allowed(self, now: datetime) -> bool:
+        """Allow token renewal only while the non-token session bounds remain open.
+
+        This is deliberately narrower than making the session immortal: an idle or
+        turn-capped session still requires a fresh SMART launch. The caller must also
+        prove possession of the encrypted, clinician/patient-bound refresh credential.
+        """
+
+        idle_deadline = self.last_activity_at + timedelta(seconds=self.idle_timeout_s)
+        return self.turns_used < self.turn_cap and now < idle_deadline
+
     def authorize_patient(self, requested_patient_id: str) -> None:
         """Enforce the pin (D12/F-S.2): only the launched patient is allowed."""
         if requested_patient_id != self.patient_id:
@@ -103,12 +116,25 @@ class Session:
 
 class SessionStore(ABC):
     @abstractmethod
-    async def create(self, *, clinician_sub: str, patient_id: str,
-                     token_expires_at: datetime,
-                     encounter_id: str | None = None) -> Session: ...
+    async def create(
+        self,
+        *,
+        clinician_sub: str,
+        patient_id: str,
+        token_expires_at: datetime,
+        encounter_id: str | None = None,
+    ) -> Session: ...
 
     @abstractmethod
     async def get(self, session_id: str) -> Session: ...
+
+    @abstractmethod
+    async def get_for_delegated_renewal(self, session_id: str) -> Session: ...
+
+    @abstractmethod
+    async def renew_delegated_token(
+        self, session_id: str, *, token_expires_at: datetime
+    ) -> Session: ...
 
     @abstractmethod
     async def record_turn(self, session_id: str) -> Session: ...
@@ -118,16 +144,26 @@ class InMemorySessionStore(SessionStore):
     """In-process store for local dev and tests. Not for multi-replica production
     (D-O2 uses Postgres); the pin/expiry semantics are identical."""
 
-    def __init__(self, *, now: Callable[[], datetime] = _utcnow,
-                 idle_timeout_s: int = 1800, turn_cap: int = 20) -> None:
+    def __init__(
+        self,
+        *,
+        now: Callable[[], datetime] = _utcnow,
+        idle_timeout_s: int = 1800,
+        turn_cap: int = 20,
+    ) -> None:
         self._now = now
         self._idle_timeout_s = idle_timeout_s
         self._turn_cap = turn_cap
         self._rows: dict[str, Session] = {}
 
-    async def create(self, *, clinician_sub: str, patient_id: str,
-                     token_expires_at: datetime,
-                     encounter_id: str | None = None) -> Session:
+    async def create(
+        self,
+        *,
+        clinician_sub: str,
+        patient_id: str,
+        token_expires_at: datetime,
+        encounter_id: str | None = None,
+    ) -> Session:
         now = self._now()
         s = Session(
             session_id=secrets.token_urlsafe(24),
@@ -151,6 +187,22 @@ class InMemorySessionStore(SessionStore):
             raise SessionExpiredError(session_id)
         return s
 
+    async def get_for_delegated_renewal(self, session_id: str) -> Session:
+        s = self._rows.get(session_id)
+        if s is None:
+            raise SessionNotFound(session_id)
+        if not s.is_delegated_renewal_allowed(self._now()):
+            raise SessionExpiredError(session_id)
+        return s
+
+    async def renew_delegated_token(
+        self, session_id: str, *, token_expires_at: datetime
+    ) -> Session:
+        s = await self.get_for_delegated_renewal(session_id)
+        _validate_renewed_deadline(token_expires_at, self._now())
+        s.token_expires_at = token_expires_at
+        return s
+
     async def record_turn(self, session_id: str) -> Session:
         s = await self.get(session_id)
         s.turns_used += 1
@@ -163,9 +215,15 @@ class PostgresSessionStore(SessionStore):
     fail-closed path (§6) is testable without a live database; any connection error
     surfaces as `SessionStoreUnavailable` rather than a None/unpinned session."""
 
-    def __init__(self, *, dsn: str, connect: Callable[[str], Awaitable[object]],
-                 now: Callable[[], datetime] = _utcnow,
-                 idle_timeout_s: int = 1800, turn_cap: int = 20) -> None:
+    def __init__(
+        self,
+        *,
+        dsn: str,
+        connect: Callable[[str], Awaitable[object]],
+        now: Callable[[], datetime] = _utcnow,
+        idle_timeout_s: int = 1800,
+        turn_cap: int = 20,
+    ) -> None:
         self._dsn = dsn
         self._connect = connect
         self._now = now
@@ -176,7 +234,9 @@ class PostgresSessionStore(SessionStore):
         try:
             return await self._connect(self._dsn)
         except Exception as exc:  # noqa: BLE001 - any backend failure ⇒ fail closed
-            raise SessionStoreUnavailable("session store unreachable — refusing to serve (§6)") from exc
+            raise SessionStoreUnavailable(
+                "session store unreachable — refusing to serve (§6)"
+            ) from exc
 
     async def ensure_schema(self) -> None:
         """Create the sessions table if absent (idempotent DDL). Runs at startup; fails closed
@@ -187,16 +247,25 @@ class PostgresSessionStore(SessionStore):
         finally:
             await self._release(conn)
 
-    async def create(self, *, clinician_sub: str, patient_id: str,
-                     token_expires_at: datetime,
-                     encounter_id: str | None = None) -> Session:
+    async def create(
+        self,
+        *,
+        clinician_sub: str,
+        patient_id: str,
+        token_expires_at: datetime,
+        encounter_id: str | None = None,
+    ) -> Session:
         now = self._now()
         s = Session(
             session_id=secrets.token_urlsafe(24),
-            clinician_sub=clinician_sub, patient_id=patient_id,
+            clinician_sub=clinician_sub,
+            patient_id=patient_id,
             encounter_id=encounter_id,
-            created_at=now, last_activity_at=now, token_expires_at=token_expires_at,
-            idle_timeout_s=self._idle_timeout_s, turn_cap=self._turn_cap,
+            created_at=now,
+            last_activity_at=now,
+            token_expires_at=token_expires_at,
+            idle_timeout_s=self._idle_timeout_s,
+            turn_cap=self._turn_cap,
         )
         conn = await self._conn()
         try:
@@ -215,6 +284,31 @@ class PostgresSessionStore(SessionStore):
             raise SessionNotFound(session_id)
         if s.is_expired(self._now()):
             raise SessionExpiredError(session_id)
+        return s
+
+    async def get_for_delegated_renewal(self, session_id: str) -> Session:
+        conn = await self._conn()
+        try:
+            s = await self._fetch(conn, session_id)
+        finally:
+            await self._release(conn)
+        if s is None:
+            raise SessionNotFound(session_id)
+        if not s.is_delegated_renewal_allowed(self._now()):
+            raise SessionExpiredError(session_id)
+        return s
+
+    async def renew_delegated_token(
+        self, session_id: str, *, token_expires_at: datetime
+    ) -> Session:
+        s = await self.get_for_delegated_renewal(session_id)
+        _validate_renewed_deadline(token_expires_at, self._now())
+        s.token_expires_at = token_expires_at
+        conn = await self._conn()
+        try:
+            await self._renew_token(conn, s)
+        finally:
+            await self._release(conn)
         return s
 
     async def record_turn(self, session_id: str) -> Session:
@@ -244,18 +338,29 @@ class PostgresSessionStore(SessionStore):
             pass
 
     # --- backend SQL seams (wired to a real driver at provisioning time) ---
-    async def _insert(self, conn, s: Session) -> None:  # pragma: no cover - needs live DB
+    async def _insert(
+        self, conn, s: Session
+    ) -> None:  # pragma: no cover - needs live DB
         await conn.execute(
             "INSERT INTO agent_sessions (session_id, clinician_sub, patient_id, encounter_id, created_at, "
             "last_activity_at, token_expires_at, idle_timeout_s, turn_cap, turns_used) "
             "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-            s.session_id, s.clinician_sub, s.patient_id, s.encounter_id, s.created_at,
-            s.last_activity_at, s.token_expires_at, s.idle_timeout_s, s.turn_cap,
+            s.session_id,
+            s.clinician_sub,
+            s.patient_id,
+            s.encounter_id,
+            s.created_at,
+            s.last_activity_at,
+            s.token_expires_at,
+            s.idle_timeout_s,
+            s.turn_cap,
             s.turns_used,
         )
 
     async def _fetch(self, conn, session_id: str):  # pragma: no cover - needs live DB
-        row = await conn.fetchrow("SELECT * FROM agent_sessions WHERE session_id=$1", session_id)
+        row = await conn.fetchrow(
+            "SELECT * FROM agent_sessions WHERE session_id=$1", session_id
+        )
         if row is None:
             return None
         return Session(**dict(row))
@@ -263,5 +368,23 @@ class PostgresSessionStore(SessionStore):
     async def _bump(self, conn, s: Session) -> None:  # pragma: no cover - needs live DB
         await conn.execute(
             "UPDATE agent_sessions SET turns_used=$2, last_activity_at=$3 WHERE session_id=$1",
-            s.session_id, s.turns_used, s.last_activity_at,
+            s.session_id,
+            s.turns_used,
+            s.last_activity_at,
         )
+
+    async def _renew_token(
+        self, conn, s: Session
+    ) -> None:  # pragma: no cover - needs live DB
+        await conn.execute(
+            "UPDATE agent_sessions SET token_expires_at=$2 WHERE session_id=$1",
+            s.session_id,
+            s.token_expires_at,
+        )
+
+
+def _validate_renewed_deadline(token_expires_at: datetime, now: datetime) -> None:
+    if token_expires_at.tzinfo is None or token_expires_at.utcoffset() is None:
+        raise ValueError("renewed token expiry must be timezone-aware")
+    if token_expires_at <= now:
+        raise ValueError("renewed token expiry must be in the future")

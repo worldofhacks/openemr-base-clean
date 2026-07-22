@@ -78,6 +78,27 @@ class CredentialMaterial(BaseModel):
     refresh_expires_at: datetime | None = None
 
 
+@dataclass(frozen=True)
+class DelegatedSessionCredential:
+    """Refresh-safe foreground token projection with no refresh secret exposed."""
+
+    access_token: SecretStr = field(repr=False)
+    token_type: str
+    scope: str
+    patient_id: str
+    clinician_sub: str
+    access_expires_at: datetime
+
+    def as_token_response(self) -> TokenResponse:
+        return TokenResponse(
+            access_token=self.access_token,
+            token_type=self.token_type,
+            scope=self.scope,
+            patient=self.patient_id,
+            clinician_sub=self.clinician_sub,
+        )
+
+
 class CredentialCipher:
     """Small Fernet envelope; the key is retained only inside the crypto primitive."""
 
@@ -494,11 +515,45 @@ class JobCredentialVault:
         self, credential_ref: str, *, expected_patient_id: str
     ) -> DelegatedPrincipal:
         record = await self._repository.get(credential_ref)
+        record, material = await self._active_material(
+            record, expected_patient_id=expected_patient_id
+        )
+        return self._principal(record, material)
+
+    async def credential_for_session(
+        self, session: Session
+    ) -> DelegatedSessionCredential:
+        """Hydrate or refresh a foreground session from the encrypted vault.
+
+        The opaque session id, clinician, and patient must all match the durable
+        record. Only an access-token projection leaves this boundary; the delegated
+        refresh token remains encrypted inside the vault.
+        """
+
+        record = await self._repository.find_by_session(session.session_id)
+        if record is None:
+            raise JobCredentialNotFound("delegated-job credential not found")
+        self._assert_record_binding(record, session.patient_id, session.clinician_sub)
+        record, material = await self._active_material(
+            record, expected_patient_id=session.patient_id
+        )
+        return DelegatedSessionCredential(
+            access_token=material.access_token,
+            token_type=material.token_type,
+            scope=material.scope,
+            patient_id=record.patient_id,
+            clinician_sub=record.clinician_sub,
+            access_expires_at=material.access_expires_at,
+        )
+
+    async def _active_material(
+        self, record: JobCredentialRecord, *, expected_patient_id: str
+    ) -> tuple[JobCredentialRecord, CredentialMaterial]:
         self._assert_record_binding(record, expected_patient_id)
         material = self._decrypt_bound(record)
         now = _aware(self._now())
         if material.access_expires_at > now + self._refresh_skew:
-            return self._principal(record, material)
+            return record, material
 
         if (
             material.refresh_expires_at is not None
@@ -542,7 +597,7 @@ class JobCredentialVault:
             # Another worker rotated first. Use only the authenticated winning value.
             rotated = await self._repository.get(record.credential_ref)
         self._assert_record_binding(rotated, expected_patient_id)
-        return self._principal(rotated, self._decrypt_bound(rotated))
+        return rotated, self._decrypt_bound(rotated)
 
     async def delete(self, credential_ref: str) -> None:
         await self._repository.delete(credential_ref)

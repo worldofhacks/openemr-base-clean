@@ -87,6 +87,10 @@ async def test_vault_persists_only_authenticated_ciphertext_and_resolves_bound_p
     assert principal.patient_id == "synthetic-patient"
     assert principal.clinician_sub == "Practitioner/synthetic-clinician"
     assert principal.access_token.get_secret_value() == ACCESS
+    credential = await vault.credential_for_session(_session())
+    assert credential.as_token_response().access_token.get_secret_value() == ACCESS
+    assert credential.access_expires_at == NOW + timedelta(minutes=30)
+    assert REFRESH not in repr(credential)
     assert await vault.probe() is True
 
 
@@ -114,10 +118,12 @@ async def test_vault_refreshes_expired_access_and_rotates_ciphertext() -> None:
     principal = await vault.principal_for(
         credential_ref, expected_patient_id="synthetic-patient"
     )
+    credential = await vault.credential_for_session(_session())
     after = await repository.get(credential_ref)
 
     assert observed == [REFRESH]
     assert principal.access_token.get_secret_value() == "rotated-access"
+    assert credential.access_token.get_secret_value() == "rotated-access"
     assert after.revision == before.revision + 1
     assert after.ciphertext != before.ciphertext
     assert b"rotated-access" not in after.ciphertext

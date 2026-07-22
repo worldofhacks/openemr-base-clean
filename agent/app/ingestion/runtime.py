@@ -17,6 +17,7 @@ import time
 from typing import Any, Protocol, cast
 
 from app.auth.job_credentials import (
+    DelegatedSessionCredential,
     JobCredentialAuthExpired,
     JobCredentialBindingError,
     JobCredentialUnavailable,
@@ -106,6 +107,10 @@ class CredentialVault(Protocol):
     ) -> str: ...
 
     async def reference_for_session(self, session: Session) -> str: ...
+
+    async def credential_for_session(
+        self, session: Session
+    ) -> DelegatedSessionCredential: ...
 
     async def principal_for(
         self, credential_ref: str, *, expected_patient_id: str
@@ -233,6 +238,7 @@ class _GatewayFactory:
                 settings.artifact_document_category_acl == "patients|docs",
             ),
         )
+
     async def for_record(self, record: DocumentRecord) -> OpenEMRLiveGateway:
         principal = await self._credentials.principal_for(
             record.credential_ref, expected_patient_id=record.patient_id
@@ -286,9 +292,7 @@ class _GatewayFactory:
             patient_uuid=patient.patient_uuid,
             patient_id=patient.legacy_patient_id,
             encounter_uuid=(None if encounter is None else encounter.encounter_uuid),
-            encounter_id=(
-                None if encounter is None else encounter.legacy_encounter_id
-            ),
+            encounter_id=(None if encounter is None else encounter.legacy_encounter_id),
         )
 
     def _new(

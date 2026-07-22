@@ -33,6 +33,7 @@ from app.auth.scopes import (
 from app.auth.job_credentials import (
     JobCredentialAuthExpired,
     JobCredentialBindingError,
+    JobCredentialNotFound,
     JobCredentialUnavailable,
     JobCredentialVault,
 )
@@ -63,7 +64,12 @@ from app.orchestrator.workers.evidence_retriever import build_evidence_worker
 from app.schemas.answers import GroundedAnswerContext
 from app.schemas.retrieval import EvidenceSearchRequest
 from app.schemas.workers import WorkerInput, WorkerOutput
-from app.session.store import PostgresSessionStore, Session
+from app.session.store import (
+    PostgresSessionStore,
+    Session,
+    SessionExpiredError,
+    SessionStoreUnavailable,
+)
 from app.tools.contracts import ToolResult
 from app.tools.fhir_client import FhirClient
 from app.tools.fhir_tools import run_previsit_fanout
@@ -196,9 +202,10 @@ class AgentServices:
         self._document_schema_ready = not settings.w2_document_runtime_enabled
         self.document_runtime: DocumentRuntime | None = None
         self._document_worker_task: asyncio.Task[None] | None = None
-        # Foreground graph/FHIR turns retain their session-scoped token in memory. Enabled
-        # document jobs separately use the encrypted credential vault composed below, so their
-        # worker lifetime does not depend on this cache or the UI idle timer (§3).
+        # Foreground graph/FHIR turns use a session-scoped in-memory cache. For enabled W2
+        # sessions this is only a hot cache: resolve_session can rehydrate it after a process
+        # restart and rotate an expired access token through the separately encrypted vault.
+        # The stable session pin still enforces clinician, patient, idle, and turn bounds.
         self._tokens: dict[
             str, TokenResponse
         ] = {}  # per-session delegated-token cache (§2)
@@ -274,7 +281,12 @@ class AgentServices:
         # (`/ready` -> `active_reranker: timeout`). The deploy image sets
         # RETRIEVAL_WARMUP=1 so boot loads the pre-baked weights off the boot
         # path; default-off keeps local/test boots model-free (W2-D4).
-        if os.getenv("RETRIEVAL_WARMUP", "").strip().casefold() in {"1", "true", "yes", "on"}:
+        if os.getenv("RETRIEVAL_WARMUP", "").strip().casefold() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
             thread = threading.Thread(
                 target=self._warm_retrieval_sync,
                 name="retrieval-warmup",
@@ -345,7 +357,7 @@ class AgentServices:
                 worker_id=runtime.worker_identity,
                 max_age_seconds=float(
                     max(2 * self.settings.document_worker_lease_seconds, 1)
-                )
+                ),
             )
         except Exception:  # noqa: BLE001 - diagnostic is deliberately content-free
             ready, detail = False, "worker_heartbeat_unavailable"
@@ -483,10 +495,7 @@ class AgentServices:
             verifier = pending
             destination: LaunchDestination = "week1"
         else:
-            if (
-                now - pending.created_monotonic
-                >= _PENDING_LAUNCH_TTL_SECONDS
-            ):
+            if now - pending.created_monotonic >= _PENDING_LAUNCH_TTL_SECONDS:
                 raise ValueError("unknown or replayed OAuth state")
             verifier = pending.verifier
             destination = pending.destination
@@ -547,7 +556,47 @@ class AgentServices:
     # --- the two operations the routes call -----------------------------------
 
     async def resolve_session(self, session_id: str) -> Session:
-        return await self.sessions.get(session_id)
+        runtime = getattr(self, "document_runtime", None)
+        needs_hydration = session_id not in self._tokens
+        try:
+            session = await self.sessions.get(session_id)
+        except SessionExpiredError:
+            if runtime is None:
+                raise
+            # Token expiry alone may be renewed by the encrypted delegated W2
+            # credential. Idle and turn-cap expiry remain terminal and this method
+            # still raises SessionExpiredError for them.
+            session = await self.sessions.get_for_delegated_renewal(session_id)
+            needs_hydration = True
+
+        if runtime is None or not needs_hydration:
+            return session
+
+        try:
+            credential = await runtime.credential_vault.credential_for_session(session)
+        except (
+            JobCredentialAuthExpired,
+            JobCredentialBindingError,
+            JobCredentialNotFound,
+        ) as exc:
+            raise SessionExpiredError(session_id) from exc
+        except JobCredentialUnavailable as exc:
+            raise SessionStoreUnavailable(
+                "delegated credential unavailable — refusing to serve"
+            ) from exc
+
+        token_deadline = min(
+            credential.access_expires_at,
+            self._token_deadline(),
+        )
+        try:
+            renewed = await self.sessions.renew_delegated_token(
+                session_id, token_expires_at=token_deadline
+            )
+        except ValueError as exc:
+            raise SessionExpiredError(session_id) from exc
+        self._tokens[session_id] = credential.as_token_response()
+        return renewed
 
     async def resolve_document_route_context(
         self, session: Session
